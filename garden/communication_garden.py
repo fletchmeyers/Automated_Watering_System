@@ -1,7 +1,7 @@
 import bluetooth
-
+import time
 from micropython import const
-from bluetooth import UUID
+#from bluetooth import UUID
 
 
 # BLE events
@@ -9,10 +9,10 @@ _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
 
 # UUIDs for custom service and characteristic
-TEMP_SERVICE_UUID = UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
-TEMP_CHAR_UUID = UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+TEMP_SERVICE_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+TEMP_CHAR_UUID = bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 
-class BLETemperature:
+class Telemetry:
     def __init__(self, ble):
         self._ble = ble
         self._ble.active(True)
@@ -38,10 +38,25 @@ class BLETemperature:
             self._advertise()
 
     def _advertise(self):
-        name = "PicoTemp"
+        name = "Outdoor MCU"
         payload = bytearray('\x02\x01\x06', 'utf-8') + bytearray((len(name) + 1, 0x09)) + name.encode()
         self._ble.gap_advertise(100_000, adv_data=payload)
         print("Advertising as", name)
+
+
+    def log_data(self, sensor, value, filename):
+        #save data to SD card
+        try:
+            with open (filename, "a") as file:
+                timestamp = time.ticks_ms()
+                file.write("Time: {} ms, {}: {}\n".format(timestamp, sensor, value))
+        except Exception as e:
+            print("SD write failed:", e)
+
+        #send data over BLE
+        if sensor == "temperature":
+            self.set_temperature(value)
+        
 
     def set_temperature(self, temp_c):
         # Convert float to string and encode
@@ -55,4 +70,4 @@ class BLETemperature:
 
 # Main
 ble = bluetooth.BLE()
-temp_service = BLETemperature(ble)
+temp_service = Telemetry(ble)

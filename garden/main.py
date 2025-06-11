@@ -19,12 +19,16 @@ Written by Fletcher Meyers
 May 2025
 '''
 import time
-from communication_garden import read_internal_temp, temp_service
-from device_setup import read_internal_temp
+from communication_garden import temp_service
+from device_setup import read_internal_temp, file
 
 
 while True:
     temp = read_internal_temp()
     print("Temperature:", temp)
     temp_service.set_temperature(temp)
+    file.write(f"CPU temp: ")
     time.sleep(5)
+
+
+
