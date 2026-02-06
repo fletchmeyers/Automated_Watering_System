@@ -11,6 +11,7 @@ Planned expansion -
     Add other peripheral systems to the network
 
 Written by Fletcher Meyers - May 2025
+#!NEEDS UPDATE - this file is written to work with an MCU running Micropython, not Circuitpython!
 
 '''
 

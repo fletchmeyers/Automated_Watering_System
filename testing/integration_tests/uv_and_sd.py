@@ -1,18 +1,15 @@
-'''
-Designed for a Pico W RP2040 running CircuitPython 10.0.3
-Set up SPI for microSD, I2C bus, and other sensors (flow meter, battery monitors)
-
-
-'''
-
+# SPDX-FileCopyrightText: 2023 Liz Clark for Adafruit Industries
+#
+# SPDX-License-Identifier: MIT
+"""CircuitPython PiCowbell Adalogger Example"""
 import time
 import board
 import sdcardio
 import busio
 import storage
 from adafruit_pcf8523.pcf8523 import PCF8523
-import microcontroller
 import adafruit_ltr390
+import microcontroller
 
 i2c = board.STEMMA_I2C() 
 ltr = adafruit_ltr390.LTR390(i2c)
@@ -61,7 +58,6 @@ def get_temp():
     temperature_fahrenheit = microcontroller.cpu.temperature * 9 / 5 + 32
     return temperature_fahrenheit
 
-
 #  initial write to the SD card on startup
 try:
     with open("/sd/data.txt", "a") as f:
@@ -75,3 +71,30 @@ try:
         print("initial write to SD card complete, starting to log")
 except ValueError:
     print("initial write to SD card failed - check card")
+
+while True:
+    try:
+        #  variable for RTC datetime
+        t = rtc.datetime
+        #  append SD card text file
+        with open("/sd/data.txt", "a") as f:
+            #read data from LTR390 UV sensor:
+            UV = ltr.uvs
+            ambient_light = ltr.light
+            UVI = ltr.uvi
+            lux = ltr.lux
+            
+            #write UV sensor data to SD card (no timestamp)
+            f.write('UV: {}, Ambient light:{}, UVI:{}, lux:{}\n'.format(UV, ambient_light, UVI, lux))
+            
+            #  read temp data from onboard cpu temp sensor
+            temp = get_temp()
+            #  write temp data followed by the time, comma-delimited
+            f.write('{}*F,{}:{}:{}\n'.format(temp, t.tm_hour, t.tm_min, t.tm_sec))
+            print("data written to sd card")
+        #  repeat every 30 seconds
+        time.sleep(30)
+    except ValueError:
+        print("data error - cannot write to SD card")
+        time.sleep(10)
+

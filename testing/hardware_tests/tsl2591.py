@@ -6,6 +6,13 @@
 
 #!This is copied directly from the Adafruit guide for this sensor using circuit python - convert this to Micropython before putting it on a Micropython board! I'll unfuck this soon.
 
+#!UNTESTED
+
+
+
+
+
+
 
 import time
 

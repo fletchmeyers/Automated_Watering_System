@@ -1,8 +1,9 @@
 '''
-Designed for a Pico W RP2040 running CircuitPython 10.0.3
-Set up SPI for microSD, I2C bus, and other sensors (flow meter, battery monitors)
+Example for Pico running CircuitPython 10.0.3.
+This file reads the pico's onboard temperature sensor and writes that value to the micro SD card mounted in the datalogger shield along with a timestamp from the shield's Real Time Clock (RTC).
 
 
+This code is slightly modified from the example in the Adafruit guide, which used a separate temp sensor instead of the pico's onboard one: https://learn.adafruit.com/adafruit-picowbell-adalogger-for-pico/circuitpython-datalogging
 '''
 
 import time
@@ -11,11 +12,11 @@ import sdcardio
 import busio
 import storage
 from adafruit_pcf8523.pcf8523 import PCF8523
+#import adafruit_ltr390
 import microcontroller
-import adafruit_ltr390
 
 i2c = board.STEMMA_I2C() 
-ltr = adafruit_ltr390.LTR390(i2c)
+#ltr = adafruit_ltr390.LTR390(i2c)
 
 
 # setup for RTC
@@ -56,15 +57,14 @@ t = rtc.datetime
 
 time.sleep(1)
 
-def get_temp():
-    temperature_celsius = microcontroller.cpu.temperature
-    temperature_fahrenheit = microcontroller.cpu.temperature * 9 / 5 + 32
+def get_temp(sensor):
+    temperature_celsius = sensor
+    temperature_fahrenheit = temperature_celsius * 9 / 5 + 32
     return temperature_fahrenheit
-
 
 #  initial write to the SD card on startup
 try:
-    with open("/sd/data.txt", "a") as f:
+    with open("/sd/temp.txt", "a") as f:
         #  writes the date
         f.write('The date is {} {}/{}/{}\n'.format(days[t.tm_wday], t.tm_mon, t.tm_mday, t.tm_year))
         #  writes the start time
@@ -75,3 +75,21 @@ try:
         print("initial write to SD card complete, starting to log")
 except ValueError:
     print("initial write to SD card failed - check card")
+
+while True:
+    try:
+        #  variable for RTC datetime
+        t = rtc.datetime
+        #  append SD card text file
+        with open("/sd/temp.txt", "a") as f:
+            #  read temp data from onboard cpu temp sensor
+            temp = microcontroller.cpu.temperature
+            #  write temp data followed by the time, comma-delimited
+            f.write('{},{}:{}:{}\n'.format(temp, t.tm_hour, t.tm_min, t.tm_sec))
+            print("data written to sd card")
+        #  repeat every 30 seconds
+        time.sleep(30)
+    except ValueError:
+        print("data error - cannot write to SD card")
+        time.sleep(10)
+

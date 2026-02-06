@@ -1,3 +1,6 @@
+
+#!Replace with circuit python!
+
 import bluetooth
 import time
 from micropython import const
