@@ -33,7 +33,7 @@ while True:
             
             #read soil humidity sensor:
             touch = ss.moisture_read()
-            ss_temp = ss.get_temp()
+            ss_temp = ss.get_temp() * 9 / 5 + 32
             f.write('Soil humidity sensor 4: {}, temp:{}*F\n'.format(touch, ss_temp))
 
             #  read temp data from onboard cpu temp sensor
@@ -41,8 +41,8 @@ while True:
             #  write temp data followed by the time, comma-delimited
             f.write('{}*F,{}:{}:{}\n'.format(temp, t.tm_hour, t.tm_min, t.tm_sec))
             print("data written to sd card")
-        #  repeat every 30 seconds
-        time.sleep(30)
+        #  repeat every 5 seconds
+        time.sleep(5)
     except ValueError:
         print("data error - cannot write to SD card")
         time.sleep(10)
