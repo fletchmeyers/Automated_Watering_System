@@ -1,49 +1,168 @@
 '''
 Designed for a Pico W RP2040 running CircuitPython 10.0.3
 
-Read data from the sensors on the I2C bus in the garden and saves the data to an SD card mounted in the datalogger shield.
-I don't think CircuitPython can access the BTLE capabilities of the wifi chip on the Pico W, so we'll have to add some other hardware piece to get this data to the indoor Raspberry Pi.
-We can either get a regular radio module or we can add a second Pico W to the stack running Micropython, have that read the data in the SD card, and send it to the Raspberry Pi via BTLE.
+Read sendor data and save it to the SD card. 
+Send sensor data to Pi via radio.
 
 Written by Fletcher Meyers 
 May 2025
-'''
+
 
 
 import time
-from device_setup import i2c, ltr, rtc, SD_CS, spi, sdcard, vfs, get_temp, ss
+from device_setup import write_date_to_sd, write_sensor_data_to_sd
 
 
+write_date_to_sd() #data header
 
 while True:
-    try:
-        #  variable for RTC datetime
-        t = rtc.datetime
-        #  append SD card text file
-        with open("/sd/data.txt", "a") as f:
-            #read data from LTR390 UV sensor:
-            UV = ltr.uvs
-            ambient_light = ltr.light
-            UVI = ltr.uvi
-            lux = ltr.lux
-            
+    
+    write_sensor_data_to_sd()
+    time.sleep(3)
+'''
 
-            #write UV sensor data to SD card (no timestamp)
-            f.write('UV: {}, Ambient light:{}, UVI:{}, lux:{}\n'.format(UV, ambient_light, UVI, lux))
-            
-            #read soil humidity sensor:
-            touch = ss.moisture_read()
-            ss_temp = ss.get_temp() * 9 / 5 + 32
-            f.write('Soil humidity sensor 4: {}, temp:{}*F\n'.format(touch, ss_temp))
 
-            #  read temp data from onboard cpu temp sensor
-            temp = get_temp()
-            #  write temp data followed by the time, comma-delimited
-            f.write('{}*F,{}:{}:{}\n'.format(temp, t.tm_hour, t.tm_min, t.tm_sec))
-            print("data written to sd card")
-        #  repeat every 5 seconds
-        time.sleep(5)
-    except ValueError:
-        print("data error - cannot write to SD card")
-        time.sleep(10)
+
+
+
+import time
+import json
+import board
+import busio
+import digitalio
+import storage
+import sdcardio
+
+from adafruit_pcf8523.pcf8523 import PCF8523
+import adafruit_rfm69
+import adafruit_max1704x
+import adafruit_ltr390
+from adafruit_seesaw.seesaw import Seesaw
+
+
+
+# CONFIG
+NODE_ID = 1
+SEND_INTERVAL = 30
+RADIO_FREQ_MHZ = 915.0
+
+sequence = 0
+
+
+
+# SPI SETUP
+spi = busio.SPI(board.GP18, board.GP19, board.GP16)
+
+
+'''
+# Radio pins
+radio_cs = digitalio.DigitalInOut(board.GP9)
+radio_reset = digitalio.DigitalInOut(board.GP10)
+
+rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
+rfm69.tx_power = 13
+'''
+
+# SD card
+SD_CS = board.GP17
+sdcard = sdcardio.SDCard(spi, SD_CS)
+vfs = storage.VfsFat(sdcard)
+storage.mount(vfs, "/sd")
+
+
+
+# I2C + SENSORS
+i2c = board.STEMMA_I2C()
+
+rtc = PCF8523(i2c)
+max17 = adafruit_max1704x.MAX17048(i2c)
+ltr = adafruit_ltr390.LTR390(i2c)
+soil = Seesaw(i2c, addr=0x36)
+
+
+
+
+def get_timestamp():
+    t = rtc.datetime
+    return "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}".format(
+        t.tm_year, t.tm_mon, t.tm_mday,
+        t.tm_hour, t.tm_min, t.tm_sec
+    )
+
+
+def write_to_sd(line):
+    with open("/sd/data.txt", "a") as f:
+        f.write(line + "\n")
+
+
+def send_packet(packet_dict):
+    global sequence
+
+    packet_dict["node"] = NODE_ID
+    packet_dict["seq"] = sequence
+    packet_dict["ts"] = get_timestamp()
+
+    sequence += 1
+
+    packet_string = json.dumps(packet_dict, separators=(",", ":"))
+    print("Sending:", packet_string)
+    write_to_sd(packet_string)
+    #rfm69.send(packet_string.encode("utf-8"))
+
+
+
+
+def package_battery_data():
+    data = {
+        "type": "batt",
+        "v": round(max17.cell_voltage, 2),
+        "soc": round(max17.cell_percent, 1),
+    }
+    send_packet(data)
+
+
+def package_uv_data():
+    data = {
+        "type": "uv",
+        "uv": ltr.uvs,
+        "uvi": round(ltr.uvi, 2),
+        "lux": round(ltr.lux, 1),
+    }
+    send_packet(data)
+
+
+def package_soil_humidity_data():
+    data = {
+        "type": "soil",
+        "m": soil.moisture_read(),
+        "t": round(soil.get_temp(), 2),
+    }
+    send_packet(data)
+
+
+SENSORS = [
+    ("battery", package_battery_data),
+    ("uv", package_uv_data),
+    ("soil", package_soil_humidity_data),
+]
+
+
+
+
+print("Telemetry node started.")
+
+while True:
+
+    for sensor_name, sensor_function in SENSORS:
+
+        try:
+            sensor_function()
+
+        except Exception as e:
+            print(f"[ERROR] Sensor '{sensor_name}' failed:", e)
+
+        time.sleep(0.5)
+
+    time.sleep(SEND_INTERVAL)
+
 

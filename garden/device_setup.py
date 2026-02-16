@@ -6,73 +6,124 @@ Set up SPI for microSD, I2C bus, and other sensors (flow meter, battery monitors
 '''
 
 import time
+import json
 import board
-import sdcardio
 import busio
+import digitalio
 import storage
+import sdcardio
+
 from adafruit_pcf8523.pcf8523 import PCF8523
-import microcontroller
+import adafruit_rfm69
+import adafruit_max1704x
 import adafruit_ltr390
-
-i2c = board.STEMMA_I2C() 
-ltr = adafruit_ltr390.LTR390(i2c)
+from adafruit_seesaw.seesaw import Seesaw
 
 
-# setup for RTC
-rtc = PCF8523(i2c)
 
-#  list of days to print to the text file on boot
-days = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+# CONFIG
+NODE_ID = 1
+SEND_INTERVAL = 30
+RADIO_FREQ_MHZ = 915.0
 
-# SPI SD_CS pin
-SD_CS = board.GP17
+sequence = 0
 
-#  SPI setup for SD card
+
+
+# SPI SETUP
 spi = busio.SPI(board.GP18, board.GP19, board.GP16)
+
+
+'''
+# Radio pins
+radio_cs = digitalio.DigitalInOut(board.GP9)
+radio_reset = digitalio.DigitalInOut(board.GP10)
+
+rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
+rfm69.tx_power = 13
+'''
+
+# SD card
+SD_CS = board.GP17
 sdcard = sdcardio.SDCard(spi, SD_CS)
 vfs = storage.VfsFat(sdcard)
-try:
-    storage.mount(vfs, "/sd")
-    print("sd card mounted")
-except ValueError:
-    print("no SD card")
+storage.mount(vfs, "/sd")
 
-#  to update the RTC, call set_clock and input parameters in this order: year, mon, date, hour, min, sec. 
-#   wday, yday, isdst can also be set if we decide they'd be useful.
-#  RTC will remain set through power cycles, as long as the coincell battery doesn't die or disconnect
 
-def set_clock(year, mon, date, hour, min, sec):
-    #                     year, mon, date, hour, min, sec, wday, yday, isdst
-    t = time.struct_time((year, mon, date, hour, min, sec,   -1,    -1))
-    print("Setting time to:", t)#
-    rtc.datetime = t
-    print()
+
+# I2C + SENSORS
+i2c = board.STEMMA_I2C()
+
+rtc = PCF8523(i2c)
+max17 = adafruit_max1704x.MAX17048(i2c)
+ltr = adafruit_ltr390.LTR390(i2c, addr=0x53)
+soil = Seesaw(i2c, addr=0x36)
 
 
 
 
+def get_timestamp():
+    t = rtc.datetime
+    return "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}".format(
+        t.tm_year, t.tm_mon, t.tm_mday,
+        t.tm_hour, t.tm_min, t.tm_sec
+    )
 
 
-#  variable to hold RTC datetime
-t = rtc.datetime
-
-time.sleep(1)
-
-def read_cpu_temp():
-    temperature_celsius = microcontroller.cpu.temperature
-    temperature_fahrenheit = microcontroller.cpu.temperature * 9 / 5 + 32
-    return temperature_fahrenheit
+def write_to_sd(line):
+    with open("/sd/data.txt", "a") as f:
+        f.write(line + "\n")
 
 
-def write_date_to_sd(days, t):
-#  initial write to the SD card on startup
-    try:
-        with open("/sd/data.txt", "a") as f:
-            #  writes the date
-            f.write('The date is {} {}/{}/{}\n'.format(days[t.tm_wday], t.tm_mon, t.tm_mday, t.tm_year))
-            #  writes the start time
-            f.write('Start time: {}:{}:{}\n'.format(t.tm_hour, t.tm_min, t.tm_sec))
+def send_packet(packet_dict):
+    global sequence
 
-            print("initial write to SD card complete, starting to log")
-    except ValueError:
-        print("initial write to SD card failed - check card")
+    packet_dict["node"] = NODE_ID
+    packet_dict["seq"] = sequence
+    packet_dict["ts"] = get_timestamp()
+
+    sequence += 1
+
+    packet_string = json.dumps(packet_dict, separators=(",", ":"))
+    print("Sending:", packet_string)
+    write_to_sd(packet_string)
+    #rfm69.send(packet_string.encode("utf-8"))
+
+
+
+
+def package_battery_data():
+    data = {
+        "type": "batt",
+        "v": round(max17.cell_voltage, 2),
+        "soc": round(max17.cell_percent, 1),
+    }
+    send_packet(data)
+
+
+def package_uv_data():
+    data = {
+        "type": "uv",
+        "uv": ltr.uvs,
+        "uvi": round(ltr.uvi, 2),
+        "lux": round(ltr.lux, 1),
+    }
+    send_packet(data)
+
+
+def package_soil_humidity_data():
+    data = {
+        "type": "soil",
+        "m": soil.moisture_read(),
+        "t": round(soil.get_temp(), 2),
+    }
+    send_packet(data)
+
+
+SENSORS = [
+    ("battery", package_battery_data),
+    ("uv", package_uv_data),
+    ("soil", package_soil_humidity_data),
+]
+
+
