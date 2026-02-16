@@ -37,41 +37,42 @@ try:
 except ValueError:
     print("no SD card")
 
-#  to update the RTC, change set_clock to True
-#  otherwise RTC will remain set
-#  it should only be needed after the initial set
-#  if you've removed the coincell battery
-set_clock = False
+#  to update the RTC, call set_clock and input parameters in this order: year, mon, date, hour, min, sec. 
+#   wday, yday, isdst can also be set if we decide they'd be useful.
+#  RTC will remain set through power cycles, as long as the coincell battery doesn't die or disconnect
 
-if set_clock:
+def set_clock(year, mon, date, hour, min, sec):
     #                     year, mon, date, hour, min, sec, wday, yday, isdst
-    t = time.struct_time((2023,  3,   6,   00,  00,  00,    0,   -1,    -1))
-
-    print("Setting time to:", t)
+    t = time.struct_time((year, mon, date, hour, min, sec,   -1,    -1))
+    print("Setting time to:", t)#
     rtc.datetime = t
     print()
+
+
+
+
+
 
 #  variable to hold RTC datetime
 t = rtc.datetime
 
 time.sleep(1)
 
-def get_temp():
+def read_cpu_temp():
     temperature_celsius = microcontroller.cpu.temperature
     temperature_fahrenheit = microcontroller.cpu.temperature * 9 / 5 + 32
     return temperature_fahrenheit
 
 
+def write_date_to_sd(days, t):
 #  initial write to the SD card on startup
-try:
-    with open("/sd/data.txt", "a") as f:
-        #  writes the date
-        f.write('The date is {} {}/{}/{}\n'.format(days[t.tm_wday], t.tm_mon, t.tm_mday, t.tm_year))
-        #  writes the start time
-        f.write('Start time: {}:{}:{}\n'.format(t.tm_hour, t.tm_min, t.tm_sec))
-        #  headers for data, comma-delimited
-        f.write('Temp,Time\n')
-        #  debug statement for REPL
-        print("initial write to SD card complete, starting to log")
-except ValueError:
-    print("initial write to SD card failed - check card")
+    try:
+        with open("/sd/data.txt", "a") as f:
+            #  writes the date
+            f.write('The date is {} {}/{}/{}\n'.format(days[t.tm_wday], t.tm_mon, t.tm_mday, t.tm_year))
+            #  writes the start time
+            f.write('Start time: {}:{}:{}\n'.format(t.tm_hour, t.tm_min, t.tm_sec))
+
+            print("initial write to SD card complete, starting to log")
+    except ValueError:
+        print("initial write to SD card failed - check card")
