@@ -21,135 +21,13 @@ while True:
     time.sleep(3)
 '''
 
-
-
-
-
 import time
-import json
-import board
-import busio
-import digitalio
-import storage
-import sdcardio
-
-from adafruit_pcf8523.pcf8523 import PCF8523
-import adafruit_rfm69
-import adafruit_max1704x
-import adafruit_ltr390
-from adafruit_seesaw.seesaw import Seesaw
-
-
-
-# CONFIG
-NODE_ID = 1
-SEND_INTERVAL = 30
-RADIO_FREQ_MHZ = 915.0
-
-sequence = 0
-
-
-
-# SPI SETUP
-spi = busio.SPI(board.GP18, board.GP19, board.GP16)
-
-
-'''
-# Radio pins
-radio_cs = digitalio.DigitalInOut(board.GP9)
-radio_reset = digitalio.DigitalInOut(board.GP10)
-
-rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
-rfm69.tx_power = 13
-'''
-
-# SD card
-SD_CS = board.GP17
-sdcard = sdcardio.SDCard(spi, SD_CS)
-vfs = storage.VfsFat(sdcard)
-storage.mount(vfs, "/sd")
-
-
-
-# I2C + SENSORS
-i2c = board.STEMMA_I2C()
-
-rtc = PCF8523(i2c)
-max17 = adafruit_max1704x.MAX17048(i2c)
-ltr = adafruit_ltr390.LTR390(i2c)
-soil = Seesaw(i2c, addr=0x36)
+from device_setup import SENSORS, SEND_INTERVAL
 
 
 
 
-def get_timestamp():
-    t = rtc.datetime
-    return "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}".format(
-        t.tm_year, t.tm_mon, t.tm_mday,
-        t.tm_hour, t.tm_min, t.tm_sec
-    )
 
-
-def write_to_sd(line):
-    with open("/sd/data.txt", "a") as f:
-        f.write(line + "\n")
-
-
-def send_packet(packet_dict):
-    global sequence
-
-    packet_dict["node"] = NODE_ID
-    packet_dict["seq"] = sequence
-    packet_dict["ts"] = get_timestamp()
-
-    sequence += 1
-
-    packet_string = json.dumps(packet_dict, separators=(",", ":"))
-    print("Sending:", packet_string)
-    write_to_sd(packet_string)
-    #rfm69.send(packet_string.encode("utf-8"))
-
-
-
-
-def package_battery_data():
-    data = {
-        "type": "batt",
-        "v": round(max17.cell_voltage, 2),
-        "soc": round(max17.cell_percent, 1),
-    }
-    send_packet(data)
-
-
-def package_uv_data():
-    data = {
-        "type": "uv",
-        "uv": ltr.uvs,
-        "uvi": round(ltr.uvi, 2),
-        "lux": round(ltr.lux, 1),
-    }
-    send_packet(data)
-
-
-def package_soil_humidity_data():
-    data = {
-        "type": "soil",
-        "m": soil.moisture_read(),
-        "t": round(soil.get_temp(), 2),
-    }
-    send_packet(data)
-
-
-SENSORS = [
-    ("battery", package_battery_data),
-    ("uv", package_uv_data),
-    ("soil", package_soil_humidity_data),
-]
-
-
-
-
-print("Telemetry node started.")
 
 while True:
 

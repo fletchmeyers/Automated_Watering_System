@@ -1,6 +1,6 @@
 '''
 Designed for a Pico W RP2040 running CircuitPython 10.0.3
-Set up SPI for microSD, I2C bus, and other sensors (flow meter, battery monitors)
+Set up SPI for microSD and radio, I2C bus, and other sensors (flow meter, battery monitors)
 
 
 '''
@@ -53,11 +53,10 @@ storage.mount(vfs, "/sd")
 
 # I2C + SENSORS
 i2c = board.STEMMA_I2C()
-
 rtc = PCF8523(i2c)
-max17 = adafruit_max1704x.MAX17048(i2c)
-ltr = adafruit_ltr390.LTR390(i2c, addr=0x53)
-soil = Seesaw(i2c, addr=0x36)
+max17 = adafruit_max1704x.MAX17048(i2c) #fixed address: 0x36
+ltr = adafruit_ltr390.LTR390(i2c) #fixed address: 0x53
+soil = Seesaw(i2c, addr=0x39)
 
 
 
@@ -125,5 +124,6 @@ SENSORS = [
     ("uv", package_uv_data),
     ("soil", package_soil_humidity_data),
 ]
+
 
 
