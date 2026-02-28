@@ -5,20 +5,8 @@ Read sendor data and save it to the SD card.
 Send sensor data to Pi via radio.
 
 Written by Fletcher Meyers 
-May 2025
+Februart 2026
 
-
-
-import time
-from device_setup import write_date_to_sd, write_sensor_data_to_sd
-
-
-write_date_to_sd() #data header
-
-while True:
-    
-    write_sensor_data_to_sd()
-    time.sleep(3)
 '''
 
 import time

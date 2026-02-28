@@ -23,7 +23,7 @@ from adafruit_seesaw.seesaw import Seesaw
 
 # CONFIG
 NODE_ID = 1
-SEND_INTERVAL = 30
+SEND_INTERVAL = 5
 RADIO_FREQ_MHZ = 915.0
 
 sequence = 0
@@ -31,17 +31,17 @@ sequence = 0
 
 
 # SPI SETUP
-spi = busio.SPI(board.GP18, board.GP19, board.GP16)
+spi = busio.SPI(clock=board.GP18, MOSI=board.GP19, MISO=board.GP16)
 
 
-'''
+
 # Radio pins
-radio_cs = digitalio.DigitalInOut(board.GP9)
-radio_reset = digitalio.DigitalInOut(board.GP10)
+radio_cs = digitalio.DigitalInOut(board.GP22)
+radio_reset = digitalio.DigitalInOut(board.GP26)
 
 rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
 rfm69.tx_power = 13
-'''
+rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
 
 # SD card
 SD_CS = board.GP17
@@ -53,7 +53,7 @@ storage.mount(vfs, "/sd")
 
 # I2C + SENSORS
 i2c = board.STEMMA_I2C()
-rtc = PCF8523(i2c)
+rtc = PCF8523(i2c) #fixed address: 0x68
 max17 = adafruit_max1704x.MAX17048(i2c) #fixed address: 0x36
 ltr = adafruit_ltr390.LTR390(i2c) #fixed address: 0x53
 soil = Seesaw(i2c, addr=0x39)
@@ -86,7 +86,7 @@ def send_packet(packet_dict):
     packet_string = json.dumps(packet_dict, separators=(",", ":"))
     print("Sending:", packet_string)
     write_to_sd(packet_string)
-    #rfm69.send(packet_string.encode("utf-8"))
+    rfm69.send(packet_string.encode("utf-8"))
 
 
 
