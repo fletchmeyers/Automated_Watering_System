@@ -1,76 +1,89 @@
+'''
+CircuitPython 10.0.3 running on Pico 2W RP2350
 
-#!Replace with circuit python!
+Package sensor data and prepare it for radio and SD write.
 
-import bluetooth
-import time
-from micropython import const
-#from bluetooth import UUID
+Written by Fletcher Meyers 
+March 2026
 
+'''
 
-# BLE events
-_IRQ_CENTRAL_CONNECT = const(1)
-_IRQ_CENTRAL_DISCONNECT = const(2)
-
-# UUIDs for custom service and characteristic
-TEMP_SERVICE_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
-TEMP_CHAR_UUID = bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
-
-class Telemetry:
-    def __init__(self, ble):
-        self._ble = ble
-        self._ble.active(True)
-        self._ble.irq(self._irq)
-        self._connections = set()
-
-        # Define characteristic and service
-        self._temp_char = (TEMP_CHAR_UUID, bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY)
-        temp_service = (TEMP_SERVICE_UUID, (self._temp_char,))
-        ((self._handle,),) = self._ble.gatts_register_services((temp_service,))
-
-        self._advertise()
-
-    def _irq(self, event, data):
-        if event == _IRQ_CENTRAL_CONNECT:
-            conn_handle, _, _ = data
-            self._connections.add(conn_handle)
-            print("Central connected")
-        elif event == _IRQ_CENTRAL_DISCONNECT:
-            conn_handle, _, _ = data
-            self._connections.remove(conn_handle)
-            print("Central disconnected")
-            self._advertise()
-
-    def _advertise(self):
-        name = "Outdoor MCU"
-        payload = bytearray('\x02\x01\x06', 'utf-8') + bytearray((len(name) + 1, 0x09)) + name.encode()
-        self._ble.gap_advertise(100_000, adv_data=payload)
-        print("Advertising as", name)
+import json
+from device_setup import NODE_ID, rfm69, sequence, max17, ltr, soil_0, soil_1, soil_2
 
 
-    def log_data(self, sensor, value, filename):
-        #save data to SD card
-        try:
-            with open (filename, "a") as file:
-                timestamp = time.ticks_ms()
-                file.write("Time: {} ms, {}: {}\n".format(timestamp, sensor, value))
-        except Exception as e:
-            print("SD write failed:", e)
+def send_packet(packet_dict):
+    global sequence
 
-        #send data over BLE
-        if sensor == "temperature":
-            self.set_temperature(value)
-        
+    packet_dict["n"] = NODE_ID
+    packet_dict["q"] = sequence
 
-    def set_temperature(self, temp_c):
-        # Convert float to string and encode
-        temp_str = "{:.2f}".format(temp_c)
-        temp_bytes = temp_str.encode('utf-8')
-        self._ble.gatts_write(self._handle, temp_bytes)
-        for conn_handle in self._connections:
-            self._ble.gatts_notify(conn_handle, self._handle, temp_bytes)
+    sequence += 1
+    packet_string = json.dumps(packet_dict, separators=(",", ":"))
+
+    try: 
+        print("Sending:", packet_string)
+        rfm69.send(packet_string.encode("utf-8"))
+    except AssertionError as e: 
+        print("Packet too large for radio: ", len(packet_string), " bytes")
+        #TODO: break packet up into smaller parts and try radio again
 
 
+# Packet key reference:
+# t   = type/sensor tag
+# v   = voltage
+# soc = state of charge (%)
+# m   = moisture
+# temp= temperature (°C)
+# uv  = raw UV count
+# uvi = UV index
+# lux = lux
+# n   = node ID
+# q   = sequence number
+# ts  = ISO timestamp
 
-# Main
-ble = bluetooth.BLE()
-temp_service = Telemetry(ble)
+
+def write_batch_to_sd(lines):
+    with open("/sd/data.txt", "a") as f:
+        for line in lines:
+            f.write(line + "\n")
+
+def package_battery_data():
+    return {
+        "t": "batt",
+        "v": round(max17.cell_voltage, 2),
+        "soc": round(max17.cell_percent, 1),
+    }
+
+def package_uv_data():
+    return {
+        "t": "uv",
+        "uv": ltr.uvs,
+        "uvi": round(ltr.uvi, 2),
+        "lux": round(ltr.lux, 1),
+    }
+
+
+def make_soil_fn(sensor_id, sensor_obj):
+    def read():
+        return {
+            "t": f"s{sensor_id}",
+            "m": sensor_obj.moisture_read(),
+            "tmp": round(sensor_obj.get_temp(), 2),
+        }
+    return read
+
+
+
+
+SENSORS = []
+if max17:
+    SENSORS.append(("bt", package_battery_data))
+if ltr:
+    SENSORS.append(("uv", package_uv_data))
+
+soil_sensors = [(0, soil_0), (1, soil_1), (2, soil_2)]
+for sid, sobj in soil_sensors:
+    if sobj:
+        SENSORS.append((f"s{sid}", make_soil_fn(sid, sobj)))
+

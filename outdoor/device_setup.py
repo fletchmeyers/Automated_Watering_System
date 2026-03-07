@@ -1,5 +1,5 @@
 '''
-Designed for a Pico W RP2040 running CircuitPython 10.0.3
+CircuitPython 10.0.3 running on Pico 2W RP2350
 Set up SPI for microSD and radio, I2C bus, and other sensors (flow meter, battery monitors)
 
 
@@ -33,12 +33,9 @@ sequence = 0
 # SPI SETUP
 spi = busio.SPI(clock=board.GP18, MOSI=board.GP19, MISO=board.GP16)
 
-
-
 # Radio pins
 radio_cs = digitalio.DigitalInOut(board.GP22)
 radio_reset = digitalio.DigitalInOut(board.GP26)
-
 rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
 rfm69.tx_power = 13
 rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
@@ -51,12 +48,24 @@ storage.mount(vfs, "/sd")
 
 
 
+
+
+def try_init(name, init_fn):
+    try:
+        return init_fn()
+    except Exception as e:
+        print(f"[WARN] Could not init {name}: {e}")
+        return None
+    
+
 # I2C + SENSORS
 i2c = board.STEMMA_I2C()
-rtc = PCF8523(i2c) #fixed address: 0x68
-max17 = adafruit_max1704x.MAX17048(i2c) #fixed address: 0x36
-ltr = adafruit_ltr390.LTR390(i2c) #fixed address: 0x53
-soil = Seesaw(i2c, addr=0x39)
+rtc = try_init("RTC", lambda: PCF8523(i2c))#fixed address: 0x68
+max17 = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c) )#fixed address: 0x36
+ltr = try_init("LTR390", lambda: adafruit_ltr390.LTR390(i2c)) #fixed address: 0x53
+soil_0 = try_init("Soil_0", lambda: Seesaw(i2c, addr=0x37))
+soil_1 = try_init("Soil_1", lambda: Seesaw(i2c, addr=0x38))
+soil_2 = try_init("Soil_2", lambda: Seesaw(i2c, addr=0x39))
 
 
 
@@ -67,63 +76,5 @@ def get_timestamp():
         t.tm_year, t.tm_mon, t.tm_mday,
         t.tm_hour, t.tm_min, t.tm_sec
     )
-
-
-def write_to_sd(line):
-    with open("/sd/data.txt", "a") as f:
-        f.write(line + "\n")
-
-
-def send_packet(packet_dict):
-    global sequence
-
-    packet_dict["node"] = NODE_ID
-    packet_dict["seq"] = sequence
-    packet_dict["ts"] = get_timestamp()
-
-    sequence += 1
-
-    packet_string = json.dumps(packet_dict, separators=(",", ":"))
-    print("Sending:", packet_string)
-    write_to_sd(packet_string)
-    rfm69.send(packet_string.encode("utf-8"))
-
-
-
-
-def package_battery_data():
-    data = {
-        "type": "batt",
-        "v": round(max17.cell_voltage, 2),
-        "soc": round(max17.cell_percent, 1),
-    }
-    send_packet(data)
-
-
-def package_uv_data():
-    data = {
-        "type": "uv",
-        "uv": ltr.uvs,
-        "uvi": round(ltr.uvi, 2),
-        "lux": round(ltr.lux, 1),
-    }
-    send_packet(data)
-
-
-def package_soil_humidity_data():
-    data = {
-        "type": "soil",
-        "m": soil.moisture_read(),
-        "t": round(soil.get_temp(), 2),
-    }
-    send_packet(data)
-
-
-SENSORS = [
-    ("battery", package_battery_data),
-    ("uv", package_uv_data),
-    ("soil", package_soil_humidity_data),
-]
-
 
 
