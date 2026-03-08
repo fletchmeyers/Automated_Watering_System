@@ -9,24 +9,34 @@ March 2026
 '''
 
 import json
-from device_setup import NODE_ID, rfm69, sequence, max17, ltr, soil_0, soil_1, soil_2
+try: 
+    from device_setup import NODE_ID, rfm69, max17, ltr, soil_0, soil_1, soil_2
+except (ImportError, ModuleNotFoundError):
+    NODE_ID = None
+    rfm69 = None
+    max17 = None
+    ltr = None
+    soil_0 = soil_1 = soil_2 = None
 
 
-def send_packet(packet_dict):
-    global sequence
+class PacketSender:
+    def __init__(self, node_id, radio):
+        self.node_id = node_id
+        self.radio = radio
+        self.sequence = 0
 
-    packet_dict["n"] = NODE_ID
-    packet_dict["q"] = sequence
+    def send(self, packet_dict):
+        packet_dict["n"] = self.node_id
+        packet_dict["q"] = self.sequence
+        self.sequence += 1
 
-    sequence += 1
-    packet_string = json.dumps(packet_dict, separators=(",", ":"))
+        packet_string = json.dumps(packet_dict, separators=(",", ":"))
+        try:
+            self.radio.send(packet_string.encode("utf-8"))
+        except AssertionError:
+            print("Packet too large:", len(packet_string), "bytes")
 
-    try: 
-        print("Sending:", packet_string)
-        rfm69.send(packet_string.encode("utf-8"))
-    except AssertionError as e: 
-        print("Packet too large for radio: ", len(packet_string), " bytes")
-        #TODO: break packet up into smaller parts and try radio again
+
 
 
 # Packet key reference:
@@ -48,19 +58,21 @@ def write_batch_to_sd(lines):
         for line in lines:
             f.write(line + "\n")
 
-def package_battery_data():
+def package_battery_data(sensor=None):
+    s = sensor if sensor is not None else max17
     return {
         "t": "batt",
-        "v": round(max17.cell_voltage, 2),
-        "soc": round(max17.cell_percent, 1),
+        "v": round(s.cell_voltage, 2),
+        "soc": round(s.cell_percent, 1),
     }
 
-def package_uv_data():
+def package_uv_data(sensor=None):
+    s = sensor if sensor is not None else ltr
     return {
         "t": "uv",
-        "uv": ltr.uvs,
-        "uvi": round(ltr.uvi, 2),
-        "lux": round(ltr.lux, 1),
+        "uv": s.uvs,
+        "uvi": round(s.uvi, 2),
+        "lux": round(s.lux, 1),
     }
 
 
@@ -74,9 +86,8 @@ def make_soil_fn(sensor_id, sensor_obj):
     return read
 
 
-
-
 SENSORS = []
+
 if max17:
     SENSORS.append(("bt", package_battery_data))
 if ltr:

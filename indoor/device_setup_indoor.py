@@ -4,6 +4,7 @@ import digitalio
 import adafruit_rfm69
 import json
 import threading
+import time
 
 GLED = digitalio.DigitalInOut(board.D21)
 GLED.direction = digitalio.Direction.OUTPUT
@@ -31,7 +32,7 @@ rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x0
 
 led_lock = threading.Lock()
 
-def blink_led(led, times=1, duration=0.15):
+def blink_gled(led, times=1, duration=0.15):
     if not led_lock.acquire(blocking=False):
         return  # skip blink if one is already in progress
     try:

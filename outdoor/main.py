@@ -11,21 +11,24 @@ February 2026
 
 import time
 import json
-from device_setup import SEND_INTERVAL, get_timestamp
-from communication_garden import SENSORS, send_packet, write_batch_to_sd
+from device_setup import SEND_INTERVAL, get_timestamp, NODE_ID, rfm69, max17, ltr, soil_0, soil_1, soil_2
+from communication_garden import SENSORS, PacketSender, write_batch_to_sd
 
+
+
+sender = PacketSender(NODE_ID, rfm69)
 
 while True:
     ts = get_timestamp()
     sd_buffer = []
 
-    send_packet({"t": "ts", "v": ts})
+    sender.send({"t": "ts", "v": ts})
 
     for sensor_name, sensor_function in SENSORS:
 
         try:
             data = sensor_function()
-            send_packet(data)
+            sender.send(data)
             sd_buffer.append(data)
 
         except Exception as e:

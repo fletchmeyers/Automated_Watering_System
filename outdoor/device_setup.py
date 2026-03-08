@@ -5,8 +5,6 @@ Set up SPI for microSD and radio, I2C bus, and other sensors (flow meter, batter
 
 '''
 
-import time
-import json
 import board
 import busio
 import digitalio
@@ -70,11 +68,10 @@ soil_2 = try_init("Soil_2", lambda: Seesaw(i2c, addr=0x39))
 
 
 
-def get_timestamp():
-    t = rtc.datetime
+def get_timestamp(clock=None):
+    t = (clock if clock is not None else rtc).datetime
     return "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}".format(
         t.tm_year, t.tm_mon, t.tm_mday,
         t.tm_hour, t.tm_min, t.tm_sec
     )
-
 
