@@ -1,11 +1,3 @@
-'''
-Python 3 running on Raspberry Pi 3B
-
-Receive data via the RFM69 radio module and print it to the terminal. 
-
-We'll probably want to have the Pi save the data to a .txt file (or whatever format) and use that file to update the website.
-'''
-
 # SPDX-FileCopyrightText: 2018 Tony DiCola for Adafruit Industries
 # SPDX-License-Identifier: MIT
 
@@ -15,18 +7,20 @@ We'll probably want to have the Pi save the data to a .txt file (or whatever for
 import board
 import busio
 import digitalio
-import adafruit_rfm69
-import json
 
-GLED = digitalio.DigitalInOut(board.D21)
-GLED.direction = digitalio.Direction.OUTPUT
+import adafruit_rfm69
 
 # Define radio parameters.
-RADIO_FREQ_MHZ = 915.0  
+RADIO_FREQ_MHZ = 915.0  # Frequency of the radio in Mhz. Must match your
+# module! Can be a value like 915.0, 433.0, etc.
 
-# Radio setup
+# Define pins connected to the chip, use these if wiring up the breakout according to the guide:
 CS = digitalio.DigitalInOut(board.D25)
 RESET = digitalio.DigitalInOut(board.D24)
+# Or uncomment and instead use these if using a Feather M0 RFM69 board
+# and the appropriate CircuitPython build:
+# CS = digitalio.DigitalInOut(board.RFM69_CS)
+# RESET = digitalio.DigitalInOut(board.RFM69_RST)
 
 # Define the onboard LED
 LED = digitalio.DigitalInOut(board.D13)
@@ -63,16 +57,9 @@ print("Waiting for packets...")
 while True:
     packet = rfm69.receive(with_header=True)
 
-    if packet is not None:
-        try:
-            # RFM69 with_header=True prepends 4 header bytes
-            payload = packet[4:].decode("utf-8")
-            data = json.loads(payload)
-            print("Parsed:", data)
-            # TODO: write to file / database / MQTT
-            GLED.value = True
-            print("Raw packet bytes:", packet)
-            print("Length:", len(packet))
-
-        except Exception as e:
-            print("Bad packet:", e)
+    if packet is None:
+        LED.value = False
+    else:
+        LED.value = True
+        print("Raw packet bytes:", packet)
+        print("Length:", len(packet))

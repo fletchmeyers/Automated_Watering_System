@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2023 Liz Clark for Adafruit Industries
-#
-# SPDX-License-Identifier: MIT
-"""CircuitPython PiCowbell Adalogger Example"""
+'''
+CircuitPython 10.0.3 running on Pico 2W RP2350
+'''
+
 import time
 import board
 import sdcardio

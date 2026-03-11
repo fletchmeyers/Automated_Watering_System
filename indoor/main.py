@@ -1,51 +1,47 @@
 '''
-Designed for a Raspberry Pi 3B running Raspian Bookworm
+Python 3 running on Raspberry Pi 3B
 
-Telemetry connection with a Pico W RP2040 -
-    Scan for connection
-    If connection is present, print out received data
+Receive data via the RFM69 radio module and print it to the terminal. 
 
-Planned expansion -
-    Host a website that displays data from the Pico W 
-    Connect other sensors directly to the Pi 
-    Add other peripheral systems to the network
-
-Written by Fletcher Meyers - May 2025
-#!NEEDS UPDATE - this file is written to work with an MCU running Micropython, not Circuitpython!
-
+We'll probably want to have the Pi save the data to a .txt file (or whatever format) and use that file to update the website.
 '''
+from device_setup_indoor import rfm69, GLED, RLED, blink_led
+import json
+import threading
 
-import asyncio
-from bleak import BleakScanner, BleakClient
 
-PICO_NAME = "PicoTemp"
-TEMP_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
-TEMP_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+# Print out some chip state:
+print(f"Temperature: {rfm69.temperature}C")
+print(f"Frequency: {rfm69.frequency_mhz}mhz")
+print(f"Bit rate: {rfm69.bitrate / 1000}kbit/s")
+print(f"Frequency deviation: {rfm69.frequency_deviation}hz")
 
-async def main():
-    print("Scanning for PicoTemp...")
-    devices = await BleakScanner.discover()
-    pico = next((d for d in devices if d.name and PICO_NAME in d.name), None)
 
-    if not pico:
-        print("PicoTemp not found.")
-        return
+rfm69.send(bytes("Hello world!\r\n", "utf-8"))
+print("Sent hello world message!")
+print("Waiting for packets...")
 
-    print(f"Connecting to {pico.name} ({pico.address})...")
-    async with BleakClient(pico) as client:
-        print("Connected.")
 
-        def handle_notify(_, data):
-            try:
-                temp_str = data.decode("utf-8")
-                temp_val = float(temp_str)
-                print(f"Received temp: {temp_val:.2f} °C")
-            except Exception as e:
-                print("Decode error:", e)
+current_ts = None
 
-        await client.start_notify(TEMP_CHAR_UUID, handle_notify)
-        print("Receiving data... Press Ctrl+C to stop.")
-        while True:
-            await asyncio.sleep(1)
+while True:
+    packet = rfm69.receive(with_header=True)
+    if packet is not None:
+        try:
+            payload = packet[4:].decode("utf-8")
+            data = json.loads(payload)
+            print("Parsed:", data, "Length:", len(packet))
 
-asyncio.run(main())
+            if data.get("t") == "ts":
+                current_ts = data.get("v")
+            else:
+                if current_ts:
+                    data["ts"] = current_ts
+                with open("data_from_pico.txt", "a") as f:
+                    f.write(json.dumps(data) + "\n")
+
+            blink_led(GLED, times=2)
+
+        except Exception as e:
+            print("Bad packet:", e)
+            blink_led(RLED, times=1)
