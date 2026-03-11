@@ -6,10 +6,17 @@ import json
 import threading
 import time
 
+
+RLED = digitalio.DigitalInOut(board.D19)
+RLED.direction = digitalio.Direction.OUTPUT
+YLED = digitalio.DigitalInOut(board.D20)
+YLED.direction = digitalio.Direction.OUTPUT
 GLED = digitalio.DigitalInOut(board.D21)
 GLED.direction = digitalio.Direction.OUTPUT
 
- 
+RLED.value = False
+YLED.value = False
+GLED.value = False
 
 # Radio setup
 CS = digitalio.DigitalInOut(board.D25)
@@ -32,9 +39,17 @@ rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x0
 
 led_lock = threading.Lock()
 
-def blink_gled(led, times=1, duration=0.15):
+def blink_led(led, times=1, duration=0.15):
+    threading.Thread(
+        target=_blink_led_blocking,
+        args=(led,),
+        kwargs={"times": times, "duration": duration},
+        daemon=True
+    ).start()
+
+def _blink_led_blocking(led, times=1, duration=0.15):
     if not led_lock.acquire(blocking=False):
-        return  # skip blink if one is already in progress
+        return
     try:
         for _ in range(times):
             led.value = True
