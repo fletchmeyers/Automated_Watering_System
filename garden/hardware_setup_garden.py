@@ -33,7 +33,7 @@ spi = busio.SPI(clock=board.GP18, MOSI=board.GP19, MISO=board.GP16)
 
 # Radio pins
 radio_cs = digitalio.DigitalInOut(board.GP22)
-radio_reset = digitalio.DigitalInOut(board.GP26)
+radio_reset = digitalio.DigitalInOut(board.GP27)
 rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
 rfm69.tx_power = 13
 rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
