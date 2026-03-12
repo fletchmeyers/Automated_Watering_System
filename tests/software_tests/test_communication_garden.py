@@ -3,7 +3,7 @@ import json
 from tests.software_tests.mock_hardware import MockMAX17048, MockLTR390, MockSeesaw, MockRFM69, MockRTC
 
 from unittest.mock import MagicMock, patch
-from outdoor.communication_garden import package_battery_data, package_uv_data, make_soil_fn, PacketSender
+from garden.communication_garden import package_battery_data, package_uv_data, make_soil_fn, PacketSender
 
 
 

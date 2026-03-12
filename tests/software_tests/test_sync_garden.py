@@ -2,7 +2,7 @@ import pytest
 import json
 import time
 from unittest.mock import MagicMock, patch
-from outdoor.sync_garden import (
+from garden.sync_garden import (
     _parse_iso_timestamp,
     check_for_command,
     handle_sync,

@@ -1,4 +1,4 @@
-from device_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
+from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import sensor_health_report, DATA_FILE, check_and_forward_command
 import json
 

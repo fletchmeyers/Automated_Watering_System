@@ -9,7 +9,7 @@ from pathlib import Path
 # .parent.parent.parent = Automated_Watering_System
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / "indoor"))
-sys.path.insert(0, str(project_root / "outdoor"))
+sys.path.insert(0, str(project_root / "garden"))
 
 sys.modules['board'] = MagicMock()
 sys.modules['busio'] = MagicMock()

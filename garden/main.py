@@ -11,7 +11,7 @@ February 2026
 
 import time
 import json
-from device_setup import SEND_INTERVAL, get_timestamp, NODE_ID, rfm69, rtc
+from hardware_setup_garden import SEND_INTERVAL, get_timestamp, NODE_ID, rfm69, rtc
 from communication_garden import SENSORS, PacketSender, write_batch_to_sd
 from sync_garden import handle_sync, interruptible_sleep
 
@@ -22,11 +22,13 @@ while True:
     sd_buffer = []
 
     sender.send({"t": "ts", "v": ts})
+    time.sleep(0.1)
 
     for sensor_name, sensor_function in SENSORS:
         try:
             data = sensor_function()
             sender.send(data)
+            time.sleep(0.1)
             sd_buffer.append(data)
         except Exception as e:
             print(f"[ERROR] Sensor '{sensor_name}' failed:", e)

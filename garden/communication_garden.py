@@ -10,7 +10,7 @@ March 2026
 
 import json
 try: 
-    from device_setup import NODE_ID, rfm69, max17, ltr, soil_0, soil_1, soil_2
+    from hardware_setup_garden import NODE_ID, rfm69, max17, ltr, soil_0, soil_1, soil_2
 except (ImportError, ModuleNotFoundError):
     NODE_ID = None
     rfm69 = None
@@ -66,6 +66,13 @@ def package_battery_data(sensor=None):
         "soc": round(s.cell_percent, 1),
     }
 
+def package_radio_temp(sensor=None):
+    s = sensor if sensor is not None else rfm69
+    return {
+        "t": "rt",
+        "tmp": s.temperature,
+    }
+
 def package_uv_data(sensor=None):
     s = sensor if sensor is not None else ltr
     return {
@@ -88,6 +95,8 @@ def make_soil_fn(sensor_id, sensor_obj):
 
 SENSORS = []
 
+if rfm69:
+    SENSORS.append(("rt", package_radio_temp))
 if max17:
     SENSORS.append(("bt", package_battery_data))
 if ltr:
