@@ -128,6 +128,7 @@ def test_health_report_skips_blank_lines():
 
 
 # ── check_and_forward_command ─────────────────────────────────────────────────
+
 def test_forward_command_no_file(tmp_path):
     cmd_file = tmp_path / "pico_command.json"
     mock_radio = MagicMock()
