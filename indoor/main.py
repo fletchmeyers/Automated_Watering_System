@@ -1,4 +1,4 @@
-from device_setup_indoor import rfm69, GLED, RLED, blink_led
+from device_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import sensor_health_report, DATA_FILE, check_and_forward_command
 import json
 
@@ -12,8 +12,9 @@ current_ts = None
     
 while True:
     # Check if sync_indoor.py left a command for us to forward
-    check_and_forward_command(rfm69)
-
+    if check_and_forward_command(rfm69):
+        blink_led(YLED, times=2)
+        sensor_health_report(DATA_FILE)
     packet = rfm69.receive(with_header=True, timeout=1.0)  # use a timeout so we loop regularly
     if packet is None:
         continue
