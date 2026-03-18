@@ -18,19 +18,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# Data file written by main.py on the Pi
+
 DATA_FILE = Path(__file__).parent / "data_from_pico.txt"
-
-# How long to wait for the Pico's sync_ack after sending the sync command (seconds)
-ACK_TIMEOUT = 10
-
-# How long to wait for each follow-up sensor packet after the ack (seconds)
-BURST_PACKET_TIMEOUT = 3
+COMMAND_FILE = "/tmp/pico_command.json"
 
 
 # ── Sync functions ────────────────────────────────────────────────────────────
-
-COMMAND_FILE = "/tmp/pico_command.json"
 
 def request_sync():
     command = {"t": "sync", "ts": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
@@ -124,22 +117,7 @@ def sensor_health_report(filepath=DATA_FILE, n=100):
 
     return report
 
-def check_and_forward_command(radio):
-    cmd_path = Path(COMMAND_FILE)
-    if not cmd_path.exists():
-        return False
-    try:
-        command = json.loads(cmd_path.read_text())
-        packet = json.dumps(command, separators=(",", ":"))
-        radio.send(bytes(packet, "utf-8"))
-        print(f"[SYNC] Forwarded command to Pico: {command}")
-        return True
-    except Exception as e:
-        print(f"[SYNC] Failed to send command: {e}")
-        return False
-    finally:
-        cmd_path.unlink(missing_ok=True)
-        
+
 # ── Entry point (cron / manual) ───────────────────────────────────────────────
 
 if __name__ == "__main__":

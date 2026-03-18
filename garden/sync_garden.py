@@ -33,17 +33,14 @@ def _parse_iso_timestamp(ts_str):
 
 
 def check_for_command(radio, timeout=0.5):
-    '''
-    Listen on the radio for up to `timeout` seconds.
-    Returns a parsed dict if a valid JSON command packet arrives, else None.
-    Call this at the end of each main loop iteration.
-    '''
     packet = radio.receive(timeout=timeout, with_header=True)
     if packet is None:
         return None
     try:
         payload = packet[4:].decode("utf-8")
-        return json.loads(payload)
+        parsed = json.loads(payload)
+        print("[SYNC] Received command:", parsed)
+        return parsed
     except Exception as e:
         print("[SYNC] Could not parse incoming packet:", e)
         return None
@@ -59,8 +56,32 @@ def handle_sync(command, rtc, sender, get_timestamp_fn):
     except ValueError as e:
         print("[SYNC] Failed to set RTC:", e)
         return
+    time.sleep(1)
     sender.send({"t": "sync_ack", "ts": get_timestamp_fn()})
 
+def handle_set_interval(command, sender):
+    v = command.get("v")
+    if not isinstance(v, int) or v < 0:
+        print("[INTERVAL] Invalid interval value:", v)
+        return None
+    if v == 0:
+        print("[INTERVAL] Entering indefinite sleep mode")
+    else:
+        print(f"[INTERVAL] Send interval updated to {v}s")
+    time.sleep(5)
+    sender.send({"t": "set_interval_ack", "v": v})
+    return v
+
+def indefinite_sleep(radio, chunk=0.5):
+    '''
+    Listen for commands indefinitely, checking every `chunk` seconds.
+    Returns the first command packet received.
+    '''
+    while True:
+        command = check_for_command(radio, timeout=chunk)
+        if command is not None:
+            return command
+        
 def interruptible_sleep(radio, duration, chunk=0.5):
     '''
     Sleep for `duration` seconds, but check for incoming radio commands

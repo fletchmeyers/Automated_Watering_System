@@ -13,7 +13,7 @@ import time
 import json
 from hardware_setup_garden import SEND_INTERVAL, get_timestamp, NODE_ID, rfm69, rtc
 from communication_garden import SENSORS, PacketSender, write_batch_to_sd
-from sync_garden import handle_sync, interruptible_sleep
+from sync_garden import handle_sync, interruptible_sleep, indefinite_sleep, handle_set_interval
 
 sender = PacketSender(NODE_ID, rfm69)
 
@@ -38,6 +38,16 @@ while True:
 
     # Listen briefly for a command from the Pi.
     # timeout is kept short so it doesn't significantly stretch SEND_INTERVAL.
-    command = interruptible_sleep(rfm69, SEND_INTERVAL, chunk=0.5)
-    if command is not None and command.get("t") == "sync":
-        handle_sync(command, rtc, sender, get_timestamp)
+# Listen for commands, using indefinite sleep if interval is 0
+    if SEND_INTERVAL == 0:
+        command = indefinite_sleep(rfm69, chunk=0.5)
+    else:
+        command = interruptible_sleep(rfm69, SEND_INTERVAL, chunk=0.5)
+
+    if command is not None:
+        if command.get("t") == "sync":
+            handle_sync(command, rtc, sender, get_timestamp)
+        elif command.get("t") == "set_interval":
+            new_interval = handle_set_interval(command, sender)
+            if new_interval is not None:
+                SEND_INTERVAL = new_interval

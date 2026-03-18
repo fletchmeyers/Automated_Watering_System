@@ -1,78 +1,55 @@
 '''
 Python 3 running on Raspberry Pi 3B
 
-Receive data via the RFM69 radio module and print it to the terminal. 
-
-We'll probably want to have the Pi save the data to a .txt file (or whatever format) and use that file to update the website.
+CommandManager: forward commands from the Pi to the Pico and verify acknowledgement.
 '''
 
-# SPDX-FileCopyrightText: 2018 Tony DiCola for Adafruit Industries
-# SPDX-License-Identifier: MIT
-
-# Simple example to send a message and then wait indefinitely for messages
-# to be received.  This uses the default RadioHead compatible GFSK_Rb250_Fd250
-# modulation and packet format for the radio.
-import board
-import busio
-import digitalio
-import adafruit_rfm69
+import time
 import json
+from pathlib import Path
+from sync_indoor import COMMAND_FILE, sensor_health_report
 
-GLED = digitalio.DigitalInOut(board.D21)
-GLED.direction = digitalio.Direction.OUTPUT
 
-# Define radio parameters.
-RADIO_FREQ_MHZ = 915.0  
+class CommandManager:
+    def __init__(self):
+        self.pending = None
+        self._last_sent = 0
 
-# Radio setup
-CS = digitalio.DigitalInOut(board.D25)
-RESET = digitalio.DigitalInOut(board.D24)
-
-# Define the onboard LED
-LED = digitalio.DigitalInOut(board.D13)
-LED.direction = digitalio.Direction.OUTPUT
-
-# Initialize SPI bus.
-spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
-
-# Initialze RFM radio
-rfm69 = adafruit_rfm69.RFM69(spi, CS, RESET, RADIO_FREQ_MHZ)
-
-# Optionally set an encryption key (16 byte AES key). MUST match both
-# on the transmitter and receiver (or be set to None to disable/the default).
-rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
-
-# Print out some chip state:
-print(f"Temperature: {rfm69.temperature}C")
-print(f"Frequency: {rfm69.frequency_mhz}mhz")
-print(f"Bit rate: {rfm69.bitrate / 1000}kbit/s")
-print(f"Frequency deviation: {rfm69.frequency_deviation}hz")
-
-# Send a packet.  Note you can only send a packet up to 60 bytes in length.
-# This is a limitation of the radio packet size, so if you need to send larger
-# amounts of data you will need to break it into smaller send calls.  Each send
-# call will wait for the previous one to finish before continuing.
-rfm69.send(bytes("Hello world!\r\n", "utf-8"))
-print("Sent hello world message!")
-
-# Wait to receive packets.  Note that this library can't receive data at a fast
-# rate, in fact it can only receive and process one 60 byte packet at a time.
-# This means you should only use this for low bandwidth scenarios, like sending
-# and receiving a single message at a time.
-print("Waiting for packets...")
-while True:
-    packet = rfm69.receive(with_header=True)
-
-    if packet is not None:
+    def check_and_forward(self, radio):
+        cmd_path = Path(COMMAND_FILE)
+        if not cmd_path.exists():
+            return False
+        now = time.monotonic()
+        if now - self._last_sent < 10:  # wait at least 10s between attempts
+            return False
         try:
-            # RFM69 with_header=True prepends 4 header bytes
-            payload = packet[4:].decode("utf-8")
-            data = json.loads(payload)
-            print("Parsed:", data)
-            # TODO: write to file / database / MQTT
-            GLED.value = True
-            print("Raw packet bytes:", packet)
-            print("Length:", len(packet))
-
+            command = json.loads(cmd_path.read_text())
+            packet = json.dumps(command, separators=(",", ":"))
+            radio.send(bytes(packet, "utf-8"))
+            print(f"[CMD] Sent {len(packet)} bytes, waiting for ack...")
+            self.pending = command
+            self._last_sent = now
+            return True
         except Exception as e:
-            print("Bad packet:", e)
+            print(f"[CMD] Failed to send command: {e}")
+            return False
+    def handle_ack(self, data):
+        print(f"[CMD] handle_ack called with: {data}, pending: {self.pending}")
+        if self.pending is None:
+            return
+
+        pkt_type = data.get("t")
+        confirmed_v = data.get("v")
+        pending_t = self.pending.get("t")
+
+        if pkt_type == "sync_ack" and pending_t == "sync":
+            print(f"[CMD] Sync confirmed by Pico")
+            Path(COMMAND_FILE).unlink(missing_ok=True)
+            self.pending = None
+        elif pkt_type == "set_interval_ack" and pending_t == "set_interval":
+            if confirmed_v == self.pending.get("v"):
+                print(f"[CMD] Pico confirmed: set_interval v={confirmed_v}")
+                Path(COMMAND_FILE).unlink(missing_ok=True)
+                self.pending = None
+            else:
+                print(f"[CMD] Ack mismatch — expected {self.pending.get('v')}, got {confirmed_v}")
