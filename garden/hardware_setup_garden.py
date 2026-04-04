@@ -16,6 +16,8 @@ import adafruit_rfm69
 import adafruit_max1704x
 import adafruit_ltr390
 from adafruit_seesaw.seesaw import Seesaw
+import adafruit_sht4x
+import adafruit_sgp40
 
 
 
@@ -45,27 +47,26 @@ vfs = storage.VfsFat(sdcard)
 storage.mount(vfs, "/sd")
 
 
-
-
-
 def try_init(name, init_fn):
     try:
         return init_fn()
     except Exception as e:
         print(f"[WARN] Could not init {name}: {e}")
         return None
-    
+
 
 # I2C + SENSORS
 i2c = board.STEMMA_I2C()
-rtc = try_init("RTC", lambda: PCF8523(i2c))#fixed address: 0x68
-max17 = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c) )#fixed address: 0x36
-ltr = try_init("LTR390", lambda: adafruit_ltr390.LTR390(i2c)) #fixed address: 0x53
-soil_0 = try_init("Soil_0", lambda: Seesaw(i2c, addr=0x37))
-soil_1 = try_init("Soil_1", lambda: Seesaw(i2c, addr=0x38))
-soil_2 = try_init("Soil_2", lambda: Seesaw(i2c, addr=0x39))
-
-
+rtc    = try_init("RTC",      lambda: PCF8523(i2c))                     # 0x68
+max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))  # 0x36
+ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))     # 0x53
+soil_0 = try_init("Soil_0",   lambda: Seesaw(i2c, addr=0x37))
+soil_1 = try_init("Soil_1",   lambda: Seesaw(i2c, addr=0x38))
+soil_2 = try_init("Soil_2",   lambda: Seesaw(i2c, addr=0x39))
+sht40 = try_init("SHT40", lambda: adafruit_sht4x.SHT4x(i2c)) # 0x44
+if sht40: #Calibrate based on SHT40 temp, if available
+    sht40.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
+sgp40 = try_init("SGP40", lambda: adafruit_sgp40.SGP40(i2c)) #v0x59
 
 
 def get_timestamp(clock=None):
@@ -74,4 +75,3 @@ def get_timestamp(clock=None):
         t.tm_year, t.tm_mon, t.tm_mday,
         t.tm_hour, t.tm_min, t.tm_sec
     )
-
