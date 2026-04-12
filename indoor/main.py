@@ -1,6 +1,6 @@
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import sensor_health_report, DATA_FILE, COMMAND_FILE
-from communication_indoor import CommandManager
+from communication_indoor import CommandManager, BatchReceiver
 import json
 from pathlib import Path
 
@@ -10,8 +10,6 @@ if stale.exists():
     stale.unlink()
 
 
-
-
 print(f"Temperature: {rfm69.temperature}C")
 print(f"Frequency: {rfm69.frequency_mhz}mhz")
 print(f"Bit rate: {rfm69.bitrate / 1000}kbit/s")
@@ -19,17 +17,11 @@ print(f"Frequency deviation: {rfm69.frequency_deviation}hz")
 
 
 cmd = CommandManager()
-current_ts = None
+batch = BatchReceiver(DATA_FILE)
 
 while True:
-    forwarded = cmd.check_and_forward(rfm69)
-
     timeout = 6.0 if cmd.pending else 1.0
     packet = rfm69.receive(with_header=True, timeout=timeout)
-
-    if forwarded and packet is None:
-        sensor_health_report(DATA_FILE)
-        continue
 
     if packet is None:
         continue
@@ -40,24 +32,28 @@ while True:
         pkt_type = data.get("t")
 
         if pkt_type == "ts":
-            current_ts = data.get("v")
-        elif pkt_type == "sync_ack":
-            current_ts = data.get("ts")
-            print(f"[SYNC] Pico RTC confirmed: {current_ts}")
-            cmd.handle_ack(data)
-            blink_led(YLED, times=2)  
-            sensor_health_report(DATA_FILE)
-        elif pkt_type == "set_interval_ack":
-            cmd.handle_ack(data)
-            blink_led(YLED, times=2)  
-        else:
-            if current_ts:
-                data["ts"] = current_ts
-            with open(DATA_FILE, "a") as f:
-                f.write(json.dumps(data) + "\n")
-            print("Received:", data) # Take this out when we've got a nicer dashboard
+            batch.open_batch(data.get("v"))
 
-        blink_led(GLED, times=2)
+        elif pkt_type == "batch_end":
+            batch.close_batch(data)
+            batch.flush(rfm69)
+            # Forward any pending command now that the Pico is in its listen window
+            cmd.check_and_forward(rfm69)
+            blink_led(YLED, times=2)
+
+        elif cmd.handle_ack(data):
+            # Consumed as a command ack — nothing further to do
+            blink_led(YLED, times=2)
+
+        else:
+            complete = batch.collect(data)
+            if complete:
+                # Hit expected count before batch_end arrived
+                batch.flush(rfm69)
+                cmd.check_and_forward(rfm69)
+                blink_led(YLED, times=2)
+
+        blink_led(GLED, times=1)
 
     except Exception as e:
         print("Bad packet:", e)

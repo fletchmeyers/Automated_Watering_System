@@ -3,7 +3,7 @@ CircuitPython 10.0.3 running on Pico 2W RP2350
 
 Package sensor data and prepare it for radio and SD write.
 
-Written by Fletcher Meyers 
+Written by Fletcher Meyers
 March 2026
 
 '''
@@ -24,6 +24,30 @@ except ImportError:
     soil_0 = soil_1 = soil_2 = None
     sht40 = None
     sgp40 = None
+    ina238_0 = ina238_1 = ina238_2 = ina238_3 = None
+
+
+ACK_WAIT = 5
+
+
+# Packet key reference:
+# t        = type/sensor tag
+# v        = voltage
+# soc      = state of charge (%)
+# m        = moisture
+# tmp      = temperature (°C)
+# rh       = relative humidity (%)
+# voc      = SGP40 raw gas resistance (higher = cleaner air)
+# uv       = raw UV count
+# uvi      = UV index
+# lux      = lux
+# ma       = current (mA)
+# mw       = power (mW)
+# expected = number of sensors expected in batch (from len(SENSORS))
+# sent     = number of sensor packets actually sent in batch
+# n        = node ID
+# q        = sequence number
+# ts       = ISO timestamp
 
 
 class PacketSender:
@@ -43,27 +67,61 @@ class PacketSender:
         except AssertionError:
             print("Packet too large:", len(packet_string), "bytes")
 
-# Packet key reference:
-# t   = type/sensor tag
-# v   = voltage
-# soc = state of charge (%)
-# m   = moisture
-# tmp = temperature (°C)
-# rh  = relative humidity (%)
-# voc = SGP40 raw gas resistance (higher = cleaner air)
-# uv  = raw UV count
-# uvi = UV index
-# lux = lux
-# ma  = current (mA)
-# mw  = power (mW)
-# n   = node ID
-# q   = sequence number
-# ts  = ISO timestamp
+    def send_batch_end(self, expected, sent):
+        '''Send a batch_end packet carrying expected vs. actually sent sensor counts.'''
+        self.send({
+            "t": "batch_end",
+            "expected": expected,
+            "sent": sent,
+        })
+
+
+def check_ack(radio, expected_q):
+    '''
+    Listen for up to ACK_WAIT seconds after sending batch_end.
+
+    The Pi sends a data_ack first, then (if a command is pending) a command
+    packet shortly after. This function handles both in a single listen window:
+    - Returns (acked, command) where acked is True if a matching data_ack was
+      received, and command is any command packet received in the same window
+      (or None if no command arrived).
+    - Keeps listening for the full remaining window after the data_ack so that
+      a command sent 0.5s later is not missed.
+    '''
+    from sync_garden import check_for_command
+    import time
+
+    acked = False
+    command = None
+    deadline = time.monotonic() + ACK_WAIT
+
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        packet = check_for_command(radio, timeout=min(0.5, remaining))
+        if packet is None:
+            continue
+        pkt_type = packet.get("t")
+        if pkt_type == "data_ack":
+            if packet.get("q") == expected_q:
+                print(f"[ACK] Batch confirmed by Pi (q={expected_q}).")
+                acked = True
+            else:
+                print(f"[ACK] data_ack q mismatch — expected {expected_q}, got {packet.get('q')}.")
+        else:
+            # Anything that isn't a data_ack is treated as a command
+            command = packet
+
+    if not acked:
+        print("[ACK] No ack received — committing batch to SD.")
+
+    return acked, command
+
 
 def write_batch_to_sd(lines):
     with open("/sd/data.txt", "a") as f:
         for line in lines:
             f.write(line + "\n")
+
 
 def package_battery_data(sensor=None):
     s = sensor if sensor is not None else max17
@@ -114,6 +172,15 @@ def package_sgp40_data(sensor=None, temp=None, humidity=None):
         "voc": raw,
     }
 
+def package_ina238_data(sensor_id, sensor=None):
+    s = sensor
+    return {
+        "t": f"pw{sensor_id}",
+        "v": round(s.bus_voltage, 3),
+        "ma": round(s.current * 1000, 1),
+        "mw": round(s.power * 1000, 1),
+    }
+
 def make_soil_fn(sensor_id, sensor_obj):
     def read():
         return {
@@ -134,14 +201,6 @@ def make_sgp40_compensated_fn(sht_sensor, sgp_sensor):
         )
     return read
 
-def package_ina238_data(sensor_id, sensor=None):
-    s = sensor
-    return {
-        "t": f"pw{sensor_id}",
-        "v": round(s.bus_voltage, 3),
-        "ma": round(s.current * 1000, 1),
-        "mw": round(s.power * 1000, 1),
-    }
 
 SENSORS = []
 
