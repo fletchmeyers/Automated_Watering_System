@@ -14,6 +14,7 @@ try:
         NODE_ID, rfm69, max17, ltr,
         soil_0, soil_1, soil_2,
         sht40, sgp40,
+        ina238_0, ina238_1, ina238_2, ina238_3,
     )
 except ImportError:
     NODE_ID = None
@@ -42,7 +43,6 @@ class PacketSender:
         except AssertionError:
             print("Packet too large:", len(packet_string), "bytes")
 
-
 # Packet key reference:
 # t   = type/sensor tag
 # v   = voltage
@@ -54,10 +54,11 @@ class PacketSender:
 # uv  = raw UV count
 # uvi = UV index
 # lux = lux
+# ma  = current (mA)
+# mw  = power (mW)
 # n   = node ID
 # q   = sequence number
 # ts  = ISO timestamp
-
 
 def write_batch_to_sd(lines):
     with open("/sd/data.txt", "a") as f:
@@ -133,6 +134,14 @@ def make_sgp40_compensated_fn(sht_sensor, sgp_sensor):
         )
     return read
 
+def package_ina238_data(sensor_id, sensor=None):
+    s = sensor
+    return {
+        "t": f"pw{sensor_id}",
+        "v": round(s.bus_voltage, 3),
+        "ma": round(s.current * 1000, 1),
+        "mw": round(s.power * 1000, 1),
+    }
 
 SENSORS = []
 
@@ -156,3 +165,8 @@ soil_sensors = [(0, soil_0), (1, soil_1), (2, soil_2)]
 for sid, sobj in soil_sensors:
     if sobj:
         SENSORS.append((f"s{sid}", make_soil_fn(sid, sobj)))
+
+ina238_sensors = [(0, ina238_0), (1, ina238_1), (2, ina238_2), (3, ina238_3)]
+for sid, sobj in ina238_sensors:
+    if sobj:
+        SENSORS.append((f"pw{sid}", lambda s=sobj, i=sid: package_ina238_data(i, s)))

@@ -22,6 +22,7 @@
     --red: #f85149;
     --red-dim: #3d1a1a;
     --blue: #58a6ff;
+    --blue-dim: #0d2444;
     --teal: #39d0c4;
     --teal-dim: #0d2e2c;
     --purple: #bc8cff;
@@ -167,10 +168,11 @@
     border-radius: 4px;
     font-weight: 500;
   }
-  .badge-green { background: var(--green-dim); color: var(--green-bright); border: 1px solid var(--green); }
-  .badge-amber { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
-  .badge-red   { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
-  .badge-gray  { background: var(--bg3);        color: var(--muted); border: 1px solid var(--border); }
+  .badge-green  { background: var(--green-dim);  color: var(--green-bright); border: 1px solid var(--green); }
+  .badge-amber  { background: var(--amber-dim);  color: var(--amber);        border: 1px solid var(--amber); }
+  .badge-red    { background: var(--red-dim);    color: var(--red);          border: 1px solid var(--red); }
+  .badge-blue   { background: var(--blue-dim);   color: var(--blue);         border: 1px solid var(--blue); }
+  .badge-gray   { background: var(--bg3);        color: var(--muted);        border: 1px solid var(--border); }
 
   .big-value {
     font-family: var(--font-mono);
@@ -231,6 +233,13 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+    margin-top: 12px;
+  }
+
+  .row3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
     margin-top: 12px;
   }
 
@@ -297,6 +306,58 @@
     font-size: 11px;
     color: var(--muted);
     margin-top: 4px;
+  }
+
+  /* Power monitor grid */
+  .power-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .power-node {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+  }
+
+  .power-node-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+
+  .power-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+
+  .power-metric-inner {
+    text-align: center;
+  }
+
+  .power-metric-val {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--blue);
+  }
+
+  .power-metric-unit {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+  }
+
+  .power-node.no-data-node {
+    opacity: 0.35;
+    border-style: dashed;
   }
 
   .health-row {
@@ -450,6 +511,15 @@
       <span class="node-badge">Seesaw</span>
     </div>
     <div id="soil-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Power Monitors -->
+  <div class="card card-wide" id="card-power">
+    <div class="card-header">
+      <span class="card-title">Power Monitors</span>
+      <span id="power-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="power-body"><div class="no-data">No data</div></div>
   </div>
 
   <!-- System Health -->
@@ -742,6 +812,72 @@ function renderSoil(soilData) {
   }
 }
 
+// Power monitor node labels — edit these to match what each INA238 is actually measuring
+const POWER_NODE_LABELS = {
+  0: 'pw0 · monitor 0',
+  1: 'pw1 · monitor 1',
+  2: 'pw2 · monitor 2',
+  3: 'pw3 · monitor 3',
+};
+
+function renderPower(powerData) {
+  const ids = [0, 1, 2, 3];
+  const anyData = ids.some(id => powerData[id]);
+
+  // Badge: count how many nodes have data
+  const activeCount = ids.filter(id => powerData[id]).length;
+  const badge = document.getElementById('power-badge');
+  if (activeCount === 0) {
+    badge.className = 'card-badge badge-gray';
+    badge.textContent = 'no data';
+  } else {
+    badge.className = 'card-badge badge-blue';
+    badge.textContent = `${activeCount} active`;
+  }
+
+  if (!anyData) {
+    document.getElementById('power-body').innerHTML = '<div class="no-data">No power monitor data</div>';
+    return;
+  }
+
+  let html = '<div class="power-grid">';
+  for (const id of ids) {
+    const d = powerData[id];
+    if (!d) {
+      html += `<div class="power-node no-data-node">
+        <div class="power-node-label">${POWER_NODE_LABELS[id]}</div>
+        <div class="no-data" style="padding:4px 0;font-size:11px">not connected</div>
+      </div>`;
+      continue;
+    }
+    const v  = (d.v  ?? 0).toFixed(2);
+    const ma = (d.ma ?? 0).toFixed(0);
+    const mw = (d.mw ?? 0).toFixed(0);
+    // Color current: blue normally, amber if over 5A, red if over 9A
+    const maNum = d.ma ?? 0;
+    const maColor = maNum > 9000 ? '#f85149' : maNum > 5000 ? '#d29922' : '#58a6ff';
+    html += `<div class="power-node">
+      <div class="power-node-label">${POWER_NODE_LABELS[id]}</div>
+      <div class="power-metrics">
+        <div class="power-metric-inner">
+          <div class="power-metric-val" style="color:#58a6ff">${v}</div>
+          <div class="power-metric-unit">VOLTS</div>
+        </div>
+        <div class="power-metric-inner">
+          <div class="power-metric-val" style="color:${maColor}">${ma}</div>
+          <div class="power-metric-unit">mA</div>
+        </div>
+        <div class="power-metric-inner">
+          <div class="power-metric-val" style="color:#bc8cff">${mw}</div>
+          <div class="power-metric-unit">mW</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('power-body').innerHTML = html;
+}
+
 function renderHealth(packets) {
   const NON_SENSOR = new Set(['ts', 'sync_ack', 'sync']);
   const sensorPkts = packets.filter(p => !NON_SENSOR.has(p.t));
@@ -890,6 +1026,14 @@ async function refresh() {
     if (s) soilData[id] = s;
   }
   renderSoil(soilData);
+
+  // Power monitors
+  const powerData = {};
+  for (const id of [0, 1, 2, 3]) {
+    const p = getLatest(packets, `pw${id}`);
+    if (p) powerData[id] = p;
+  }
+  renderPower(powerData);
 
   // Health
   renderHealth(packets);

@@ -18,6 +18,7 @@ import adafruit_ltr390
 from adafruit_seesaw.seesaw import Seesaw
 import adafruit_sht4x
 import adafruit_sgp40
+import adafruit_ina23x
 
 
 
@@ -66,8 +67,13 @@ soil_2 = try_init("Soil_2",   lambda: Seesaw(i2c, addr=0x39))
 sht40 = try_init("SHT40", lambda: adafruit_sht4x.SHT4x(i2c)) # 0x44
 if sht40: #Calibrate based on SHT40 temp, if available
     sht40.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
-sgp40 = try_init("SGP40", lambda: adafruit_sgp40.SGP40(i2c)) #v0x59
+sgp40 = try_init("SGP40", lambda: adafruit_sgp40.SGP40(i2c)) #0x59
 
+
+ina238_0 = try_init("INA238_0x40", lambda: adafruit_ina23x.INA23X(i2c, address=0x40))
+ina238_1 = try_init("INA238_0x41", lambda: adafruit_ina23x.INA23X(i2c, address=0x41))
+ina238_2 = try_init("INA238_0x44", lambda: adafruit_ina23x.INA23X(i2c, address=0x44))
+ina238_3 = try_init("INA238_0x45", lambda: adafruit_ina23x.INA23X(i2c, address=0x45))
 
 def get_timestamp(clock=None):
     t = (clock if clock is not None else rtc).datetime
