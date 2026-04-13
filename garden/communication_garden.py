@@ -57,11 +57,14 @@ class PacketSender:
         self.sequence = 0
 
     def send(self, packet_dict):
-        packet_dict["n"] = self.node_id
-        packet_dict["q"] = self.sequence
+        # Build ordered packet: t, q, n first, then remaining sensor data keys
+        ordered = {"t": packet_dict["t"], "q": self.sequence, "n": self.node_id}
+        for k, v in packet_dict.items():
+            if k not in ordered:
+                ordered[k] = v
         self.sequence += 1
 
-        packet_string = json.dumps(packet_dict, separators=(",", ":"))
+        packet_string = json.dumps(ordered, separators=(",", ":"))
         try:
             self.radio.send(packet_string.encode("utf-8"))
         except AssertionError:

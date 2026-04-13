@@ -39,7 +39,6 @@ while True:
             batch.flush(rfm69)
             # Forward any pending command now that the Pico is in its listen window
             cmd.check_and_forward(rfm69)
-            blink_led(YLED, times=2)
 
         elif cmd.handle_ack(data):
             # Consumed as a command ack — nothing further to do
@@ -51,7 +50,6 @@ while True:
                 # Hit expected count before batch_end arrived
                 batch.flush(rfm69)
                 cmd.check_and_forward(rfm69)
-                blink_led(YLED, times=2)
 
         blink_led(GLED, times=1)
 
