@@ -6,6 +6,7 @@ from garden.sync_garden import (
     _parse_iso_timestamp,
     check_for_command,
     handle_sync,
+    handle_set_interval,
     interruptible_sleep,
 )
 
@@ -187,3 +188,43 @@ def test_interruptible_sleep_returns_command_mid_sleep():
     result = interruptible_sleep(radio, duration=10.0, chunk=0.5)
     assert result == command
     assert radio.receive.call_count == 3
+
+# ── handle_set_interval ───────────────────────────────────────────────────────
+
+def test_handle_set_interval_returns_new_value():
+    sender = MagicMock()
+    result = handle_set_interval({"t": "set_interval", "v": 60}, sender)
+    assert result == 60
+
+def test_handle_set_interval_sends_ack():
+    sender = MagicMock()
+    handle_set_interval({"t": "set_interval", "v": 60}, sender)
+    sender.send.assert_called_once()
+    sent_packet = sender.send.call_args[0][0]
+    assert sent_packet["t"] == "set_interval_ack"
+    assert sent_packet["v"] == 60
+
+def test_handle_set_interval_zero_allowed():
+    """v=0 means indefinite sleep — must be accepted and acked."""
+    sender = MagicMock()
+    result = handle_set_interval({"t": "set_interval", "v": 0}, sender)
+    assert result == 0
+    sender.send.assert_called_once()
+
+def test_handle_set_interval_negative_rejected():
+    sender = MagicMock()
+    result = handle_set_interval({"t": "set_interval", "v": -1}, sender)
+    assert result is None
+    sender.send.assert_not_called()
+
+def test_handle_set_interval_non_int_rejected():
+    sender = MagicMock()
+    result = handle_set_interval({"t": "set_interval", "v": "sixty"}, sender)
+    assert result is None
+    sender.send.assert_not_called()
+
+def test_handle_set_interval_missing_v_rejected():
+    sender = MagicMock()
+    result = handle_set_interval({"t": "set_interval"}, sender)
+    assert result is None
+    sender.send.assert_not_called()
