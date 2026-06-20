@@ -16,6 +16,9 @@ import adafruit_rfm69
 import adafruit_max1704x
 import adafruit_ltr390
 from adafruit_seesaw.seesaw import Seesaw
+import adafruit_sht4x
+import adafruit_sgp40
+import adafruit_ina23x
 
 
 
@@ -33,7 +36,7 @@ spi = busio.SPI(clock=board.GP18, MOSI=board.GP19, MISO=board.GP16)
 
 # Radio pins
 radio_cs = digitalio.DigitalInOut(board.GP22)
-radio_reset = digitalio.DigitalInOut(board.GP26)
+radio_reset = digitalio.DigitalInOut(board.GP27)
 rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
 rfm69.tx_power = 13
 rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
@@ -45,28 +48,32 @@ vfs = storage.VfsFat(sdcard)
 storage.mount(vfs, "/sd")
 
 
-
-
-
 def try_init(name, init_fn):
     try:
         return init_fn()
     except Exception as e:
         print(f"[WARN] Could not init {name}: {e}")
         return None
-    
+
 
 # I2C + SENSORS
 i2c = board.STEMMA_I2C()
-rtc = try_init("RTC", lambda: PCF8523(i2c))#fixed address: 0x68
-max17 = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c) )#fixed address: 0x36
-ltr = try_init("LTR390", lambda: adafruit_ltr390.LTR390(i2c)) #fixed address: 0x53
-soil_0 = try_init("Soil_0", lambda: Seesaw(i2c, addr=0x37))
-soil_1 = try_init("Soil_1", lambda: Seesaw(i2c, addr=0x38))
-soil_2 = try_init("Soil_2", lambda: Seesaw(i2c, addr=0x39))
+rtc    = try_init("RTC",      lambda: PCF8523(i2c))                     # 0x68
+max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))  # 0x36
+ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))     # 0x53
+soil_0 = try_init("Soil_0",   lambda: Seesaw(i2c, addr=0x37))
+soil_1 = try_init("Soil_1",   lambda: Seesaw(i2c, addr=0x38))
+soil_2 = try_init("Soil_2",   lambda: Seesaw(i2c, addr=0x39))
+sht40 = try_init("SHT40", lambda: adafruit_sht4x.SHT4x(i2c)) # 0x44
+if sht40: #Calibrate based on SHT40 temp, if available
+    sht40.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
+sgp40 = try_init("SGP40", lambda: adafruit_sgp40.SGP40(i2c)) #0x59
 
 
-
+ina238_0 = try_init("INA238_0x40", lambda: adafruit_ina23x.INA23X(i2c, address=0x40))
+ina238_1 = try_init("INA238_0x41", lambda: adafruit_ina23x.INA23X(i2c, address=0x41))
+ina238_2 = try_init("INA238_0x44", lambda: adafruit_ina23x.INA23X(i2c, address=0x44))
+ina238_3 = try_init("INA238_0x45", lambda: adafruit_ina23x.INA23X(i2c, address=0x45))
 
 def get_timestamp(clock=None):
     t = (clock if clock is not None else rtc).datetime
@@ -74,4 +81,3 @@ def get_timestamp(clock=None):
         t.tm_year, t.tm_mon, t.tm_mday,
         t.tm_hour, t.tm_min, t.tm_sec
     )
-

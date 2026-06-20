@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-from outdoor.device_setup import try_init, get_timestamp
+from garden.hardware_setup_garden import try_init, get_timestamp
 
 class TestTryInit(unittest.TestCase):
 
