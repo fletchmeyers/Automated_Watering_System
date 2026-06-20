@@ -2,18 +2,66 @@
 Python 3 running on Raspberry Pi 3B
 
 CommandManager: forward commands from the Pi to the Pico and verify acknowledgement.
-BatchReceiver: collect incoming sensor packets, detect batch completion, send data_ack.
+BatchReceiver:  collect incoming sensor packets, detect batch completion, send acks.
+PollingTimer:   decide when to poll each node on a regular schedule.
 '''
 
 import time
 import json
 from pathlib import Path
-from sync_indoor import COMMAND_FILE
+from sync_indoor import COMMAND_FILE, DATA_FILE
+
+
+class PollingTimer:
+    '''
+    Tracks when each node is due for a poll and when a bulk sync is due.
+
+    poll_interval    — how often (seconds) to send a "poll" to each node.
+    sync_interval    — how often (seconds) to request a bulk SD sync from each node.
+                       Set to 0 or None to disable automatic bulk sync.
+
+    Call due_nodes() each loop iteration to get a list of node IDs ready to be polled.
+    Call sync_due(node_id) to check if a bulk sync should be requested instead of a poll.
+    '''
+    def __init__(self, node_ids, poll_interval=60, sync_interval=3600):
+        self.node_ids      = list(node_ids)
+        self.poll_interval = poll_interval
+        self.sync_interval = sync_interval
+        now = time.monotonic()
+        # Stagger initial polls so nodes don't all fire at once on startup
+        self._last_poll = {nid: now - i * (poll_interval / max(len(node_ids), 1))
+                           for i, nid in enumerate(node_ids)}
+        self._last_sync = {nid: now for nid in node_ids}
+
+    def due_nodes(self):
+        '''Return list of node IDs whose poll timer has elapsed.'''
+        now = time.monotonic()
+        return [nid for nid in self.node_ids
+                if now - self._last_poll[nid] >= self.poll_interval]
+
+    def sync_due(self, node_id):
+        '''Return True if a bulk sync is due for this node.'''
+        if not self.sync_interval:
+            return False
+        return time.monotonic() - self._last_sync[node_id] >= self.sync_interval
+
+    def mark_polled(self, node_id):
+        self._last_poll[node_id] = time.monotonic()
+
+    def mark_synced(self, node_id):
+        self._last_sync[node_id] = time.monotonic()
 
 
 class CommandManager:
+    '''
+    Reads the command file written by sync_indoor helpers, forwards the command
+    to the Pico over radio, and waits for an acknowledgement packet.
+
+    Retries no more than once per 10 seconds to avoid flooding a slow Pico.
+    Clears the command file only after a confirmed ack.
+    '''
     def __init__(self):
-        self.pending = None
+        self.pending    = None
         self._last_sent = 0
 
     def check_and_forward(self, radio):
@@ -21,15 +69,15 @@ class CommandManager:
         if not cmd_path.exists():
             return False
         now = time.monotonic()
-        if now - self._last_sent < 10:  # wait at least 10s between attempts
+        if now - self._last_sent < 10:
             return False
         try:
             command = json.loads(cmd_path.read_text())
-            packet = json.dumps(command, separators=(",", ":"))
-            time.sleep(0.5)  # let Pico finish processing data_ack and enter listen window
+            packet  = json.dumps(command, separators=(",", ":"))
+            time.sleep(0.5)  # let Pico finish any in-progress work before listening
             radio.send(bytes(packet, "utf-8"))
-            print(f"[CMD] Sent {len(packet)} bytes, waiting for ack...")
-            self.pending = command
+            print(f"[CMD] Sent: {packet}")
+            self.pending    = command
             self._last_sent = now
             return True
         except Exception as e:
@@ -38,69 +86,74 @@ class CommandManager:
 
     def handle_ack(self, data) -> bool:
         '''
-        Handle a potential command ack packet.
-        Returns True if the packet was a recognised command ack (and was consumed).
-        Returns False if the packet is not a command ack and should be handled elsewhere.
+        Returns True if data is a recognised ack for the pending command (consumed).
+        Returns False if the packet should be handled elsewhere.
         '''
         if self.pending is None:
             return False
 
-        print(f"[CMD] handle_ack called with: {data}, pending: {self.pending}")
-
-        pkt_type = data.get("t")
-        confirmed_v = data.get("v")
-        pending_t = self.pending.get("t")
+        pkt_type   = data.get("t")
+        pending_t  = self.pending.get("t")
 
         if pkt_type == "sync_ack" and pending_t == "sync":
-            print(f"[CMD] Sync confirmed by Pico")
+            print("[CMD] Sync confirmed by Pico.")
             Path(COMMAND_FILE).unlink(missing_ok=True)
             self.pending = None
             return True
-        elif pkt_type == "set_interval_ack" and pending_t == "set_interval":
+
+        if pkt_type == "set_interval_ack" and pending_t == "set_interval":
+            confirmed_v = data.get("v")
             if confirmed_v == self.pending.get("v"):
-                print(f"[CMD] Pico confirmed: set_interval v={confirmed_v}")
-                Path(COMMAND_FILE).unlink(missing_ok=True)
-                self.pending = None
-                return True
+                print(f"[CMD] Pico confirmed set_interval v={confirmed_v}.")
             else:
-                print(f"[CMD] Ack mismatch — expected {self.pending.get('v')}, got {confirmed_v}")
-                return True  # still consumed — it was a set_interval_ack, just mismatched
+                print(f"[CMD] set_interval_ack mismatch — expected {self.pending.get('v')}, "
+                      f"got {confirmed_v}.")
+            Path(COMMAND_FILE).unlink(missing_ok=True)
+            self.pending = None
+            return True
+
+        if pkt_type == "sync_complete" and pending_t == "sync_request":
+            chunks = data.get("chunks", "?")
+            print(f"[CMD] Bulk sync complete ({chunks} chunks).")
+            Path(COMMAND_FILE).unlink(missing_ok=True)
+            self.pending = None
+            return True
 
         return False
 
 
 class BatchReceiver:
     '''
-    Tracks packets arriving from the Pico within a single batch.
+    Collects sensor packets arriving from the Pico within a single batch.
 
-    A batch opens on receipt of a `ts` packet and closes when either:
-      - a `batch_end` packet arrives, or
-      - the expected packet count (from `batch_end.expected`) is reached.
+    A batch opens on receipt of a "ts" packet (poll response) or the first
+    data packet of a bulk sync chunk. It closes when batch_end arrives.
 
-    On close, sends a `data_ack` to the Pico.
+    For bulk sync chunks, sends a per-chunk data_ack carrying the chunk number
+    so the Pico can advance to the next chunk.
 
-    Packets that should not be written to the data file (ts, batch_end, and
-    any packet consumed by CommandManager as a command ack) are filtered here.
+    For poll responses (no chunk field), sends a plain data_ack as before.
+
+    Packets in _SKIP_TYPES are not written to the data file.
     '''
 
-    _SKIP_TYPES = {"ts", "batch_end", "sync_ack", "set_interval_ack"}
+    _SKIP_TYPES = {"ts", "batch_end", "sync_ack", "set_interval_ack", "sync_complete"}
 
-    def __init__(self, data_file):
+    def __init__(self, data_file=DATA_FILE):
         self.data_file = data_file
         self._reset()
 
     def _reset(self):
-        self._current_ts = None
-        self._received = []     # sensor packets collected this batch
-        self._expected = None   # from batch_end.expected
-        self._sent = None       # from batch_end.sent (Pico's own count)
+        self._current_ts  = None
+        self._received    = []
+        self._expected    = None
+        self._sent        = None
         self._batch_end_q = None
+        self._chunk       = None   # present only during bulk sync
 
     def open_batch(self, ts_value):
-        '''Called when a `ts` packet arrives, marking the start of a new batch.'''
         if self._received:
-            print(f"[BATCH] Warning: opening new batch with {len(self._received)} "
-                  f"unwritten packets from previous batch — flushing.")
+            print(f"[BATCH] Warning: {len(self._received)} unwritten packets — flushing.")
             self._flush(radio=None, send_ack=False)
         self._reset()
         self._current_ts = ts_value
@@ -108,37 +161,35 @@ class BatchReceiver:
 
     def collect(self, data):
         '''
-        Accept a sensor packet into the current batch.
-        Attaches the current timestamp and appends to the buffer.
-        Returns True if the batch is now complete (hit expected count without batch_end).
+        Accept a sensor packet. Attaches current ts and appends to buffer.
+        Returns True if expected count reached before batch_end.
         '''
         if self._current_ts:
             data["ts"] = self._current_ts
         self._received.append(data)
 
         if self._expected is not None and len(self._received) >= self._expected:
-            print(f"[BATCH] Expected count reached ({self._expected}) before batch_end.")
+            print(f"[BATCH] Expected count {self._expected} reached before batch_end.")
             return True
         return False
 
     def close_batch(self, batch_end_packet):
-        '''
-        Called when a `batch_end` packet arrives.
-        Records expected/sent counts from the Pico for comparison.
-        '''
-        self._expected = batch_end_packet.get("expected")
-        self._sent = batch_end_packet.get("sent")
+        self._expected    = batch_end_packet.get("expected")
+        self._sent        = batch_end_packet.get("sent")
         self._batch_end_q = batch_end_packet.get("q")
+        self._chunk       = batch_end_packet.get("chunk")  # None for poll responses
 
         if self._sent is not None and len(self._received) < self._sent:
-            print(f"[BATCH] Pico sent {self._sent} packets but Pi received "
-                  f"{len(self._received)} — {self._sent - len(self._received)} dropped in radio.")
-        if self._sent is not None and self._expected is not None and self._sent < self._expected:
-            print(f"[BATCH] Pico reported {self._sent} sent of {self._expected} expected "
-                  f"— {self._expected - self._sent} sensor(s) failed on Pico.")
+            dropped = self._sent - len(self._received)
+            print(f"[BATCH] {dropped} packet(s) dropped in radio "
+                  f"(Pico sent {self._sent}, Pi received {len(self._received)}).")
+        if (self._sent is not None and self._expected is not None
+                and self._sent < self._expected):
+            failed = self._expected - self._sent
+            print(f"[BATCH] {failed} sensor(s) failed on Pico "
+                  f"({self._sent}/{self._expected} sent).")
 
     def flush(self, radio):
-        '''Write buffered packets to the data file and send data_ack to Pico.'''
         self._flush(radio=radio, send_ack=True)
 
     def _flush(self, radio, send_ack):
@@ -152,9 +203,15 @@ class BatchReceiver:
         print(f"[BATCH] Wrote {len(self._received)} packets to file.")
 
         if send_ack and radio is not None and self._batch_end_q is not None:
-            ack = json.dumps({"t": "data_ack", "q": self._batch_end_q}, separators=(",", ":"))
-            radio.send(bytes(ack, "utf-8"))
-            print(f"[BATCH] Sent data_ack (q={self._batch_end_q}).")
-            time.sleep(0.2)  # give Pi radio time to switch back to RX before next batch opens
+            # Include chunk number if this is part of a bulk sync so the Pico
+            # knows which chunk is being acked and can advance its cursor.
+            ack = {"t": "data_ack", "q": self._batch_end_q}
+            if self._chunk is not None:
+                ack["chunk"] = self._chunk
+            radio.send(bytes(json.dumps(ack, separators=(",", ":")), "utf-8"))
+            print(f"[BATCH] Sent data_ack (q={self._batch_end_q}"
+                  + (f", chunk={self._chunk}" if self._chunk is not None else "") + ").")
+            time.sleep(0.2)
 
         self._reset()
+
