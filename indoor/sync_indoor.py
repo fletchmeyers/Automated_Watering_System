@@ -4,6 +4,12 @@ Python 3 running on Raspberry Pi 3B
 Outbound command functions: poll nodes, request bulk sync, set interval.
 Also provides sensor_health_report() for diagnostics.
 
+Usage (while main.py is running):
+    python3 sync_indoor.py            — request a poll, wait for new data, run health report
+    python3 sync_indoor.py sync       — request a bulk SD sync, wait for completion
+    python3 sync_indoor.py health     — run health report only
+    python3 sync_indoor.py interval N — set sense interval to N seconds
+
 Written by Fletcher Meyers
 March 2026
 '''
@@ -17,13 +23,15 @@ from pathlib import Path
 DATA_FILE    = Path(__file__).parent / "data_from_pico.txt"
 COMMAND_FILE = "/tmp/pico_command.json"
 
+WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
+
 
 # ── Outbound commands ─────────────────────────────────────────────────────────
 
 def request_poll(node_id=1):
     '''
     Write a poll command to the command file.
-    Always includes the current time so the Pico can silently update its RTC —
+    Always includes the current time so the Pico silently updates its RTC —
     no separate sync/sync_ack round trip needed for routine clock maintenance.
     '''
     command = {
@@ -56,21 +64,65 @@ def request_set_interval(seconds, node_id=1):
     print(f"[INTERVAL] Command written: {command}")
 
 
-def request_sync(node_id=1):
-    '''
-    Explicit RTC sync (writes a "sync" command rather than a "poll").
-    Kept for manual/cron use; routine time updates now piggyback on poll packets.
+# ── Wait helpers (for use alongside a running main.py) ───────────────────────
 
-    # TODO: if handle_poll's silent RTC update proves reliable, remove this
-    # and the sync/sync_ack packet type from the protocol entirely.
+def wait_for_new_data(timeout=WAIT_TIMEOUT):
     '''
-    command = {
-        "t":  "sync",
-        "ts": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        "n":  node_id,
-    }
-    Path(COMMAND_FILE).write_text(json.dumps(command))
-    print(f"[SYNC] Command written: {command}")
+    Block until a new line appears in the data file, then return.
+    Used after request_poll() to confirm main.py forwarded the command
+    and the Pico responded.
+    '''
+    filepath = DATA_FILE
+    try:
+        before = filepath.stat().st_mtime if filepath.exists() else 0
+    except OSError:
+        before = 0
+
+    print(f"[POLL] Waiting up to {timeout}s for new data...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        try:
+            after = filepath.stat().st_mtime
+            if after > before:
+                print("[POLL] New data received.")
+                return True
+        except OSError:
+            pass
+    print("[POLL] Timed out waiting for poll response.")
+    return False
+
+
+def wait_for_sync_complete(timeout=WAIT_TIMEOUT):
+    '''
+    Block until the command file disappears, which main.py does when it
+    receives sync_complete from the Pico. Returns True on success.
+    '''
+    print(f"[SYNC] Waiting up to {timeout}s for bulk sync to complete...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        if not Path(COMMAND_FILE).exists():
+            print("[SYNC] Bulk sync confirmed complete.")
+            return True
+    print("[SYNC] Timed out waiting for sync_complete.")
+    return False
+
+
+def wait_for_interval_ack(timeout=WAIT_TIMEOUT):
+    '''
+    Block until the command file disappears, indicating main.py received
+    a set_interval_ack from the Pico.
+    '''
+    print(f"[INTERVAL] Waiting up to {timeout}s for interval ack...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        if not Path(COMMAND_FILE).exists():
+            print("[INTERVAL] Interval change confirmed.")
+            return True
+    print("[INTERVAL] Timed out waiting for set_interval_ack.")
+    return False
 
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────
@@ -82,7 +134,7 @@ def sensor_health_report(filepath=DATA_FILE, n=100):
 
     Returns a dict with keys: window, expected, seen, types, missing.
     '''
-    _NON_SENSOR_TYPES = {"ts", "sync_ack", "sync", "sync_complete"}
+    _NON_SENSOR_TYPES = {"ts", "sync_complete"}
     try:
         with open(filepath, "r") as f:
             lines = f.readlines()
@@ -141,14 +193,37 @@ def sensor_health_report(filepath=DATA_FILE, n=100):
     return report
 
 
-# ── Entry point (manual / cron) ───────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "sync":
-        request_bulk_sync()
-    else:
+    args = sys.argv[1:]
+
+    if not args or args[0] == "poll":
         request_poll()
-        print("\n[HEALTH] Running sensor health check...")
-        sensor_health_report(DATA_FILE, n=100)
+        wait_for_new_data()
+        sensor_health_report()
+
+    elif args[0] == "sync":
+        request_bulk_sync()
+        wait_for_sync_complete()
+
+    elif args[0] == "health":
+        sensor_health_report()
+
+    elif args[0] == "interval":
+        if len(args) < 2:
+            print("Usage: python3 sync_indoor.py interval <seconds>")
+            sys.exit(1)
+        try:
+            seconds = int(args[1])
+        except ValueError:
+            print("Interval must be a positive integer.")
+            sys.exit(1)
+        request_set_interval(seconds)
+        wait_for_interval_ack()
+
+    else:
+        print("Usage: python3 sync_indoor.py [poll|sync|health|interval <seconds>]")
+        sys.exit(1)
 

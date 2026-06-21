@@ -13,6 +13,7 @@ from pathlib import Path
 
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import DATA_FILE, COMMAND_FILE, request_poll, request_bulk_sync
+
 from communication_indoor import CommandManager, BatchReceiver, PollingTimer
 
 # ── Config ────────────────────────────────────────────────────────────────────
