@@ -65,6 +65,11 @@ while True:
         if pkt_type == "ts":
             batch.open_batch(data.get("v"))
 
+        elif pkt_type == "err":
+            print(f"[ERROR] Node {data.get('n')} could not send packet "
+                  f"q={data.get('q')} ({data.get('sz')} bytes — over radio limit).")
+            blink_led(RLED, times=1)
+
         elif pkt_type == "batch_end":
             batch.close_batch(data)
             batch.flush(rfm69)

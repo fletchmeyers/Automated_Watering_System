@@ -81,7 +81,17 @@ class PacketSender:
         try:
             self.radio.send(packet_string.encode("utf-8"))
         except AssertionError:
-            print("Packet too large:", len(packet_string), "bytes")
+            size = len(packet_string)
+            print(f"[ERROR] Packet too large: {size} bytes — {packet_string}")
+            # Notify the Pi with a compact error packet so it knows a reading was lost
+            err = json.dumps(
+                {"t": "err", "q": self.sequence - 1, "n": self.node_id, "sz": size},
+                separators=(",", ":")
+            )
+            try:
+                self.radio.send(err.encode("utf-8"))
+            except Exception as e:
+                print(f"[ERROR] Could not send error notification: {e}")
 
     def send_batch_end(self, expected, sent, chunk=None, total=None):
         '''
@@ -89,11 +99,12 @@ class PacketSender:
         chunk and total are included during bulk sync so the Pi can track progress
         and send a matching per-chunk ack.
         '''
-        pkt = {"t": "batch_end", "expected": expected, "sent": sent}
+        # "exp"/"snt"/"chk"/"tot" instead of full words to stay under 60-byte radio limit
+        pkt = {"t": "batch_end", "exp": expected, "snt": sent}
         if chunk is not None:
-            pkt["chunk"] = chunk
+            pkt["chk"] = chunk
         if total is not None:
-            pkt["total"] = total
+            pkt["tot"] = total
         self.send(pkt)
 
 
@@ -139,8 +150,9 @@ def append_to_sd(packets, timestamp):
     try:
         with open(SD_DATA_FILE, "a") as f:
             for pkt in packets:
-                pkt["ts"] = timestamp
-                f.write(json.dumps(pkt, separators=(",", ":")) + "\n")
+                stamped = dict(pkt)      # copy so latest_reading dicts are not mutated
+                stamped["ts"] = timestamp
+                f.write(json.dumps(stamped, separators=(",", ":")) + "\n")
     except Exception as e:
         print(f"[SD] Write failed: {e}")
 
@@ -196,7 +208,7 @@ def _wait_for_chunk_ack(radio, expected_chunk):
             continue
         try:
             data = json.loads(packet[4:].decode("utf-8"))
-            if data.get("t") == "data_ack" and data.get("chunk") == expected_chunk:
+            if data.get("t") == "data_ack" and data.get("chk") == expected_chunk:
                 print(f"[SYNC] Chunk {expected_chunk} acked.")
                 return True
         except Exception:
