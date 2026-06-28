@@ -2,13 +2,15 @@
 CircuitPython 10.0.3 running on Pico 2W RP2350
 
 Package sensor data and prepare it for radio and SD write.
+Provides send_latest() for poll responses and send_bulk_sync() for full SD transfers.
 
 Written by Fletcher Meyers
 March 2026
-
 '''
 
 import json
+import time
+
 try:
     from hardware_setup_garden import (
         NODE_ID, rfm69, max17, ltr,
@@ -27,12 +29,15 @@ except ImportError:
     ina238_0 = ina238_1 = ina238_2 = ina238_3 = None
 
 
-ACK_WAIT = 5
+SD_DATA_FILE    = "/sd/data.txt"
+SD_SENDING_FILE = "/sd/sending.txt"
+CHUNK_ACK_WAIT  = 5   # seconds to wait for a per-chunk ack before giving up
 
 
+# ---------------------------------------------------------------------------
 # Packet key reference:
 # t        = type/sensor tag
-# v        = voltage
+# v        = voltage (or set_interval value)
 # soc      = state of charge (%)
 # m        = moisture
 # tmp      = temperature (°C)
@@ -43,11 +48,20 @@ ACK_WAIT = 5
 # lux      = lux
 # ma       = current (mA)
 # mw       = power (mW)
-# expected = number of sensors expected in batch (from len(SENSORS))
-# sent     = number of sensor packets actually sent in batch
+# expected = number of sensors expected in batch
+# sent     = number of sensor packets actually sent
+# chunk    = chunk index (1-based) used during bulk sync
+# total    = total chunks in a bulk sync transfer
 # n        = node ID
 # q        = sequence number
 # ts       = ISO timestamp
+# ---------------------------------------------------------------------------
+
+
+# latest_reading holds the most recent complete sensor snapshot in memory.
+# It is a list of packet dicts, one per sensor, set by store_latest_reading().
+# The Pi can request this at any time via a "poll" command without touching the SD.
+latest_reading = []
 
 
 class PacketSender:
@@ -57,7 +71,6 @@ class PacketSender:
         self.sequence = 0
 
     def send(self, packet_dict):
-        # Build ordered packet: t, q, n first, then remaining sensor data keys
         ordered = {"t": packet_dict["t"], "q": self.sequence, "n": self.node_id}
         for k, v in packet_dict.items():
             if k not in ordered:
@@ -68,112 +81,250 @@ class PacketSender:
         try:
             self.radio.send(packet_string.encode("utf-8"))
         except AssertionError:
-            print("Packet too large:", len(packet_string), "bytes")
+            size = len(packet_string)
+            print(f"[ERROR] Packet too large: {size} bytes — {packet_string}")
+            # Notify the Pi with a compact error packet so it knows a reading was lost
+            err = json.dumps(
+                {"t": "err", "q": self.sequence - 1, "n": self.node_id, "sz": size},
+                separators=(",", ":")
+            )
+            try:
+                self.radio.send(err.encode("utf-8"))
+            except Exception as e:
+                print(f"[ERROR] Could not send error notification: {e}")
 
-    def send_batch_end(self, expected, sent):
-        '''Send a batch_end packet carrying expected vs. actually sent sensor counts.'''
-        self.send({
-            "t": "batch_end",
-            "expected": expected,
-            "sent": sent,
-        })
+    def send_batch_end(self, expected, sent, chunk=None, total=None):
+        '''
+        Send a batch_end packet.
+        chunk and total are included during bulk sync so the Pi can track progress
+        and send a matching per-chunk ack.
+        '''
+        # "exp"/"snt"/"chk"/"tot" instead of full words to stay under 60-byte radio limit
+        pkt = {"t": "batch_end", "exp": expected, "snt": sent}
+        if chunk is not None:
+            pkt["chk"] = chunk
+        if total is not None:
+            pkt["tot"] = total
+        self.send(pkt)
 
 
-def check_ack(radio, expected_q):
+def store_latest_reading(packets):
     '''
-    Listen for up to ACK_WAIT seconds after sending batch_end.
-
-    The Pi sends a data_ack first, then (if a command is pending) a command
-    packet shortly after. This function handles both in a single listen window:
-    - Returns (acked, command) where acked is True if a matching data_ack was
-      received, and command is any command packet received in the same window
-      (or None if no command arrived).
-    - Keeps listening for the full remaining window after the data_ack so that
-      a command sent 0.5s later is not missed.
+    Overwrite latest_reading with the freshly-read sensor packets.
+    Called at the end of each sense cycle in code.py.
     '''
-    from sync_garden import check_for_command
-    import time
+    global latest_reading
+    latest_reading = list(packets)
 
-    acked = False
-    command = None
-    deadline = time.monotonic() + ACK_WAIT
 
+def send_latest(sender, timestamp):
+    '''
+    Transmit the most recent in-memory sensor snapshot in response to a poll.
+    Uses the same burst format as before (ts header → sensor packets → batch_end)
+    so the Pi's existing BatchReceiver can handle it unchanged.
+    '''
+    if not latest_reading:
+        print("[POLL] No reading available yet, skipping.")
+        return
+
+    sender.send({"t": "ts", "v": timestamp})
+    time.sleep(0.1)
+
+    sent = 0
+    for pkt in latest_reading:
+        try:
+            sender.send(pkt)
+            time.sleep(0.1)
+            sent += 1
+        except Exception as e:
+            print(f"[POLL] Failed to send packet {pkt.get('t')}: {e}")
+
+    sender.send_batch_end(expected=len(latest_reading), sent=sent)
+
+
+def append_to_sd(packets, timestamp):
+    '''
+    Append a sensor snapshot to the SD data file.
+    Each packet is written as a JSON line tagged with the batch timestamp.
+    '''
+    try:
+        with open(SD_DATA_FILE, "a") as f:
+            for pkt in packets:
+                stamped = dict(pkt)      # copy so latest_reading dicts are not mutated
+                stamped["ts"] = timestamp
+                f.write(json.dumps(stamped, separators=(",", ":")) + "\n")
+    except Exception as e:
+        print(f"[SD] Write failed: {e}")
+
+
+def _count_lines(filepath):
+    '''Count lines in a file without loading it all into memory.'''
+    count = 0
+    try:
+        with open(filepath, "r") as f:
+            for _ in f:
+                count += 1
+    except OSError:
+        pass
+    return count
+
+
+def _read_chunk(filepath, start_line, chunk_size):
+    '''
+    Read up to chunk_size lines from filepath starting at start_line (0-indexed).
+    Returns a list of raw line strings (stripped).
+    CircuitPython has no seek(), so we iterate from the top each time.
+    This is O(n) but acceptable for the expected file sizes.
+
+    # TODO: if bulk sync of very large files becomes slow, consider writing
+    # a simple binary index file on the SD to allow faster seeking.
+    '''
+    lines = []
+    try:
+        with open(filepath, "r") as f:
+            for i, line in enumerate(f):
+                if i < start_line:
+                    continue
+                if i >= start_line + chunk_size:
+                    break
+                line = line.strip()
+                if line:
+                    lines.append(line)
+    except OSError as e:
+        print(f"[SD] Read failed at line {start_line}: {e}")
+    return lines
+
+
+def _wait_for_chunk_ack(radio, expected_chunk):
+    '''
+    Wait up to CHUNK_ACK_WAIT seconds for a data_ack matching expected_chunk.
+    Returns True if ack received, False on timeout.
+    '''
+    deadline = time.monotonic() + CHUNK_ACK_WAIT
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
-        packet = check_for_command(radio, timeout=min(0.5, remaining))
+        packet = radio.receive(timeout=min(0.5, remaining), with_header=True)
         if packet is None:
             continue
-        pkt_type = packet.get("t")
-        if pkt_type == "data_ack":
-            if packet.get("q") == expected_q:
-                print(f"[ACK] Batch confirmed by Pi (q={expected_q}).")
-                acked = True
-            else:
-                print(f"[ACK] data_ack q mismatch — expected {expected_q}, got {packet.get('q')}.")
-        else:
-            # Anything that isn't a data_ack is treated as a command
-            command = packet
-
-    if not acked:
-        print("[ACK] No ack received — committing batch to SD.")
-
-    return acked, command
+        try:
+            data = json.loads(packet[4:].decode("utf-8"))
+            if data.get("t") == "data_ack" and data.get("chk") == expected_chunk:
+                print(f"[SYNC] Chunk {expected_chunk} acked.")
+                return True
+        except Exception:
+            pass
+    print(f"[SYNC] No ack for chunk {expected_chunk} — aborting bulk sync.")
+    return False
 
 
-def write_batch_to_sd(lines):
-    with open("/sd/data.txt", "a") as f:
+def send_bulk_sync(sender, radio):
+    '''
+    Rename data.txt → sending.txt so new sensor data can accumulate uninterrupted,
+    then send sending.txt to the Pi in chunk-sized bursts, one batch_end + data_ack
+    handshake per chunk. Delete sending.txt only after all chunks are acked.
+
+    Each chunk is one sense-cycle's worth of lines grouped by their ts field,
+    or LINES_PER_CHUNK lines if grouping isn't feasible — currently we use a flat
+    line count per chunk for simplicity.
+
+    # TODO: group chunks by ts so each chunk is a clean sense-cycle boundary.
+    # For now, flat line count is fine and keeps the logic simple.
+    '''
+    LINES_PER_CHUNK = 20  # tune based on packet size vs radio throughput
+
+    # Rename so new data writes to a fresh data.txt immediately
+    try:
+        import os
+        os.rename(SD_DATA_FILE, SD_SENDING_FILE)
+    except OSError as e:
+        print(f"[SYNC] Could not rename data file: {e}")
+        return
+
+    total_lines = _count_lines(SD_SENDING_FILE)
+    if total_lines == 0:
+        print("[SYNC] No data to send.")
+        try:
+            import os
+            os.remove(SD_SENDING_FILE)
+        except OSError:
+            pass
+        sender.send({"t": "sync_complete", "chunks": 0})
+        return
+
+    # Calculate total number of chunks (ceiling division)
+    total_chunks = (total_lines + LINES_PER_CHUNK - 1) // LINES_PER_CHUNK
+    print(f"[SYNC] Starting bulk sync: {total_lines} lines, {total_chunks} chunks.")
+
+    for chunk_idx in range(total_chunks):
+        chunk_num = chunk_idx + 1
+        start_line = chunk_idx * LINES_PER_CHUNK
+        lines = _read_chunk(SD_SENDING_FILE, start_line, LINES_PER_CHUNK)
+
+        if not lines:
+            print(f"[SYNC] Chunk {chunk_num}: no lines read, skipping.")
+            continue
+
+        # Send each line as a raw packet — lines are already JSON from append_to_sd
+        sent = 0
         for line in lines:
-            f.write(line + "\n")
+            try:
+                radio.send(line.encode("utf-8"))
+                time.sleep(0.1)
+                sent += 1
+            except Exception as e:
+                print(f"[SYNC] Failed to send line: {e}")
 
+        sender.send_batch_end(
+            expected=len(lines),
+            sent=sent,
+            chunk=chunk_num,
+            total=total_chunks,
+        )
+
+        if not _wait_for_chunk_ack(radio, chunk_num):
+            print(f"[SYNC] Aborting at chunk {chunk_num}/{total_chunks}.")
+            # Leave sending.txt intact — Pi can request again later
+            return
+
+    # All chunks acked — clean up
+    try:
+        import os
+        os.remove(SD_SENDING_FILE)
+        print("[SYNC] Bulk sync complete. sending.txt deleted.")
+    except OSError as e:
+        print(f"[SYNC] Could not delete sending.txt: {e}")
+
+    sender.send({"t": "sync_complete", "chunks": total_chunks})
+
+
+# ---------------------------------------------------------------------------
+# Sensor read functions
+# ---------------------------------------------------------------------------
 
 def package_battery_data(sensor=None):
     s = sensor if sensor is not None else max17
-    return {
-        "t": "batt",
-        "v": round(s.cell_voltage, 2),
-        "soc": round(s.cell_percent, 1),
-    }
+    return {"t": "batt", "v": round(s.cell_voltage, 2), "soc": round(s.cell_percent, 1)}
 
 def package_radio_temp(sensor=None):
     s = sensor if sensor is not None else rfm69
-    return {
-        "t": "rt",
-        "tmp": s.temperature,
-    }
+    return {"t": "rt", "tmp": s.temperature}
 
 def package_uv_data(sensor=None):
     s = sensor if sensor is not None else ltr
-    return {
-        "t": "uv",
-        "uv": s.uvs,
-        "uvi": round(s.uvi, 2),
-        "lux": round(s.lux, 1),
-    }
+    return {"t": "uv", "uv": s.uvs, "uvi": round(s.uvi, 2), "lux": round(s.lux, 1)}
 
 def package_sht40_data(sensor=None):
     s = sensor if sensor is not None else sht40
     temperature, relative_humidity = s.measurements
-    return {
-        "t": "sht",
-        "tmp": round(temperature, 2),
-        "rh": round(relative_humidity, 1),
-    }
+    return {"t": "sht", "tmp": round(temperature, 2), "rh": round(relative_humidity, 1)}
 
 def package_sgp40_data(sensor=None, temp=None, humidity=None):
-    '''
-    Read raw VOC gas resistance from the SGP40.
-    If temp (°C) and humidity (%) are provided, applies compensation from SHT40.
-    Higher raw values indicate cleaner air.
-    '''
     s = sensor if sensor is not None else sgp40
     if temp is not None and humidity is not None:
         raw = s.measure_raw(temperature=temp, relative_humidity=humidity)
     else:
         raw = s.raw
-    return {
-        "t": "voc",
-        "voc": raw,
-    }
+    return {"t": "voc", "voc": raw}
 
 def package_ina238_data(sensor_id, sensor=None):
     s = sensor
@@ -194,16 +345,15 @@ def make_soil_fn(sensor_id, sensor_obj):
     return read
 
 def make_sgp40_compensated_fn(sht_sensor, sgp_sensor):
-    '''Read SHT40 first, pass temp+humidity to SGP40 for a compensated VOC read.'''
     def read():
         temperature, relative_humidity = sht_sensor.measurements
-        return package_sgp40_data(
-            sensor=sgp_sensor,
-            temp=temperature,
-            humidity=relative_humidity,
-        )
+        return package_sgp40_data(sensor=sgp_sensor, temp=temperature, humidity=relative_humidity)
     return read
 
+
+# ---------------------------------------------------------------------------
+# SENSORS list — ordered list of (name, read_fn) for each available sensor
+# ---------------------------------------------------------------------------
 
 SENSORS = []
 
@@ -217,18 +367,15 @@ if sht40:
     SENSORS.append(("sht", package_sht40_data))
 if sgp40:
     if sht40:
-        # Compensated read — preferred when both sensors are present
         SENSORS.append(("voc", make_sgp40_compensated_fn(sht40, sgp40)))
     else:
-        # Uncompensated fallback if SHT40 failed to init
         SENSORS.append(("voc", lambda: package_sgp40_data()))
 
-soil_sensors = [(0, soil_0), (1, soil_1), (2, soil_2)]
-for sid, sobj in soil_sensors:
+for sid, sobj in [(0, soil_0), (1, soil_1), (2, soil_2)]:
     if sobj:
         SENSORS.append((f"s{sid}", make_soil_fn(sid, sobj)))
 
-ina238_sensors = [(0, ina238_0), (1, ina238_1), (2, ina238_2), (3, ina238_3)]
-for sid, sobj in ina238_sensors:
+for sid, sobj in [(0, ina238_0), (1, ina238_1), (2, ina238_2), (3, ina238_3)]:
     if sobj:
         SENSORS.append((f"pw{sid}", lambda s=sobj, i=sid: package_ina238_data(i, s)))
+

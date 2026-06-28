@@ -1,8 +1,6 @@
 '''
 CircuitPython 10.0.3 running on Pico 2W RP2350
 Set up SPI for microSD and radio, I2C bus, and other sensors (flow meter, battery monitors)
-
-
 '''
 
 import board
@@ -21,14 +19,12 @@ import adafruit_sgp40
 import adafruit_ina23x
 
 
-
 # CONFIG
 NODE_ID = 1
-SEND_INTERVAL = 5
+SENSE_INTERVAL = 3       # seconds between sensor reads; updated via set_interval command
 RADIO_FREQ_MHZ = 915.0
 
 sequence = 0
-
 
 
 # SPI SETUP
@@ -58,22 +54,21 @@ def try_init(name, init_fn):
 
 # I2C + SENSORS
 i2c = board.STEMMA_I2C()
-rtc    = try_init("RTC",      lambda: PCF8523(i2c))                     # 0x68
-max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))  # 0x36
-ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))     # 0x53
+rtc    = try_init("RTC",      lambda: PCF8523(i2c))
+max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))
+ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))
 soil_0 = try_init("Soil_0",   lambda: Seesaw(i2c, addr=0x37))
 soil_1 = try_init("Soil_1",   lambda: Seesaw(i2c, addr=0x38))
 soil_2 = try_init("Soil_2",   lambda: Seesaw(i2c, addr=0x39))
-sht40 = try_init("SHT40", lambda: adafruit_sht4x.SHT4x(i2c)) # 0x44
-if sht40: #Calibrate based on SHT40 temp, if available
+sht40  = try_init("SHT40",    lambda: adafruit_sht4x.SHT4x(i2c))
+if sht40:
     sht40.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
-sgp40 = try_init("SGP40", lambda: adafruit_sgp40.SGP40(i2c)) #0x59
+sgp40     = try_init("SGP40",      lambda: adafruit_sgp40.SGP40(i2c))
+ina238_0  = try_init("INA238_0x40", lambda: adafruit_ina23x.INA23X(i2c, address=0x40))
+ina238_1  = try_init("INA238_0x41", lambda: adafruit_ina23x.INA23X(i2c, address=0x41))
+ina238_2  = try_init("INA238_0x44", lambda: adafruit_ina23x.INA23X(i2c, address=0x44))
+ina238_3  = try_init("INA238_0x45", lambda: adafruit_ina23x.INA23X(i2c, address=0x45))
 
-
-ina238_0 = try_init("INA238_0x40", lambda: adafruit_ina23x.INA23X(i2c, address=0x40))
-ina238_1 = try_init("INA238_0x41", lambda: adafruit_ina23x.INA23X(i2c, address=0x41))
-ina238_2 = try_init("INA238_0x44", lambda: adafruit_ina23x.INA23X(i2c, address=0x44))
-ina238_3 = try_init("INA238_0x45", lambda: adafruit_ina23x.INA23X(i2c, address=0x45))
 
 def get_timestamp(clock=None):
     t = (clock if clock is not None else rtc).datetime
@@ -81,3 +76,4 @@ def get_timestamp(clock=None):
         t.tm_year, t.tm_mon, t.tm_mday,
         t.tm_hour, t.tm_min, t.tm_sec
     )
+
