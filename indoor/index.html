@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Garden Sensor Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #21262d;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --green-dim: #1a3822;
+    --green-bright: #56d364;
+    --amber: #d29922;
+    --amber-dim: #2d2208;
+    --red: #f85149;
+    --red-dim: #3d1a1a;
+    --blue: #58a6ff;
+    --blue-dim: #0d2444;
+    --teal: #39d0c4;
+    --teal-dim: #0d2e2c;
+    --purple: #bc8cff;
+    --purple-dim: #261a3d;
+    --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: var(--green-dim);
+    border: 1px solid var(--green);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .logo-leaf {
+    width: 16px; height: 16px;
+    background: var(--green);
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 20% 70%, 50% 40%, 80% 70%, 50% 100%, 0% 50%);
+  }
+
+  h1 {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  h1 span { color: var(--green); }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .status-dot.stale { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: none; }
+  .status-dot.offline { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  #last-update {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  #refresh-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  #refresh-btn:hover { border-color: var(--text); color: var(--text); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-wide {
+    grid-column: span 2;
+  }
+
+  @media (max-width: 700px) {
+    .card-wide { grid-column: span 1; }
+    body { padding: 12px; }
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .card-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .badge-green  { background: var(--green-dim);  color: var(--green-bright); border: 1px solid var(--green); }
+  .badge-amber  { background: var(--amber-dim);  color: var(--amber);        border: 1px solid var(--amber); }
+  .badge-red    { background: var(--red-dim);    color: var(--red);          border: 1px solid var(--red); }
+  .badge-blue   { background: var(--blue-dim);   color: var(--blue);         border: 1px solid var(--blue); }
+  .badge-gray   { background: var(--bg3);        color: var(--muted);        border: 1px solid var(--border); }
+
+  .big-value {
+    font-family: var(--font-mono);
+    font-size: 38px;
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .big-unit {
+    font-size: 16px;
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  .sub-value {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+    font-family: var(--font-mono);
+  }
+
+  .bar-track {
+    height: 6px;
+    background: var(--bg3);
+    border-radius: 3px;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s ease;
+  }
+
+  .sparkline-row {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sparkline-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  canvas.spark {
+    height: 30px;
+    flex: 1;
+  }
+
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .row3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .mini-metric {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
+  .mini-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+
+  .mini-value {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 500;
+  }
+
+  .soil-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .soil-card {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+
+  .soil-arc-wrap {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 8px;
+  }
+
+  .soil-pct {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .soil-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+
+  .soil-temp {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* Power monitor grid */
+  .power-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .power-node {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+  }
+
+  .power-node-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+
+  .power-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+
+  .power-metric-inner {
+    text-align: center;
+  }
+
+  .power-metric-val {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--blue);
+  }
+
+  .power-metric-unit {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+  }
+
+  .power-node.no-data-node {
+    opacity: 0.35;
+    border-style: dashed;
+  }
+
+  .health-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .health-row:last-child { border-bottom: none; }
+
+  .health-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .health-name { flex: 1; color: var(--muted); }
+  .health-count { color: var(--text); }
+
+  .no-data {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px 0;
+  }
+
+  .history-canvas-wrap {
+    position: relative;
+    width: 100%;
+    height: 120px;
+    margin-top: 8px;
+  }
+
+  .voc-gauge {
+    margin-top: 8px;
+  }
+
+  .voc-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .voc-gradient-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(to right, var(--red), var(--amber), var(--green));
+    position: relative;
+    margin-bottom: 6px;
+  }
+
+  .voc-pointer {
+    position: absolute;
+    top: -3px;
+    width: 2px;
+    height: 14px;
+    background: var(--text);
+    border-radius: 1px;
+    transform: translateX(-50%);
+    transition: left 0.6s ease;
+  }
+
+  .node-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  footer {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #packets-count { color: var(--blue); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon"><div class="logo-leaf"></div></div>
+    <h1>garden<span>/</span>dashboard</h1>
+  </div>
+  <div class="header-right">
+    <div id="status-dot" class="status-dot stale"></div>
+    <span id="last-update">loading...</span>
+    <button id="refresh-btn" onclick="refresh()">↺ refresh</button>
+  </div>
+</header>
+
+<div class="grid" id="grid">
+
+  <!-- Battery -->
+  <div class="card" id="card-batt">
+    <div class="card-header">
+      <span class="card-title">Battery</span>
+      <span id="batt-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="batt-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Air: SHT40 -->
+  <div class="card" id="card-sht">
+    <div class="card-header">
+      <span class="card-title">Temperature & Humidity</span>
+      <span class="node-badge">SHT40</span>
+    </div>
+    <div id="sht-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Air Quality: SGP40 -->
+  <div class="card" id="card-voc">
+    <div class="card-header">
+      <span class="card-title">Air Quality (VOC)</span>
+      <span id="voc-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="voc-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- UV & Light -->
+  <div class="card" id="card-uv">
+    <div class="card-header">
+      <span class="card-title">UV & Light</span>
+      <span class="node-badge">LTR390</span>
+    </div>
+    <div id="uv-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Soil Sensors -->
+  <div class="card card-wide" id="card-soil">
+    <div class="card-header">
+      <span class="card-title">Soil Sensors</span>
+      <span class="node-badge">Seesaw</span>
+    </div>
+    <div id="soil-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Power Monitors -->
+  <div class="card card-wide" id="card-power">
+    <div class="card-header">
+      <span class="card-title">Power Monitors</span>
+      <span id="power-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="power-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- System Health -->
+  <div class="card" id="card-health">
+    <div class="card-header">
+      <span class="card-title">Sensor Health</span>
+      <span id="health-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="health-body"><div class="no-data">Loading...</div></div>
+  </div>
+
+  <!-- Radio / System -->
+  <div class="card" id="card-system">
+    <div class="card-header">
+      <span class="card-title">Radio & System</span>
+      <span class="node-badge">RFM69</span>
+    </div>
+    <div id="system-body"><div class="no-data">No data</div></div>
+  </div>
+
+</div>
+
+<footer>
+  <span>data_from_pico.txt · auto-refresh 10s</span>
+  <span>packets in window: <span id="packets-count">–</span></span>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const DATA_FILE = const DATA_FILE = "https://raw.githubusercontent.com/fletchmeyers/Automated_Watering_System/main/data_from_pico.txt";
+const WINDOW = 200;
+const REFRESH_MS = 10000;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function soilPct(raw) {
+  return Math.round(clamp((raw - 200) / 8.23, 0, 100));
+}
+
+// VOC: SGP40 raw resistance. Higher = cleaner. Typical range ~15000–50000.
+// We invert to a 0-100 "pollution" scale for the gauge.
+function vocPollution(raw) {
+  const lo = 15000, hi = 50000;
+  const pct = (raw - lo) / (hi - lo);
+  return clamp(Math.round((1 - pct) * 100), 0, 100);
+}
+
+function tempColor(t) {
+  if (t < 10) return '#58a6ff';
+  if (t < 25) return '#3fb950';
+  if (t < 35) return '#d29922';
+  return '#f85149';
+}
+
+function rhColor(rh) {
+  if (rh < 30) return '#d29922';
+  if (rh < 70) return '#3fb950';
+  return '#58a6ff';
+}
+
+function battColor(soc) {
+  if (soc > 50) return '#3fb950';
+  if (soc > 20) return '#d29922';
+  return '#f85149';
+}
+
+function luxLabel(lux) {
+  if (lux < 10)   return 'dark';
+  if (lux < 200)  return 'dim';
+  if (lux < 1000) return 'indoor';
+  if (lux < 5000) return 'bright';
+  return 'direct sun';
+}
+
+function uviLabel(uvi) {
+  if (uvi < 3) return { label: 'low', cls: 'badge-green' };
+  if (uvi < 6) return { label: 'moderate', cls: 'badge-amber' };
+  return { label: 'high', cls: 'badge-red' };
+}
+
+function vocLabel(poll) {
+  if (poll < 30) return { label: 'good', cls: 'badge-green' };
+  if (poll < 60) return { label: 'moderate', cls: 'badge-amber' };
+  return { label: 'poor', cls: 'badge-red' };
+}
+
+function minutesAgo(isoTs) {
+  if (!isoTs) return null;
+  try {
+    const then = new Date(isoTs.replace('T', ' '));
+    const diff = (Date.now() - then.getTime()) / 1000;
+    if (diff < 90)   return Math.round(diff) + 's ago';
+    if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+    return Math.round(diff / 3600) + 'h ago';
+  } catch (e) { return null; }
+}
+
+// ── Sparkline via Chart.js ────────────────────────────────────────────────────
+
+const sparkCharts = {};
+
+function renderSparkline(canvasId, values, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (sparkCharts[canvasId]) { sparkCharts[canvasId].destroy(); }
+  const labels = values.map((_, i) => i);
+  sparkCharts[canvasId] = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        borderColor: color,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.4,
+        fill: true,
+        backgroundColor: color + '18',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: { display: false, grace: '10%' }
+      },
+      elements: { line: { borderCapStyle: 'round' } }
+    }
+  });
+}
+
+// ── SVG donut arc ─────────────────────────────────────────────────────────────
+
+function donutArc(pct, color, bg) {
+  const r = 34, cx = 40, cy = 40;
+  const circ = 2 * Math.PI * r;
+  const dash = (pct / 100) * circ;
+  return `<svg viewBox="0 0 80 80" width="80" height="80">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${bg}" stroke-width="7"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="7"
+      stroke-dasharray="${dash.toFixed(1)} ${circ.toFixed(1)}"
+      stroke-dashoffset="${(circ/4).toFixed(1)}"
+      stroke-linecap="round" transform="rotate(-90 ${cx} ${cy})"/>
+  </svg>`;
+}
+
+// ── Render functions ─────────────────────────────────────────────────────────
+
+function renderBattery(latest, history) {
+  const soc = latest.soc ?? 0;
+  const v   = latest.v ?? 0;
+  const color = battColor(soc);
+  const badge = soc > 50 ? 'badge-green' : soc > 20 ? 'badge-amber' : 'badge-red';
+  document.getElementById('batt-badge').className = 'card-badge ' + badge;
+  document.getElementById('batt-badge').textContent = soc > 50 ? 'good' : soc > 20 ? 'low' : 'critical';
+
+  document.getElementById('batt-body').innerHTML = `
+    <div class="big-value" style="color:${color}">${soc.toFixed(1)}<span class="big-unit">%</span></div>
+    <div class="sub-value">${v.toFixed(2)} V</div>
+    <div class="bar-track">
+      <div class="bar-fill" style="width:${soc}%;background:${color}"></div>
+    </div>
+    <div class="sparkline-row">
+      <span class="sparkline-label">SoC history</span>
+      <div style="position:relative;height:30px;flex:1"><canvas id="spark-batt"></canvas></div>
+    </div>`;
+
+  if (history.length > 1) renderSparkline('spark-batt', history, color);
+}
+
+function renderSHT(latest, tempHist, rhHist) {
+  const tmp = latest.tmp ?? 0;
+  const rh  = latest.rh ?? 0;
+
+  document.getElementById('sht-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div class="mini-label">TEMP</div>
+        <div class="big-value" style="color:${tempColor(tmp)};font-size:30px">${tmp.toFixed(1)}<span class="big-unit">°C</span></div>
+      </div>
+      <div>
+        <div class="mini-label">HUMIDITY</div>
+        <div class="big-value" style="color:${rhColor(rh)};font-size:30px">${rh.toFixed(1)}<span class="big-unit">%</span></div>
+      </div>
+    </div>
+    <div class="sparkline-row" style="margin-top:12px">
+      <span class="sparkline-label">Temp</span>
+      <div style="position:relative;height:28px;flex:1"><canvas id="spark-tmp"></canvas></div>
+    </div>
+    <div class="sparkline-row">
+      <span class="sparkline-label">RH</span>
+      <div style="position:relative;height:28px;flex:1"><canvas id="spark-rh"></canvas></div>
+    </div>`;
+
+  if (tempHist.length > 1) renderSparkline('spark-tmp', tempHist, tempColor(tmp));
+  if (rhHist.length > 1)   renderSparkline('spark-rh',  rhHist,  rhColor(rh));
+}
+
+function renderVOC(latest, history) {
+  const raw  = latest.voc ?? 0;
+  const poll = vocPollution(raw);
+  const info = vocLabel(poll);
+  document.getElementById('voc-badge').className = 'card-badge ' + info.cls;
+  document.getElementById('voc-badge').textContent = info.label;
+
+  const pct = (100 - poll); // pointer: 0% = poor (left), 100% = good (right)
+
+  document.getElementById('voc-body').innerHTML = `
+    <div class="big-value">${raw.toLocaleString()}<span class="big-unit" style="font-size:13px"> raw</span></div>
+    <div class="sub-value">higher = cleaner air</div>
+    <div class="voc-gauge">
+      <div class="voc-labels"><span>poor</span><span>moderate</span><span>good</span></div>
+      <div class="voc-gradient-bar">
+        <div class="voc-pointer" id="voc-ptr" style="left:${pct}%"></div>
+      </div>
+    </div>
+    <div class="sparkline-row" style="margin-top:8px">
+      <span class="sparkline-label">VOC history</span>
+      <div style="position:relative;height:28px;flex:1"><canvas id="spark-voc"></canvas></div>
+    </div>`;
+
+  if (history.length > 1) renderSparkline('spark-voc', history, '#39d0c4');
+}
+
+function renderUV(latest, luxHist) {
+  const lux    = latest.lux ?? 0;
+  const uvi    = latest.uvi ?? 0;
+  const uvRaw  = latest.uv ?? 0;
+  const uvInfo = uviLabel(uvi);
+
+  document.getElementById('uv-body').innerHTML = `
+    <div class="big-value" style="color:#d29922">${lux.toFixed(0)}<span class="big-unit">lux</span></div>
+    <div class="sub-value">${luxLabel(lux)}</div>
+    <div class="row2" style="margin-top:12px">
+      <div class="mini-metric">
+        <div class="mini-label">UV INDEX</div>
+        <div class="mini-value" style="color:${uvi < 3 ? '#3fb950' : uvi < 6 ? '#d29922' : '#f85149'}">${uvi.toFixed(2)}</div>
+      </div>
+      <div class="mini-metric">
+        <div class="mini-label">UV RAW</div>
+        <div class="mini-value">${uvRaw}</div>
+      </div>
+    </div>
+    <div class="sparkline-row" style="margin-top:12px">
+      <span class="sparkline-label">Lux trend</span>
+      <div style="position:relative;height:28px;flex:1"><canvas id="spark-lux"></canvas></div>
+    </div>`;
+
+  if (luxHist.length > 1) renderSparkline('spark-lux', luxHist, '#d29922');
+}
+
+function renderSoil(soilData) {
+  const ids = [0, 1, 2];
+  let html = '<div class="soil-grid">';
+
+  for (const id of ids) {
+    const d = soilData[id];
+    if (!d) {
+      html += `<div class="soil-card">
+        <div class="soil-arc-wrap">${donutArc(0, '#30363d', '#21262d')}<div class="soil-pct" style="color:var(--muted)">–</div></div>
+        <div class="soil-label">S${id}</div>
+        <div class="soil-temp" style="color:var(--border)">no data</div>
+      </div>`;
+      continue;
+    }
+    const pct = soilPct(d.m);
+    const color = pct < 20 ? '#f85149' : pct < 40 ? '#d29922' : '#3fb950';
+    html += `<div class="soil-card">
+      <div class="soil-arc-wrap">
+        ${donutArc(pct, color, '#1a2530')}
+        <div class="soil-pct" style="color:${color}">${pct}%</div>
+      </div>
+      <div class="soil-label">SENSOR ${id}</div>
+      <div class="soil-temp">${d.tmp.toFixed(1)}°C</div>
+    </div>`;
+  }
+
+  html += '</div>';
+
+  const anyData = ids.some(id => soilData[id]);
+  if (!anyData) {
+    document.getElementById('soil-body').innerHTML = '<div class="no-data">No soil sensor data</div>';
+  } else {
+    document.getElementById('soil-body').innerHTML = html;
+  }
+}
+
+// Power monitor node labels — edit these to match what each INA238 is actually measuring
+const POWER_NODE_LABELS = {
+  0: 'pw0 · monitor 0',
+  1: 'pw1 · monitor 1',
+  2: 'pw2 · monitor 2',
+  3: 'pw3 · monitor 3',
+};
+
+function renderPower(powerData) {
+  const ids = [0, 1, 2, 3];
+  const anyData = ids.some(id => powerData[id]);
+
+  // Badge: count how many nodes have data
+  const activeCount = ids.filter(id => powerData[id]).length;
+  const badge = document.getElementById('power-badge');
+  if (activeCount === 0) {
+    badge.className = 'card-badge badge-gray';
+    badge.textContent = 'no data';
+  } else {
+    badge.className = 'card-badge badge-blue';
+    badge.textContent = `${activeCount} active`;
+  }
+
+  if (!anyData) {
+    document.getElementById('power-body').innerHTML = '<div class="no-data">No power monitor data</div>';
+    return;
+  }
+
+  let html = '<div class="power-grid">';
+  for (const id of ids) {
+    const d = powerData[id];
+    if (!d) {
+      html += `<div class="power-node no-data-node">
+        <div class="power-node-label">${POWER_NODE_LABELS[id]}</div>
+        <div class="no-data" style="padding:4px 0;font-size:11px">not connected</div>
+      </div>`;
+      continue;
+    }
+    const v  = (d.v  ?? 0).toFixed(2);
+    const ma = (d.ma ?? 0).toFixed(0);
+    const mw = (d.mw ?? 0).toFixed(0);
+    // Color current: blue normally, amber if over 5A, red if over 9A
+    const maNum = d.ma ?? 0;
+    const maColor = maNum > 9000 ? '#f85149' : maNum > 5000 ? '#d29922' : '#58a6ff';
+    html += `<div class="power-node">
+      <div class="power-node-label">${POWER_NODE_LABELS[id]}</div>
+      <div class="power-metrics">
+        <div class="power-metric-inner">
+          <div class="power-metric-val" style="color:#58a6ff">${v}</div>
+          <div class="power-metric-unit">VOLTS</div>
+        </div>
+        <div class="power-metric-inner">
+          <div class="power-metric-val" style="color:${maColor}">${ma}</div>
+          <div class="power-metric-unit">mA</div>
+        </div>
+        <div class="power-metric-inner">
+          <div class="power-metric-val" style="color:#bc8cff">${mw}</div>
+          <div class="power-metric-unit">mW</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('power-body').innerHTML = html;
+}
+
+function renderHealth(packets) {
+  const NON_SENSOR = new Set(['ts', 'sync_ack', 'sync']);
+  const sensorPkts = packets.filter(p => !NON_SENSOR.has(p.t));
+  const counts = {};
+  for (const p of sensorPkts) counts[p.t] = (counts[p.t] || 0) + 1;
+
+  const all = Object.keys(counts);
+  const recentCutoff = Math.max(1, Math.floor(sensorPkts.length * 3 / 4));
+  const recentTypes = new Set(sensorPkts.slice(recentCutoff).map(p => p.t));
+  const missing = all.filter(t => !recentTypes.has(t));
+
+  const ok = missing.length === 0 && all.length > 0;
+  document.getElementById('health-badge').className = 'card-badge ' + (ok ? 'badge-green' : all.length === 0 ? 'badge-gray' : 'badge-amber');
+  document.getElementById('health-badge').textContent = ok ? 'all online' : all.length === 0 ? 'no data' : `${missing.length} absent`;
+
+  if (all.length === 0) {
+    document.getElementById('health-body').innerHTML = '<div class="no-data">No sensor packets found</div>';
+    return;
+  }
+
+  const rows = all.sort().map(t => {
+    const gone = missing.includes(t);
+    const dot  = gone ? '#d29922' : '#3fb950';
+    return `<div class="health-row">
+      <div class="health-dot" style="background:${dot}"></div>
+      <span class="health-name">${t}</span>
+      <span class="health-count">${counts[t]}</span>
+      ${gone ? '<span class="card-badge badge-amber" style="font-size:9px">absent</span>' : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('health-body').innerHTML = rows;
+}
+
+function renderSystem(rtLatest, lastTs, seqLatest) {
+  let html = '';
+  if (rtLatest) {
+    html += `<div class="mini-metric" style="margin-bottom:8px">
+      <div class="mini-label">RADIO MODULE TEMP</div>
+      <div class="mini-value" style="color:${tempColor(rtLatest.tmp)}">${rtLatest.tmp.toFixed(1)} °C</div>
+    </div>`;
+  }
+  if (lastTs) {
+    const ago = minutesAgo(lastTs);
+    html += `<div class="mini-metric" style="margin-bottom:8px">
+      <div class="mini-label">LAST PACKET TIMESTAMP</div>
+      <div class="mini-value" style="font-size:13px">${lastTs}</div>
+      ${ago ? `<div class="sub-value" style="margin-top:4px">${ago}</div>` : ''}
+    </div>`;
+  }
+  if (seqLatest !== null) {
+    html += `<div class="mini-metric">
+      <div class="mini-label">SEQUENCE NUMBER</div>
+      <div class="mini-value">${seqLatest}</div>
+    </div>`;
+  }
+  if (!html) html = '<div class="no-data">No data</div>';
+  document.getElementById('system-body').innerHTML = html;
+}
+
+// ── Load + parse ──────────────────────────────────────────────────────────────
+
+async function loadData() {
+  const cacheBust = `?cb=${Date.now()}`;
+  let text;
+  try {
+    const resp = await fetch(DATA_FILE + cacheBust);
+    if (!resp.ok) throw new Error(resp.status);
+    text = await resp.text();
+  } catch (e) {
+    document.getElementById('last-update').textContent = 'error: cannot load file';
+    return null;
+  }
+
+  const lines = text.trim().split('\n');
+  const tail  = lines.slice(-WINDOW);
+  const packets = [];
+  for (const line of tail) {
+    try { packets.push(JSON.parse(line)); } catch {}
+  }
+  return packets;
+}
+
+function getLatest(packets, type) {
+  for (let i = packets.length - 1; i >= 0; i--) {
+    if (packets[i].t === type) return packets[i];
+  }
+  return null;
+}
+
+function getHistory(packets, type, key, n = 40) {
+  const vals = packets.filter(p => p.t === type && key in p).map(p => p[key]);
+  return vals.slice(-n);
+}
+
+// ── Freshness check ───────────────────────────────────────────────────────────
+
+function updateStatusDot(lastTs) {
+  const dot = document.getElementById('status-dot');
+  if (!lastTs) { dot.className = 'status-dot offline'; return; }
+  try {
+    const diff = (Date.now() - new Date(lastTs.replace('T', ' ')).getTime()) / 1000;
+    if (diff < 60)    dot.className = 'status-dot';
+    else if (diff < 600) dot.className = 'status-dot stale';
+    else dot.className = 'status-dot offline';
+  } catch { dot.className = 'status-dot offline'; }
+}
+
+// ── Main refresh ─────────────────────────────────────────────────────────────
+
+async function refresh() {
+  const packets = await loadData();
+  if (!packets) return;
+
+  document.getElementById('packets-count').textContent = packets.length;
+
+  // Pull latest timestamp from any packet that has one
+  let lastTs = null;
+  for (let i = packets.length - 1; i >= 0; i--) {
+    if (packets[i].ts) { lastTs = packets[i].ts; break; }
+  }
+
+  updateStatusDot(lastTs);
+  document.getElementById('last-update').textContent = lastTs ? (minutesAgo(lastTs) || lastTs) : 'unknown';
+
+  // Battery
+  const batt = getLatest(packets, 'batt');
+  if (batt) renderBattery(batt, getHistory(packets, 'batt', 'soc'));
+
+  // SHT40
+  const sht = getLatest(packets, 'sht');
+  if (sht) renderSHT(sht, getHistory(packets, 'sht', 'tmp'), getHistory(packets, 'sht', 'rh'));
+
+  // SGP40 VOC
+  const voc = getLatest(packets, 'voc');
+  if (voc) renderVOC(voc, getHistory(packets, 'voc', 'voc'));
+
+  // UV
+  const uv = getLatest(packets, 'uv');
+  if (uv) renderUV(uv, getHistory(packets, 'uv', 'lux'));
+
+  // Soil sensors
+  const soilData = {};
+  for (const id of [0, 1, 2]) {
+    const s = getLatest(packets, `s${id}`);
+    if (s) soilData[id] = s;
+  }
+  renderSoil(soilData);
+
+  // Power monitors
+  const powerData = {};
+  for (const id of [0, 1, 2, 3]) {
+    const p = getLatest(packets, `pw${id}`);
+    if (p) powerData[id] = p;
+  }
+  renderPower(powerData);
+
+  // Health
+  renderHealth(packets);
+
+  // System / radio temp
+  const rt  = getLatest(packets, 'rt');
+  const anySeq = (() => { for (let i = packets.length - 1; i >= 0; i--) if ('q' in packets[i]) return packets[i].q; return null; })();
+  renderSystem(rt, lastTs, anySeq);
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
