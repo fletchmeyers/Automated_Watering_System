@@ -1,66 +1,49 @@
 '''
 CircuitPython 10.0.3 running on Pico 2W RP2350
 
-Read sensor data and save it to the SD card (handled in device_setup.py).
-Send sensor data to Pi via radio.
-After each batch, listen for a data_ack and any command from the Pi in a
-single window. Fall back to SD if no ack is received.
+Main loop: read sensors on a timer, log to SD, keep latest reading in memory.
+Listen for Pi commands at all times and dispatch them immediately.
 
 Written by Fletcher Meyers
 February 2026
 '''
 
 import time
-import json
-from hardware_setup_garden import SEND_INTERVAL, get_timestamp, NODE_ID, rfm69, rtc
-from communication_garden import SENSORS, PacketSender, write_batch_to_sd, check_ack, ACK_WAIT
-from sync_garden import handle_sync, interruptible_sleep, indefinite_sleep, handle_set_interval
+from hardware_setup_garden import SENSE_INTERVAL, get_timestamp, NODE_ID, rfm69, rtc
+from communication_garden import (
+    SENSORS, PacketSender, store_latest_reading,
+    append_to_sd, send_latest, send_bulk_sync,
+)
+from sync_garden import check_for_command, dispatch_command
 
-sender = PacketSender(NODE_ID, rfm69)
+sender        = PacketSender(NODE_ID, rfm69)
+last_sense_at = time.monotonic() - SENSE_INTERVAL  # sense immediately on first loop
 
 while True:
-    ts = get_timestamp()
-    sd_buffer = []
+    now = time.monotonic()
 
-    sender.send({"t": "ts", "v": ts})
-    time.sleep(0.1)
+    # ── Sense cycle ────────────────────────────────────────────────────────
+    if now - last_sense_at >= SENSE_INTERVAL:
+        last_sense_at = now
+        ts      = get_timestamp()
+        packets = []
 
-    for sensor_name, sensor_function in SENSORS:
-        try:
-            data = sensor_function()
-            sender.send(data)
-            time.sleep(0.1)
-            sd_buffer.append(data)
-        except Exception as e:
-            print(f"[ERROR] Sensor '{sensor_name}' failed:", e)
+        for sensor_name, sensor_fn in SENSORS:
+            try:
+                packets.append(sensor_fn())
+            except Exception as e:
+                print(f"[ERROR] Sensor '{sensor_name}' failed: {e}")
 
-    sender.send_batch_end(expected=len(SENSORS), sent=len(sd_buffer))
-    batch_end_q = sender.sequence - 1
+        store_latest_reading(packets)
+        append_to_sd(packets, ts)
 
-    acked, command = check_ack(rfm69, batch_end_q)
-    if not acked and sd_buffer:
-        write_batch_to_sd([json.dumps(p, separators=(",", ":")) for p in sd_buffer])
-
-    # Handle a command that arrived during the ack window
+    # ── Radio listen (short timeout so sense loop stays on schedule) ───────
+    command = check_for_command(rfm69, timeout=0.1)
     if command is not None:
-        if command.get("t") == "sync":
-            handle_sync(command, rtc, sender, get_timestamp)
-        elif command.get("t") == "set_interval":
-            new_interval = handle_set_interval(command, sender)
-            if new_interval is not None:
-                SEND_INTERVAL = new_interval
+        new_interval = dispatch_command(
+            command, sender, rfm69, rtc,
+            get_timestamp, send_latest, send_bulk_sync,
+        )
+        if new_interval is not None:
+            SENSE_INTERVAL = new_interval
 
-    # Sleep for the remainder of the interval, still listening for late commands
-    if SEND_INTERVAL == 0:
-        command = indefinite_sleep(rfm69, chunk=0.5)
-    else:
-        remaining = max(0, SEND_INTERVAL - ACK_WAIT - 0.5)
-        command = interruptible_sleep(rfm69, remaining, chunk=0.5)
-
-    if command is not None:
-        if command.get("t") == "sync":
-            handle_sync(command, rtc, sender, get_timestamp)
-        elif command.get("t") == "set_interval":
-            new_interval = handle_set_interval(command, sender)
-            if new_interval is not None:
-                SEND_INTERVAL = new_interval
