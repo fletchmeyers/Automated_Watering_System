@@ -74,11 +74,17 @@ import gc; gc.collect(); print(gc.mem_free())
 
 ## Part 2: Pi Setup (Python 3)
 
-### 2.1 Install dependencies
+### 2.1 Create a virtual environment
+
+The Adafruit libraries must be installed in a virtual environment. Create one and install dependencies:
 
 ```bash
-pip3 install adafruit-circuitpython-rfm69
+python3 -m venv ~/env
+source ~/env/bin/activate
+pip install adafruit-circuitpython-rfm69
 ```
+
+You'll need to activate this environment (`source ~/env/bin/activate`) any time you run the Pi code manually from a terminal.
 
 ### 2.2 Copy code files
 
@@ -111,6 +117,7 @@ rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x0
 ### 2.4 Run the main loop
 
 ```bash
+source ~/env/bin/activate
 cd ~/Documents/aws
 python3 main.py
 ```
@@ -156,7 +163,7 @@ git clone https://github.com/<your-username>/<repo-name>.git
 1. GitHub → profile picture → Settings → Developer settings → Personal access tokens → Tokens (classic)
 2. Generate new token (classic)
 3. Check the `repo` scope
-4. Copy the token immediately
+4. Copy the token immediately — you won't see it again
 
 Store the token in the remote URL so git doesn't prompt for it on every push:
 
@@ -164,6 +171,8 @@ Store the token in the remote URL so git doesn't prompt for it on every push:
 cd ~/<repo-name>
 git remote set-url origin https://<your-token>@github.com/<your-username>/<repo-name>.git
 ```
+
+> **Security note**: Never share or commit your token. If it's exposed, revoke it immediately on GitHub (Settings → Developer settings → Personal access tokens) and generate a new one.
 
 ### 3.4 Create a branch for data updates
 
@@ -176,15 +185,15 @@ git push -u origin update_dashboard_data
 
 ### 3.5 Add the dashboard HTML
 
-Copy `garden_dashboard.html` into the repo root and rename it `index.html`. This is what GitHub Pages will serve.
+Copy `garden_dashboard.html` into the repo root and rename it `index.html`. GitHub Pages serves `index.html` automatically — no Jekyll or other tooling needed.
 
 Update the data file URL near the top of the script section in `index.html`. Find the `DATA_FILE` constant and set it to the raw GitHub URL for your data branch:
 
 ```javascript
-const DATA_FILE = "https://raw.githubusercontent.com/<your-username>/<repo-name>/update_dashboard_data/indoor/data_from_pico.txt";
+const DATA_FILE = "https://raw.githubusercontent.com/<your-username>/<repo-name>/update_dashboard_data/data_from_pico.txt";
 ```
 
-To find the exact URL: navigate to the file on GitHub → click Raw → copy the URL from the address bar.
+To find the exact URL: navigate to the data file on GitHub → click Raw → copy the URL from the address bar.
 
 Commit and push:
 
@@ -204,8 +213,8 @@ exec >> /home/<your-username>/push_data.log 2>&1
 echo "--- $(date) ---"
 cd ~/Automated_Watering_System
 git checkout update_dashboard_data
-cp ~/Documents/aws/data_from_pico.txt indoor/data_from_pico.txt
-git add indoor/data_from_pico.txt
+cp ~/Documents/aws/data_from_pico.txt data_from_pico.txt
+git add data_from_pico.txt
 git commit -m "data update" --allow-empty
 git push origin update_dashboard_data
 ```
@@ -238,13 +247,13 @@ You should see git output confirming a successful push.
 crontab -e
 ```
 
-Add this line at the bottom (retype it manually, don't paste — cron is sensitive to hidden characters):
+Add this line at the bottom — retype it manually rather than pasting, as cron is sensitive to hidden characters introduced by some text editors:
 
 ```
 */5 * * * * /home/<your-username>/Automated_Watering_System/push_data.sh
 ```
 
-This pushes updated data every 5 minutes. Adjust the interval to taste.
+This pushes updated data every 5 minutes. Adjust the interval to taste. The log file (`~/push_data.log`) is created automatically on the first run — you don't need to create it yourself.
 
 Verify cron is running:
 
@@ -252,12 +261,87 @@ Verify cron is running:
 systemctl status cron
 ```
 
-After a few minutes, check `~/push_data.log` to confirm the job is firing.
+After a few minutes, check `~/push_data.log` to confirm the job is firing successfully.
 
 ---
 
-## Part 4: Verifying Everything Works
+## Part 4: Run main.py on Boot (systemd)
 
+Rather than keeping an SSH session open to run `main.py`, configure it as a systemd service so it starts automatically on boot and restarts if it crashes.
+
+### 4.1 Create the service file
+
+```bash
+sudo nano /etc/systemd/system/garden-sensor.service
+```
+
+Paste the following, replacing `<your-username>` with your Pi username and adjusting paths if your files are in a different location:
+
+```ini
+[Unit]
+Description=Garden Sensor Main Loop
+After=network.target
+
+[Service]
+Type=simple
+User=<your-username>
+WorkingDirectory=/home/<your-username>/Documents/aws
+ExecStart=/home/<your-username>/env/bin/python3 /home/<your-username>/Documents/aws/main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> **Important**: `ExecStart` must point at the Python interpreter inside your virtual environment, not `/usr/bin/python3`. The system Python won't have the Adafruit libraries. To find the right path:
+> ```bash
+> find ~ -name "activate" 2>/dev/null
+> ```
+> Then test each result:
+> ```bash
+> /home/<your-username>/env/bin/python3 -c "import board; print('ok')"
+> ```
+> Use whichever path prints `ok`.
+
+### 4.2 Enable and start the service
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable garden-sensor
+sudo systemctl start garden-sensor
+```
+
+`enable` makes it start on every boot. `start` runs it immediately without rebooting.
+
+### 4.3 Verify it's running
+
+```bash
+sudo systemctl status garden-sensor
+```
+
+Should show `active (running)`. To watch live output:
+
+```bash
+journalctl -u garden-sensor -f
+```
+
+This is the equivalent of watching `main.py`'s terminal output — you'll see poll commands, incoming packets, and any errors.
+
+### 4.4 Useful service commands
+
+```bash
+sudo systemctl stop garden-sensor      # stop the service
+sudo systemctl restart garden-sensor   # restart after config changes
+sudo systemctl disable garden-sensor   # prevent it starting on boot
+```
+
+---
+
+## Part 5: Verifying Everything Works
+
+- `sudo systemctl status garden-sensor` shows `active (running)`
+- `journalctl -u garden-sensor -f` shows poll commands and incoming sensor packets
 - `push_data.log` shows successful git pushes every 5 minutes
 - The raw data URL (`https://raw.githubusercontent.com/...`) returns sensor data when opened in a browser
 - The GitHub Pages dashboard at `https://<your-username>.github.io/<repo-name>/` updates every 10 seconds
@@ -268,6 +352,7 @@ After a few minutes, check `~/push_data.log` to confirm the job is firing.
 ## Notes
 
 - **Radio range**: The RFM69 at 915 MHz has limited range, especially through walls. Keep the Pico reasonably close to the Pi or use an external antenna. If the Pico loses radio contact, `main.py` keeps running and will resume receiving data when contact is restored — but the dashboard will go amber/red until new data arrives.
-- **Token security**: Never share or commit your GitHub personal access token. If it's exposed, revoke it immediately on GitHub and generate a new one.
+- **Virtual environment**: The systemd service uses the venv Python interpreter directly, so you don't need to activate the venv for the service to work. You only need to activate it when running scripts manually in a terminal.
 - **Data file path**: The path to `data_from_pico.txt` in `push_data.sh` must match where `main.py` is actually writing it. `sync_indoor.py` defines it as `Path(__file__).parent / "data_from_pico.txt"` — i.e. the same directory as `sync_indoor.py` itself.
 - **SD card**: If the Pico loses power mid-write, `sending.txt` may be left on the SD card. It will be retried on the next `sync_request`. If it's stale, delete it manually via Thonny.
+- **Cron and redirection**: If the cron job fails to save with a "bad command" error when using `>>` for logging, move the logging into the shell script itself using `exec >> /path/to/logfile 2>&1` at the top — this is more reliable than redirecting in crontab.
