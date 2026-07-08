@@ -8,10 +8,17 @@ PollingTimer:   decide when to poll each node on a regular schedule.
 
 import time
 import json
+from datetime import date
 from pathlib import Path
 from sync_indoor import COMMAND_FILE, DATA_FILE
 
 CMD_TIMEOUT = 60   # seconds before giving up on an unacked command
+
+ARCHIVE_DIR = Path(__file__).parent / "archive"
+ARCHIVE_DIR.mkdir(exist_ok=True)
+
+def _archive_path():
+    return ARCHIVE_DIR / f"data_{date.today().isoformat()}.txt"
 
 
 class PollingTimer:
@@ -225,6 +232,12 @@ class BatchReceiver:
         with open(self.data_file, "a") as f:
             for pkt in self._received:
                 f.write(json.dumps(pkt) + "\n")
+
+        # Also append to today's untrimmed archive (never rotated/trimmed by cron)
+        with open(_archive_path(), "a") as f:
+            for pkt in self._received:
+                f.write(json.dumps(pkt) + "\n")
+
         print(f"[BATCH] Wrote {len(self._received)} packets to file.")
 
         if send_ack and radio is not None and self._batch_end_q is not None:
@@ -237,4 +250,3 @@ class BatchReceiver:
             time.sleep(0.2)
 
         self._reset()
-
