@@ -74,6 +74,7 @@ while True:
         elif pkt_type == "batch_end":
             batch.close_batch(data)
             batch.flush(rfm69)
+            cmd.handle_ack(data)
             cmd.check_and_forward(rfm69)
 
         elif cmd.handle_ack(data):
