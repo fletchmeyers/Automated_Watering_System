@@ -134,6 +134,11 @@ class CommandManager:
             self._clear_pending()
             return True
 
+        if pkt_type == "batch_end" and pending_t == "poll":
+            print(f"[CMD] Pico confirmed poll (batch received).")
+            self._clear_pending()
+            return True
+
         if pkt_type == "sync_complete" and pending_t == "sync_request":
             chunks = data.get("chunks", "?")
             print(f"[CMD] Bulk sync complete ({chunks} chunks).")
