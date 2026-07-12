@@ -462,7 +462,7 @@
   <div class="header-right">
     <div id="status-dot" class="status-dot stale"></div>
     <span id="last-update">loading...</span>
-    <button id="refresh-btn" onclick="refresh()">↺ refresh</button>
+    <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
   </div>
 </header>
 
@@ -552,6 +552,10 @@
 const DATA_FILE = "data_from_pico.txt";
 const WINDOW = 200;
 const REFRESH_MS = 10000;
+
+// Set this once the Cloudflare Tunnel + domain are live (see flask_api.py / setup notes).
+// Leave as-is and the refresh button will just fall back to re-fetching the static file.
+const API_BASE = "https://api.YOURDOMAIN.com";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1042,6 +1046,51 @@ async function refresh() {
   const rt  = getLatest(packets, 'rt');
   const anySeq = (() => { for (let i = packets.length - 1; i >= 0; i--) if ('q' in packets[i]) return packets[i].q; return null; })();
   renderSystem(rt, lastTs, anySeq);
+}
+
+// ── Manual refresh (live poll via Flask API, falls back to static reload) ────
+
+async function triggerRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  const original = btn.textContent;
+  btn.disabled = true;
+
+  // If API_BASE hasn't been set up yet, just re-fetch the static file like before.
+  if (!API_BASE || API_BASE.includes('YOURDOMAIN')) {
+    btn.textContent = '↺ refreshing...';
+    await refresh();
+    btn.textContent = original;
+    btn.disabled = false;
+    return;
+  }
+
+  btn.textContent = '↺ polling...';
+  try {
+    const resp = await fetch(`${API_BASE}/api/poll`, { method: 'POST' });
+    const data = await resp.json();
+
+    if (resp.status === 429) {
+      const wait = Math.ceil(data.retry_after || 5);
+      btn.textContent = `↺ wait ${wait}s`;
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, wait * 1000);
+      return;
+    }
+
+    // Poll succeeded on the Pi — give push_data.sh + GitHub Pages a few
+    // seconds to publish the fresh reading before re-fetching the static file.
+    btn.textContent = '↺ syncing...';
+    setTimeout(async () => {
+      await refresh();
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 4000);
+    return;
+  } catch (e) {
+    console.error('poll request failed', e);
+    btn.textContent = '↺ error';
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  }
+  btn.disabled = false;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
