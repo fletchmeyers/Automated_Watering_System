@@ -12,7 +12,7 @@ from datetime import date
 from pathlib import Path
 from sync_indoor import COMMAND_FILE, DATA_FILE
 
-CMD_TIMEOUT = 60   # seconds before giving up on an unacked command
+CMD_TIMEOUT =45   # seconds before giving up on an unacked command
 
 ARCHIVE_DIR = Path(__file__).parent / "archive"
 ARCHIVE_DIR.mkdir(exist_ok=True)
