@@ -40,13 +40,27 @@ timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL, sync_interval=SYNC_I
 while True:
 
     # ── Issue polls for any nodes whose timer has elapsed ─────────────────
-    for node_id in timer.due_nodes():
-        if timer.sync_due(node_id):
-            request_bulk_sync(node_id)
-            timer.mark_synced(node_id)
-        else:
-            request_poll(node_id)
-        timer.mark_polled(node_id)
+    # Only issue a new poll/sync if nothing is currently outstanding. Without
+    # this guard, request_poll()/request_bulk_sync() will happily overwrite
+    # COMMAND_FILE even while CommandManager is still waiting on an ack for
+    # a previous command (automatic OR a manual poll from the Flask API).
+    # That overwrite is silent and the Pico never hears about the command it
+    # replaced. This was the root cause of polls occasionally vanishing:
+    # POLL_INTERVAL and CMD_TIMEOUT are both 60s, so a freshly-due poll and
+    # a timeout-cleanup for the previous poll could land in the same loop
+    # iteration, and the new command would get wiped out one line after
+    # being written — deliberately skipping affected nodes here (rather than
+    # calling mark_polled) means they stay "due" and get retried on the next
+    # iteration once cmd.pending clears, instead of waiting a full
+    # POLL_INTERVAL again.
+    if cmd.pending is None:
+        for node_id in timer.due_nodes():
+            if timer.sync_due(node_id):
+                request_bulk_sync(node_id)
+                timer.mark_synced(node_id)
+            else:
+                request_poll(node_id)
+            timer.mark_polled(node_id)
 
     # ── Forward any pending command to the Pico ───────────────────────────
     timeout = 6.0 if cmd.pending else 1.0
@@ -91,4 +105,3 @@ while True:
     except Exception as e:
         print("Bad packet:", e)
         blink_led(RLED, times=2)
-
