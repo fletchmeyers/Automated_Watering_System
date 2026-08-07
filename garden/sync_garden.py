@@ -74,6 +74,16 @@ def handle_bulk_sync(sender, radio, send_bulk_sync_fn):
     send_bulk_sync_fn(sender, radio)
 
 
+def handle_ping(command, sender):
+    '''
+    Respond to a "ping" with an immediate "pong" echoing the same q value
+    (as "pq", since sender.send() overwrites "q" with its own sequence).
+    No sensor reads or SD writes — this exists purely to measure radio
+    round-trip time and drop rate as fast as possible.
+    '''
+    sender.send({"t": "pong", "pq": command.get("q")})
+
+
 def handle_set_interval(command, sender):
     '''Update the sense interval. v must be a positive integer (seconds).'''
     v = command.get("v")
@@ -100,6 +110,9 @@ def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_
     if t == "poll":
         handle_poll(command, sender, get_timestamp_fn, send_latest_fn)
 
+    elif t == "ping":
+        handle_ping(command, sender)
+
     elif t == "sync_request":
         handle_bulk_sync(sender, radio, send_bulk_sync_fn)
 
@@ -113,4 +126,3 @@ def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_
         print(f"[CMD] Unknown packet type: {t!r}")
 
     return None
-

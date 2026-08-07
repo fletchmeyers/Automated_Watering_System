@@ -121,6 +121,26 @@
   }
   #refresh-btn:hover { border-color: var(--text); color: var(--text); }
 
+  #ping-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  #ping-btn:hover { border-color: var(--text); color: var(--text); }
+
+  #ping-result {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 1px;
+  }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -463,6 +483,8 @@
     <div id="status-dot" class="status-dot stale"></div>
     <span id="last-update">loading...</span>
     <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
+    <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
+    <span id="ping-result"></span>
   </div>
 </header>
 
@@ -549,7 +571,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-const DATA_FILE = "/Automated_Watering_System/data_from_pico.txt";
+const DATA_FILE = "data_from_pico.txt";
 const WINDOW = 2000;
 const REFRESH_MS = 10000;
 
@@ -1090,6 +1112,53 @@ async function triggerRefresh() {
     btn.textContent = '↺ error';
     setTimeout(() => { btn.textContent = original; }, 2000);
   }
+  btn.disabled = false;
+}
+
+// ── Radio ping test (independent of refresh — result comes straight back in
+//    the HTTP response, so it doesn't wait on push_data.sh/GitHub Pages at all) ──
+
+async function runPingTest() {
+  const btn = document.getElementById('ping-btn');
+  const resultEl = document.getElementById('ping-result');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⇄ pinging...';
+  resultEl.textContent = '';
+
+  if (!API_BASE || API_BASE.includes('YOURDOMAIN')) {
+    resultEl.textContent = 'API not configured';
+    resultEl.style.color = 'var(--red)';
+    btn.textContent = original;
+    btn.disabled = false;
+    return;
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/ping_test`, { method: 'POST' });
+    const data = await resp.json();
+
+    if (resp.status === 429) {
+      const wait = Math.ceil(data.retry_after || 5);
+      resultEl.textContent = `wait ${wait}s`;
+      resultEl.style.color = 'var(--amber)';
+    } else if (data.status !== 'ok') {
+      resultEl.textContent = data.status === 'timeout' ? 'no response' : 'test failed';
+      resultEl.style.color = 'var(--red)';
+    } else {
+      const pct = Math.round((data.hits / data.count) * 100);
+      const color = pct === 100 ? 'var(--green)' : pct >= 70 ? 'var(--amber)' : 'var(--red)';
+      const rttStr = data.avg_rtt_ms != null ? `${data.avg_rtt_ms}ms avg` : 'no pongs';
+      resultEl.style.color = color;
+      resultEl.textContent = `${data.hits}/${data.count} pong · ${rttStr}`;
+    }
+  } catch (e) {
+    console.error('ping test failed', e);
+    resultEl.textContent = 'error';
+    resultEl.style.color = 'var(--red)';
+  }
+
+  btn.textContent = original;
   btn.disabled = false;
 }
 
