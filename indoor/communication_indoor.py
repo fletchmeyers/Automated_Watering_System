@@ -154,6 +154,62 @@ class CommandManager:
         self._last_sent  = 0
 
 
+def run_ping_test(radio, node_id=1, count=10, timeout=0.3):
+    '''
+    Fire `count` bare ping packets at the Pico back-to-back, each waiting up
+    to `timeout` seconds for a matching pong, and return hit/miss + round-trip
+    time for each. Deliberately bypasses CommandManager — that class is built
+    for one outstanding command with retries over tens of seconds, not a tight
+    burst of sub-second round trips, and bending it to fit would add more
+    complexity than it'd save.
+
+    Only call this when cmd.pending is None (same guard main.py already uses
+    before issuing a scheduled poll) so this can't collide with a command
+    CommandManager is mid-flight on.
+
+    Any non-pong packet received while waiting (e.g. a stray batch packet)
+    is ignored for matching purposes and effectively dropped — acceptable
+    here since this is a short, deliberately blocking diagnostic, not part
+    of normal data flow.
+    '''
+    results = []
+    for q in range(count):
+        packet = json.dumps({"t": "ping", "q": q, "n": node_id}, separators=(",", ":"))
+        sent_at = time.monotonic()
+        radio.send(packet.encode("utf-8"))
+
+        deadline = sent_at + timeout
+        rtt_ms = None
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            resp = radio.receive(with_header=True, timeout=max(0, remaining))
+            if resp is None:
+                break
+            try:
+                data = json.loads(resp[4:].decode("utf-8"))
+                if data.get("t") == "pong" and data.get("pq") == q:
+                    rtt_ms = round((time.monotonic() - sent_at) * 1000, 1)
+                    break
+            except Exception:
+                continue
+
+        results.append({"q": q, "ok": rtt_ms is not None, "rtt_ms": rtt_ms})
+
+    hits = sum(1 for r in results if r["ok"])
+    rtts = [r["rtt_ms"] for r in results if r["ok"]]
+    avg_rtt = round(sum(rtts) / len(rtts), 1) if rtts else None
+
+    print(f"[PING] Test complete: {hits}/{count} pongs, avg {avg_rtt}ms")
+
+    return {
+        "count":      count,
+        "hits":       hits,
+        "misses":     count - hits,
+        "avg_rtt_ms": avg_rtt,
+        "results":    results,
+    }
+
+
 class BatchReceiver:
     '''
     Collects sensor packets arriving from the Pico within a single batch.

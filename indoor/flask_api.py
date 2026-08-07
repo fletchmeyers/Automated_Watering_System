@@ -42,6 +42,8 @@ from sync_indoor import (
     sensor_health_report,
     request_set_interval,
     wait_for_interval_ack,
+    request_ping_test,
+    wait_for_ping_result,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -51,6 +53,10 @@ ALLOWED_ORIGIN = "https://fletchmeyers.github.io"
 
 POLL_COOLDOWN   = 30   # seconds between allowed manual polls
 HEALTH_COOLDOWN = 15   # seconds between allowed health report recomputes
+PING_COOLDOWN   = 10   # seconds between allowed ping tests — short, since a
+                        # test itself only takes a few seconds, but still
+                        # enough to stop rapid button-mashing from repeatedly
+                        # tying up main.py's loop back-to-back
 
 # Path to push_data.sh so a manual poll can publish immediately instead of
 # waiting for the next 5-minute cron tick.
@@ -64,6 +70,9 @@ _last_poll = {"ts": 0.0, "result": None}
 
 _health_lock = threading.Lock()
 _last_health = {"ts": 0.0, "result": None}
+
+_ping_lock = threading.Lock()
+_last_ping = {"ts": 0.0, "result": None}
 
 
 # ── Public, cooldown-limited endpoints ───────────────────────────────────────
@@ -110,6 +119,32 @@ def api_poll():
         _last_poll["result"] = result
 
     return jsonify(result)
+
+
+@app.route("/api/ping_test", methods=["POST"])
+def api_ping_test():
+    now = time.monotonic()
+    with _ping_lock:
+        elapsed = now - _last_ping["ts"]
+        if _last_ping["result"] is not None and elapsed < PING_COOLDOWN:
+            return jsonify({
+                "status": "cooldown",
+                "retry_after": round(PING_COOLDOWN - elapsed, 1),
+                "last_result": _last_ping["result"],
+            }), 429
+
+        request_ping_test(count=10)
+        result = wait_for_ping_result(timeout=20)
+
+        if result is None:
+            response = {"status": "timeout"}
+        else:
+            response = {"status": "ok", **result}
+
+        _last_ping["ts"]     = time.monotonic()
+        _last_ping["result"] = response
+
+    return jsonify(response)
 
 
 # ── Gated endpoints (Cloudflare Access enforces login before these are hit) ──
