@@ -12,9 +12,12 @@ import json
 from pathlib import Path
 
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
-from sync_indoor import DATA_FILE, COMMAND_FILE, request_poll, request_bulk_sync
+from sync_indoor import (
+    DATA_FILE, COMMAND_FILE, request_poll, request_bulk_sync,
+    PING_REQUEST_FILE, PING_RESULT_FILE,
+)
 
-from communication_indoor import CommandManager, BatchReceiver, PollingTimer
+from communication_indoor import CommandManager, BatchReceiver, PollingTimer, run_ping_test
 
 # ── Config ────────────────────────────────────────────────────────────────────
 NODE_IDS      = [1]    # add node IDs here as you expand the network
@@ -26,6 +29,11 @@ stale = Path(COMMAND_FILE)
 if stale.exists():
     print(f"[STARTUP] Clearing stale command file: {stale.read_text()}")
     stale.unlink()
+
+stale_ping = Path(PING_REQUEST_FILE)
+if stale_ping.exists():
+    print(f"[STARTUP] Clearing stale ping request file: {stale_ping.read_text()}")
+    stale_ping.unlink()
 
 print(f"Temperature: {rfm69.temperature}C")
 print(f"Frequency: {rfm69.frequency_mhz}mhz")
@@ -61,6 +69,24 @@ while True:
             else:
                 request_poll(node_id)
             timer.mark_polled(node_id)
+
+    # ── Run a ping test if one's been requested and nothing else is busy ──
+    # Same cmd.pending is None guard as above, for the same reason: a ping
+    # burst blocks this loop for up to a couple seconds, so it must not
+    # start while CommandManager is mid-flight on something else.
+    ping_req = Path(PING_REQUEST_FILE)
+    if cmd.pending is None and ping_req.exists():
+        try:
+            req = json.loads(ping_req.read_text())
+        except Exception as e:
+            print(f"[PING] Could not parse ping request: {e}")
+            req = {}
+        node_id = req.get("n", 1)
+        count   = req.get("count", 10)
+        print(f"[PING] Running ping test: node={node_id}, count={count}")
+        result = run_ping_test(rfm69, node_id=node_id, count=count)
+        Path(PING_RESULT_FILE).write_text(json.dumps(result))
+        ping_req.unlink(missing_ok=True)
 
     # ── Forward any pending command to the Pico ───────────────────────────
     timeout = 6.0 if cmd.pending else 1.0

@@ -23,6 +23,12 @@ from pathlib import Path
 DATA_FILE    = Path(__file__).parent / "data_from_pico.txt"
 COMMAND_FILE = "/tmp/pico_command.json"
 
+# Ping test request/result handoff — deliberately separate from COMMAND_FILE
+# since the ping loop bypasses CommandManager entirely (see run_ping_test()
+# in communication_indoor.py for why).
+PING_REQUEST_FILE = "/tmp/pico_ping_request.json"
+PING_RESULT_FILE  = "/tmp/pico_ping_result.json"
+
 WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
 
@@ -62,6 +68,19 @@ def request_set_interval(seconds, node_id=1):
     command = {"t": "set_interval", "v": seconds, "n": node_id}
     Path(COMMAND_FILE).write_text(json.dumps(command))
     print(f"[INTERVAL] Command written: {command}")
+
+
+def request_ping_test(node_id=1, count=10):
+    '''
+    Write a ping test request. main.py picks this up on its next loop
+    iteration (only when nothing else is pending) and runs count back-to-back
+    ping/pong round trips, writing the result to PING_RESULT_FILE when done.
+    '''
+    Path(PING_REQUEST_FILE).write_text(json.dumps({"n": node_id, "count": count}))
+    # Clear any stale result from a previous test so wait_for_ping_result()
+    # can't pick up an old file before the new test has actually finished.
+    Path(PING_RESULT_FILE).unlink(missing_ok=True)
+    print(f"[PING] Test requested: node={node_id}, count={count}")
 
 
 # ── Wait helpers (for use alongside a running main.py) ───────────────────────
@@ -123,6 +142,28 @@ def wait_for_interval_ack(timeout=WAIT_TIMEOUT):
             return True
     print("[INTERVAL] Timed out waiting for set_interval_ack.")
     return False
+
+
+def wait_for_ping_result(timeout=20):
+    '''
+    Block until PING_RESULT_FILE appears, then return its parsed contents.
+    Poll frequently (0.2s) since the whole test is expected to finish in a
+    few seconds — this shouldn't feel like the longer 1s-interval waits used
+    for polls/syncs.
+    '''
+    print(f"[PING] Waiting up to {timeout}s for ping test result...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.2)
+        if Path(PING_RESULT_FILE).exists():
+            try:
+                result = json.loads(Path(PING_RESULT_FILE).read_text())
+                print("[PING] Result received.")
+                return result
+            except Exception:
+                continue
+    print("[PING] Timed out waiting for ping test result.")
+    return None
 
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────
@@ -211,6 +252,13 @@ if __name__ == "__main__":
     elif args[0] == "health":
         sensor_health_report()
 
+    elif args[0] == "ping":
+        request_ping_test()
+        result = wait_for_ping_result()
+        if result:
+            print(f"[PING] {result['hits']}/{result['count']} pongs, "
+                  f"avg {result['avg_rtt_ms']}ms")
+
     elif args[0] == "interval":
         if len(args) < 2:
             print("Usage: python3 sync_indoor.py interval <seconds>")
@@ -224,6 +272,5 @@ if __name__ == "__main__":
         wait_for_interval_ack()
 
     else:
-        print("Usage: python3 sync_indoor.py [poll|sync|health|interval <seconds>]")
+        print("Usage: python3 sync_indoor.py [poll|sync|health|ping|interval <seconds>]")
         sys.exit(1)
-
