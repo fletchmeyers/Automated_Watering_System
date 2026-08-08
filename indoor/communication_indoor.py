@@ -10,7 +10,7 @@ import time
 import json
 from datetime import date
 from pathlib import Path
-from sync_indoor import COMMAND_FILE, DATA_FILE
+from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE
 
 CMD_TIMEOUT =45   # seconds before giving up on an unacked command
 
@@ -195,6 +195,16 @@ def run_ping_test(radio, node_id=1, count=10, timeout=0.3):
 
         results.append({"q": q, "ok": rtt_ms is not None, "rtt_ms": rtt_ms})
 
+        hits_so_far = sum(1 for r in results if r["ok"])
+        try:
+            Path(PING_PROGRESS_FILE).write_text(json.dumps({
+                "done":  q + 1,
+                "count": count,
+                "hits":  hits_so_far,
+            }))
+        except Exception as e:
+            print(f"[PING] Could not write progress: {e}")
+
     hits = sum(1 for r in results if r["ok"])
     rtts = [r["rtt_ms"] for r in results if r["ok"]]
     avg_rtt = round(sum(rtts) / len(rtts), 1) if rtts else None
@@ -283,12 +293,14 @@ class BatchReceiver:
                   f"({self._sent}/{self._expected} sent).")
 
     def flush(self, radio):
-        self._flush(radio=radio, send_ack=True)
+        return self._flush(radio=radio, send_ack=True)
 
     def _flush(self, radio, send_ack):
         if not self._received:
             self._reset()
-            return
+            return None
+
+        written = list(self._received)  # snapshot before _reset() clears it
 
         with open(self.data_file, "a") as f:
             for pkt in self._received:
@@ -311,3 +323,4 @@ class BatchReceiver:
             time.sleep(0.2)
 
         self._reset()
+        return written

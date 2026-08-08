@@ -14,7 +14,7 @@ from pathlib import Path
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import (
     DATA_FILE, COMMAND_FILE, request_poll, request_bulk_sync,
-    PING_REQUEST_FILE, PING_RESULT_FILE,
+    POLL_RESULT_FILE, PING_REQUEST_FILE, PING_RESULT_FILE,
 )
 
 from communication_indoor import CommandManager, BatchReceiver, PollingTimer, run_ping_test
@@ -112,10 +112,21 @@ while True:
             blink_led(RLED, times=1)
 
         elif pkt_type == "batch_end":
+            # Capture this before handle_ack() clears cmd.pending — we need
+            # to know whether the completed batch was a poll response before
+            # that state disappears.
+            was_poll = (cmd.pending is not None and cmd.pending.get("t") == "poll")
+
             batch.close_batch(data)
-            batch.flush(rfm69)
+            written = batch.flush(rfm69)
             cmd.handle_ack(data)
             cmd.check_and_forward(rfm69)
+
+            if was_poll and written:
+                try:
+                    Path(POLL_RESULT_FILE).write_text(json.dumps(written))
+                except Exception as e:
+                    print(f"[POLL] Could not write poll result: {e}")
 
         elif cmd.handle_ack(data):
             blink_led(YLED, times=2)
