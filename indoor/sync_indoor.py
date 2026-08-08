@@ -23,11 +23,19 @@ from pathlib import Path
 DATA_FILE    = Path(__file__).parent / "data_from_pico.txt"
 COMMAND_FILE = "/tmp/pico_command.json"
 
+# Fresh poll results, written by main.py the instant a poll's batch completes,
+# so /api/poll can return real sensor values immediately instead of waiting
+# on push_data.sh -> GitHub -> Pages CDN to publish the static file.
+POLL_RESULT_FILE = "/tmp/pico_poll_result.json"
+
 # Ping test request/result handoff — deliberately separate from COMMAND_FILE
 # since the ping loop bypasses CommandManager entirely (see run_ping_test()
 # in communication_indoor.py for why).
-PING_REQUEST_FILE = "/tmp/pico_ping_request.json"
-PING_RESULT_FILE  = "/tmp/pico_ping_result.json"
+PING_REQUEST_FILE  = "/tmp/pico_ping_request.json"
+PING_RESULT_FILE   = "/tmp/pico_ping_result.json"
+# Updated after each individual ping (not just at the end) so the dashboard
+# can poll this for a live "x/y pong" readout while a test is running.
+PING_PROGRESS_FILE = "/tmp/pico_ping_progress.json"
 
 WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
@@ -46,6 +54,9 @@ def request_poll(node_id=1):
         "n":  node_id,
     }
     Path(COMMAND_FILE).write_text(json.dumps(command))
+    # Clear any stale result from a previous poll so wait_for_poll_result()
+    # can't pick up an old file before this poll has actually completed.
+    Path(POLL_RESULT_FILE).unlink(missing_ok=True)
     print(f"[POLL] Command written: {command}")
 
 
@@ -77,10 +88,45 @@ def request_ping_test(node_id=1, count=10):
     ping/pong round trips, writing the result to PING_RESULT_FILE when done.
     '''
     Path(PING_REQUEST_FILE).write_text(json.dumps({"n": node_id, "count": count}))
-    # Clear any stale result from a previous test so wait_for_ping_result()
-    # can't pick up an old file before the new test has actually finished.
+    # Clear any stale result/progress from a previous test so the dashboard
+    # can't briefly show old data before the new test has actually started.
     Path(PING_RESULT_FILE).unlink(missing_ok=True)
+    Path(PING_PROGRESS_FILE).unlink(missing_ok=True)
     print(f"[PING] Test requested: node={node_id}, count={count}")
+
+
+def wait_for_poll_result(timeout=WAIT_TIMEOUT):
+    '''
+    Block until POLL_RESULT_FILE appears, then return its parsed packet list.
+    Used by /api/poll to hand back real sensor values the moment main.py has
+    them, instead of the old approach of watching DATA_FILE's mtime and then
+    making the browser wait on push_data.sh -> GitHub -> Pages to publish it.
+    '''
+    print(f"[POLL] Waiting up to {timeout}s for poll result...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.3)
+        if Path(POLL_RESULT_FILE).exists():
+            try:
+                packets = json.loads(Path(POLL_RESULT_FILE).read_text())
+                print(f"[POLL] Result received ({len(packets)} packets).")
+                return packets
+            except Exception:
+                continue
+    print("[POLL] Timed out waiting for poll result.")
+    return None
+
+
+def get_ping_progress():
+    '''
+    Read the current in-progress ping test state, if any. Returns None if no
+    test is running / no progress file exists yet. Cheap, non-blocking read —
+    meant to be polled frequently by the dashboard while a test is in flight.
+    '''
+    try:
+        return json.loads(Path(PING_PROGRESS_FILE).read_text())
+    except Exception:
+        return None
 
 
 # ── Wait helpers (for use alongside a running main.py) ───────────────────────
