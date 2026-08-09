@@ -1014,10 +1014,12 @@ function updateStatusDot(lastTs) {
 
 // ── Main refresh ─────────────────────────────────────────────────────────────
 
-async function refresh() {
-  const packets = await loadData();
-  if (!packets) return;
+// currentPackets holds the last-loaded window in memory so a fresh poll
+// result (from triggerRefresh) can be merged straight in and re-rendered
+// without waiting on a full re-fetch of the static file.
+let currentPackets = [];
 
+function renderAll(packets) {
   document.getElementById('packets-count').textContent = packets.length;
 
   // Pull latest timestamp from any packet that has one
@@ -1070,6 +1072,13 @@ async function refresh() {
   renderSystem(rt, lastTs, anySeq);
 }
 
+async function refresh() {
+  const packets = await loadData();
+  if (!packets) return;
+  currentPackets = packets;
+  renderAll(currentPackets);
+}
+
 // ── Manual refresh (live poll via Flask API, falls back to static reload) ────
 
 async function triggerRefresh() {
@@ -1098,8 +1107,22 @@ async function triggerRefresh() {
       return;
     }
 
-    // Poll succeeded on the Pi — give push_data.sh + GitHub Pages a few
-    // seconds to publish the fresh reading before re-fetching the static file.
+    if (data.status === 'ok' && Array.isArray(data.packets) && data.packets.length) {
+      // Real sensor values are already here — render immediately rather than
+      // waiting on push_data.sh -> GitHub -> Pages to publish the static file.
+      // push_data.sh still runs (server-side, in the background) so the
+      // static file and archive stay current for passive viewers, but this
+      // click doesn't wait on any of that.
+      currentPackets = currentPackets.concat(data.packets).slice(-WINDOW);
+      renderAll(currentPackets);
+      btn.textContent = original;
+      btn.disabled = false;
+      return;
+    }
+
+    // Fallback: poll reported timeout or came back with no packets — fall
+    // back to the old path of re-fetching the static file after a short
+    // delay, in case the result just didn't make it back in time.
     btn.textContent = '↺ syncing...';
     setTimeout(async () => {
       await refresh();
@@ -1110,9 +1133,9 @@ async function triggerRefresh() {
   } catch (e) {
     console.error('poll request failed', e);
     btn.textContent = '↺ error';
-    setTimeout(() => { btn.textContent = original; }, 2000);
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000);
+    return;
   }
-  btn.disabled = false;
 }
 
 // ── Radio ping test (independent of refresh — result comes straight back in
@@ -1134,9 +1157,27 @@ async function runPingTest() {
     return;
   }
 
+  let progressTimer = null;
   try {
+    // Poll progress every 300ms while the test runs in the background on
+    // the Pi, so a slow/flaky connection shows "x/y pong..." live instead
+    // of a blank button for the whole test.
+    progressTimer = setInterval(async () => {
+      try {
+        const pResp = await fetch(`${API_BASE}/api/ping_progress`);
+        const p = await pResp.json();
+        if (p.status === 'running') {
+          resultEl.style.color = 'var(--muted)';
+          resultEl.textContent = `${p.hits}/${p.done} pong so far (of ${p.count})...`;
+        }
+      } catch (e) {
+        // Non-fatal — just skip this tick, the final result below still lands.
+      }
+    }, 300);
+
     const resp = await fetch(`${API_BASE}/api/ping_test`, { method: 'POST' });
     const data = await resp.json();
+    clearInterval(progressTimer);
 
     if (resp.status === 429) {
       const wait = Math.ceil(data.retry_after || 5);
@@ -1153,6 +1194,7 @@ async function runPingTest() {
       resultEl.textContent = `${data.hits}/${data.count} pong · ${rttStr}`;
     }
   } catch (e) {
+    if (progressTimer) clearInterval(progressTimer);
     console.error('ping test failed', e);
     resultEl.textContent = 'error';
     resultEl.style.color = 'var(--red)';
