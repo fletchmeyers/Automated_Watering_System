@@ -38,12 +38,13 @@ from flask_cors import CORS
 
 from sync_indoor import (
     request_poll,
-    wait_for_new_data,
+    wait_for_poll_result,
     sensor_health_report,
     request_set_interval,
     wait_for_interval_ack,
     request_ping_test,
     wait_for_ping_result,
+    get_ping_progress,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -104,21 +105,38 @@ def api_poll():
             }), 429
 
         request_poll()
-        got_data = wait_for_new_data(timeout=90)
-        result = {"status": "ok" if got_data else "timeout"}
+        packets = wait_for_poll_result(timeout=90)
+        result = {
+            "status":  "ok" if packets else "timeout",
+            "packets": packets or [],
+        }
 
-        # Publish immediately rather than waiting for the next cron tick,
-        # so a manual refresh actually shows fresh data promptly.
-        if got_data and PUSH_SCRIPT.exists():
-            try:
-                subprocess.run(["bash", str(PUSH_SCRIPT)], timeout=30, check=False)
-            except Exception as e:
-                print(f"[API] push_data.sh failed to run: {e}")
+        # Publish to GitHub in the background — this benefits anyone loading
+        # the dashboard passively and feeds the archive, but the response to
+        # this click no longer waits on git/GitHub/the Pages CDN at all, since
+        # the actual sensor values are already in `result` above.
+        if packets and PUSH_SCRIPT.exists():
+            def _publish():
+                try:
+                    subprocess.run(["bash", str(PUSH_SCRIPT)], timeout=30, check=False)
+                except Exception as e:
+                    print(f"[API] push_data.sh failed to run: {e}")
+            threading.Thread(target=_publish, daemon=True).start()
 
         _last_poll["ts"]     = time.monotonic()
         _last_poll["result"] = result
 
     return jsonify(result)
+
+
+@app.route("/api/ping_progress", methods=["GET"])
+def api_ping_progress():
+    # Cheap, uncached, no cooldown — meant to be polled every ~300ms while a
+    # ping test is in flight to show a live "x/y pong" readout.
+    progress = get_ping_progress()
+    if progress is None:
+        return jsonify({"status": "idle"})
+    return jsonify({"status": "running", **progress})
 
 
 @app.route("/api/ping_test", methods=["POST"])
