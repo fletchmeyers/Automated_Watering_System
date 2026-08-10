@@ -46,6 +46,8 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+    flex-wrap: wrap;
+    row-gap: 12px;
     margin-bottom: 28px;
     padding-bottom: 16px;
     border-bottom: 1px solid var(--border);
@@ -84,7 +86,8 @@
   .header-right {
     display: flex;
     align-items: center;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 10px 16px;
   }
 
   .status-dot {
@@ -163,6 +166,24 @@
   @media (max-width: 700px) {
     .card-wide { grid-column: span 1; }
     body { padding: 12px; }
+
+    header { row-gap: 10px; }
+
+    .header-right {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    #refresh-btn, #ping-btn {
+      flex: 1 1 auto;
+      text-align: center;
+    }
+
+    #ping-result {
+      width: 100%;
+      order: 10;             /* push below the buttons instead of squeezing beside them */
+      text-align: center;
+    }
   }
 
   .card-header {
@@ -571,7 +592,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-const DATA_FILE = "data_from_pico.txt";
+const DATA_FILE = "/Automated_Watering_System/data_from_pico.txt";
 const WINDOW = 2000;
 const REFRESH_MS = 10000;
 
@@ -1019,14 +1040,18 @@ function updateStatusDot(lastTs) {
 // without waiting on a full re-fetch of the static file.
 let currentPackets = [];
 
+function getLastTs(packets) {
+  for (let i = packets.length - 1; i >= 0; i--) {
+    if (packets[i].ts) return packets[i].ts;
+  }
+  return null;
+}
+
 function renderAll(packets) {
   document.getElementById('packets-count').textContent = packets.length;
 
   // Pull latest timestamp from any packet that has one
-  let lastTs = null;
-  for (let i = packets.length - 1; i >= 0; i--) {
-    if (packets[i].ts) { lastTs = packets[i].ts; break; }
-  }
+  let lastTs = getLastTs(packets);
 
   updateStatusDot(lastTs);
   document.getElementById('last-update').textContent = lastTs ? (minutesAgo(lastTs) || lastTs) : 'unknown';
@@ -1075,6 +1100,20 @@ function renderAll(packets) {
 async function refresh() {
   const packets = await loadData();
   if (!packets) return;
+
+  // Guard against the periodic re-fetch of the static file clobbering
+  // fresher data a manual poll (triggerRefresh) already rendered directly —
+  // the static file only catches up once push_data.sh's commit has actually
+  // propagated through GitHub/Pages, which can lag a manual poll by minutes.
+  // ISO timestamps ("YYYY-MM-DDTHH:MM:SS") sort correctly as plain strings.
+  if (currentPackets.length) {
+    const incomingTs = getLastTs(packets);
+    const currentTs  = getLastTs(currentPackets);
+    if (incomingTs && currentTs && incomingTs < currentTs) {
+      return; // static file hasn't caught up yet — keep showing the fresher data
+    }
+  }
+
   currentPackets = packets;
   renderAll(currentPackets);
 }
