@@ -586,18 +586,17 @@
 </div>
 
 <footer>
-  <span>data_from_pico.txt · auto-refresh 10s</span>
+  <span>live from sensors.db · auto-refresh 10s</span>
   <span>packets in window: <span id="packets-count">–</span></span>
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-const DATA_FILE = "/Automated_Watering_System/data_from_pico.txt";
-const WINDOW = 2000;
+const DATA_WINDOW_MINUTES = 360;  // how much history /api/data returns (6 hours)
+const WINDOW = 2000;              // cap on packets kept in memory (used when triggerRefresh merges a manual poll in)
 const REFRESH_MS = 10000;
 
-// Set this once the Cloudflare Tunnel + domain are live (see flask_api.py / setup notes).
-// Leave as-is and the refresh button will just fall back to re-fetching the static file.
+// Cloudflare Tunnel + domain — dashboard reads live from sensors.db via /api/data.
 const API_BASE = "https://api.fletchermeyers.com";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -988,24 +987,16 @@ function renderSystem(rtLatest, lastTs, seqLatest) {
 // ── Load + parse ──────────────────────────────────────────────────────────────
 
 async function loadData() {
-  const cacheBust = `?cb=${Date.now()}`;
-  let text;
   try {
-    const resp = await fetch(DATA_FILE + cacheBust);
+    const resp = await fetch(`${API_BASE}/api/data?minutes=${DATA_WINDOW_MINUTES}`);
     if (!resp.ok) throw new Error(resp.status);
-    text = await resp.text();
+    const data = await resp.json();
+    if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
+    return data.packets.slice(-WINDOW);
   } catch (e) {
-    document.getElementById('last-update').textContent = 'error: cannot load file';
+    document.getElementById('last-update').textContent = 'error: cannot load data';
     return null;
   }
-
-  const lines = text.trim().split('\n');
-  const tail  = lines.slice(-WINDOW);
-  const packets = [];
-  for (const line of tail) {
-    try { packets.push(JSON.parse(line)); } catch {}
-  }
-  return packets;
 }
 
 function getLatest(packets, type) {
@@ -1101,19 +1092,9 @@ async function refresh() {
   const packets = await loadData();
   if (!packets) return;
 
-  // Guard against the periodic re-fetch of the static file clobbering
-  // fresher data a manual poll (triggerRefresh) already rendered directly —
-  // the static file only catches up once push_data.sh's commit has actually
-  // propagated through GitHub/Pages, which can lag a manual poll by minutes.
-  // ISO timestamps ("YYYY-MM-DDTHH:MM:SS") sort correctly as plain strings.
-  if (currentPackets.length) {
-    const incomingTs = getLastTs(packets);
-    const currentTs  = getLastTs(currentPackets);
-    if (incomingTs && currentTs && incomingTs < currentTs) {
-      return; // static file hasn't caught up yet — keep showing the fresher data
-    }
-  }
-
+  // /api/data reads sensors.db directly, so unlike the old static-file
+  // fetch there's no GitHub/Pages propagation lag to guard against here —
+  // whatever comes back is already current as of the query.
   currentPackets = packets;
   renderAll(currentPackets);
 }
