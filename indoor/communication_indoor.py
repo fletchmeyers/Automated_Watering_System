@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE
 
+import db
+
 CMD_TIMEOUT =45   # seconds before giving up on an unacked command
 
 ARCHIVE_DIR = Path(__file__).parent / "archive"
@@ -232,12 +234,18 @@ class BatchReceiver:
     For bulk sync chunks, sends a per-chunk data_ack carrying the chunk number
     so the Pico can advance to the next chunk.
     For poll responses (no chunk field), sends a plain data_ack.
+
+    If db_conn is provided, every flushed batch is also written to SQLite
+    (sensors.db) alongside the existing flat-file writes. A failure writing
+    to the DB is logged and otherwise ignored — the flat files remain the
+    source of truth while the DB migration is still in progress.
     '''
 
     _SKIP_TYPES = {"ts", "batch_end", "set_interval_ack", "sync_complete"}
 
-    def __init__(self, data_file=DATA_FILE):
+    def __init__(self, data_file=DATA_FILE, db_conn=None):
         self.data_file = data_file
+        self.db_conn = db_conn
         self._reset()
 
     def _reset(self):
@@ -312,6 +320,13 @@ class BatchReceiver:
                 f.write(json.dumps(pkt) + "\n")
 
         print(f"[BATCH] Wrote {len(self._received)} packets to file.")
+
+        if self.db_conn is not None:
+            try:
+                db.insert_batch(self.db_conn, self._received)
+                print(f"[DB] Wrote {len(self._received)} packets to sensors.db.")
+            except Exception as e:
+                print(f"[DB] Failed to write batch to sensors.db: {e}")
 
         if send_ack and radio is not None and self._batch_end_q is not None:
             ack = {"t": "data_ack", "q": self._batch_end_q}

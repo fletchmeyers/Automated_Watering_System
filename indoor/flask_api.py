@@ -32,6 +32,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+import db
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -163,6 +164,36 @@ def api_ping_test():
         _last_ping["result"] = response
 
     return jsonify(response)
+
+
+_db_conn = db.get_connection()
+
+
+@app.route("/api/data", methods=["GET"])
+def api_data():
+    minutes     = request.args.get("minutes", default=15, type=int)
+    start       = request.args.get("start", type=str)
+    end         = request.args.get("end", type=str)
+    sensor_type = request.args.get("sensor_type", type=str)
+    node_id     = request.args.get("node_id", type=int)
+
+    # start/end override the minutes default if either is explicitly given
+    use_minutes = minutes if (start is None and end is None) else None
+
+    try:
+        rows = db.query_readings(
+            _db_conn,
+            minutes=use_minutes,
+            start=start,
+            end=end,
+            sensor_type=sensor_type,
+            node_id=node_id,
+        )
+        packets = db.pivot_to_packets(rows)
+        return jsonify({"status": "ok", "packets": packets})
+    except Exception as e:
+        print(f"[API] /api/data query failed: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 # ── Gated endpoints (Cloudflare Access enforces login before these are hit) ──
