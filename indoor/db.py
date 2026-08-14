@@ -107,7 +107,7 @@ def query_readings(conn, minutes=None, start=None, end=None,
     params  = []
 
     if minutes is not None:
-        clauses.append("ts >= datetime('now', ?)")
+        clauses.append("ts >= datetime('now', 'localtime', ?)")
         params.append(f"-{int(minutes)} minutes")
     else:
         if start is not None:
