@@ -986,13 +986,17 @@ function renderSystem(rtLatest, lastTs, seqLatest) {
 
 // ── Load + parse ──────────────────────────────────────────────────────────────
 
+function withKnownTs(packets) {
+  return packets.filter(p => p.ts && p.ts !== 'unknown');
+}
+
 async function loadData() {
   try {
     const resp = await fetch(`${API_BASE}/api/data?minutes=${DATA_WINDOW_MINUTES}`);
     if (!resp.ok) throw new Error(resp.status);
     const data = await resp.json();
     if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
-    return data.packets.slice(-WINDOW);
+    return withKnownTs(data.packets).slice(-WINDOW);
   } catch (e) {
     document.getElementById('last-update').textContent = 'error: cannot load data';
     return null;
@@ -1133,7 +1137,7 @@ async function triggerRefresh() {
       // push_data.sh still runs (server-side, in the background) so the
       // static file and archive stay current for passive viewers, but this
       // click doesn't wait on any of that.
-      currentPackets = currentPackets.concat(data.packets).slice(-WINDOW);
+      currentPackets = withKnownTs(currentPackets.concat(data.packets)).slice(-WINDOW);
       renderAll(currentPackets);
       btn.textContent = original;
       btn.disabled = false;
