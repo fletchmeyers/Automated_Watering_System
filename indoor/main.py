@@ -19,6 +19,8 @@ from sync_indoor import (
 
 from communication_indoor import CommandManager, BatchReceiver, PollingTimer, run_ping_test
 
+import db
+
 # ── Config ────────────────────────────────────────────────────────────────────
 NODE_IDS      = [1]    # add node IDs here as you expand the network
 POLL_INTERVAL = 60     # seconds between polls per node
@@ -40,8 +42,10 @@ print(f"Frequency: {rfm69.frequency_mhz}mhz")
 print(f"Bit rate: {rfm69.bitrate / 1000}kbit/s")
 print(f"Frequency deviation: {rfm69.frequency_deviation}hz")
 
+db_conn = db.get_connection()
+
 cmd   = CommandManager()
-batch = BatchReceiver(DATA_FILE)
+batch = BatchReceiver(DATA_FILE, db_conn=db_conn)
 timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL, sync_interval=SYNC_INTERVAL)
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
