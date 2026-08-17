@@ -1469,9 +1469,17 @@ const ANALYSIS_FIELDS = [
   { id: 'batt.v',   type: 'batt', key: 'v',   label: 'Battery Voltage' },
   { id: 'rt.tmp',   type: 'rt',   key: 'tmp', label: 'Radio Temp' },
   { id: 'pw0.ma',   type: 'pw0',  key: 'ma',  label: 'Power 0 · Current' },
+  { id: 'pw0.v',    type: 'pw0',  key: 'v',   label: 'Power 0 · Voltage' },
+  { id: 'pw0.mw',   type: 'pw0',  key: 'mw',  label: 'Power 0 · Wattage' },
   { id: 'pw1.ma',   type: 'pw1',  key: 'ma',  label: 'Power 1 · Current' },
+  { id: 'pw1.v',    type: 'pw1',  key: 'v',   label: 'Power 1 · Voltage' },
+  { id: 'pw1.mw',   type: 'pw1',  key: 'mw',  label: 'Power 1 · Wattage' },
   { id: 'pw2.ma',   type: 'pw2',  key: 'ma',  label: 'Power 2 · Current' },
+  { id: 'pw2.v',    type: 'pw2',  key: 'v',   label: 'Power 2 · Voltage' },
+  { id: 'pw2.mw',   type: 'pw2',  key: 'mw',  label: 'Power 2 · Wattage' },
   { id: 'pw3.ma',   type: 'pw3',  key: 'ma',  label: 'Power 3 · Current' },
+  { id: 'pw3.v',    type: 'pw3',  key: 'v',   label: 'Power 3 · Voltage' },
+  { id: 'pw3.mw',   type: 'pw3',  key: 'mw',  label: 'Power 3 · Wattage' },
 ];
 
 const FIELD_COLORS = ['#39d0c4', '#58a6ff', '#bc8cff', '#d29922', '#3fb950', '#f85149', '#8b949e', '#56d364'];
@@ -1645,6 +1653,47 @@ async function runAnalysisPlot() {
   }
 }
 
+// One Y axis per selected field, color-matched to that field's line so the
+// axis a value belongs to is visually obvious. First field gets the normal
+// left axis; every field after that stacks on the right, each shifted
+// further out. Auto-assigned per field for now, uncapped — revisit with a
+// cap (or a "share an axis" option) once we've seen what it looks like with
+// a lot of fields checked at once.
+const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-side axes
+
+function buildTimeSeriesLayout(fields) {
+  const layout = { ...PLOTLY_LAYOUT_BASE };
+  const extraAxes = Math.max(0, fields.length - 1);
+  const rightMargin = extraAxes > 1 ? (extraAxes - 1) * EXTRA_AXIS_STEP : 0;
+
+  layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin] };
+  layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: 20 + rightMargin * 600 };
+
+  fields.forEach((f, i) => {
+    const color = fieldColor(f);
+    const axisStyle = {
+      gridcolor: i === 0 ? PLOTLY_LAYOUT_BASE.yaxis.gridcolor : 'transparent',
+      linecolor: color,
+      zerolinecolor: PLOTLY_LAYOUT_BASE.yaxis.zerolinecolor,
+      tickfont: { color },
+      title: { text: f.label, font: { color } },
+    };
+    if (i === 0) {
+      layout.yaxis = axisStyle;
+    } else {
+      layout[`yaxis${i + 1}`] = {
+        ...axisStyle,
+        overlaying: 'y',
+        side: 'right',
+        anchor: i === 1 ? 'x' : 'free',
+        position: i === 1 ? undefined : (1 - rightMargin) + (i - 1) * EXTRA_AXIS_STEP,
+      };
+    }
+  });
+
+  return layout;
+}
+
 async function plotTimeSeries(start, end) {
   const fields = ANALYSIS_FIELDS.filter(f => tsSelectedFields.has(f.id));
   if (!fields.length) {
@@ -1659,7 +1708,7 @@ async function plotTimeSeries(start, end) {
   const packetsByType = {};
   await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
 
-  const traces = fields.map(f => {
+  const traces = fields.map((f, i) => {
     const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
     return {
       x: xs, y: ys,
@@ -1667,15 +1716,13 @@ async function plotTimeSeries(start, end) {
       name: f.label,
       line: { color: fieldColor(f), width: 1.5 },
       marker: { size: 3 },
+      yaxis: i === 0 ? 'y' : `y${i + 1}`,
     };
   });
 
   showAnalysisStatus(traces.some(t => t.x.length) ? '' : 'no data in that range for the selected field(s)', true);
 
-  Plotly.newPlot('analysis-plot', traces, {
-    ...PLOTLY_LAYOUT_BASE,
-    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: fields.length === 1 ? fields[0].label : '' },
-  }, { responsive: true, displaylogo: false });
+  Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
 }
 
 async function plotScatter(start, end) {
