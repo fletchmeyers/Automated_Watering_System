@@ -144,6 +144,50 @@
     min-width: 1px;
   }
 
+  #customize-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  #customize-btn:hover { border-color: var(--text); color: var(--text); }
+  #customize-btn.active { border-color: var(--teal, #39d0c4); color: var(--teal, #39d0c4); }
+
+  .grid.customize-mode .card {
+    cursor: grab;
+    outline: 1px dashed var(--border);
+    outline-offset: 2px;
+  }
+  .grid.customize-mode .card.dragging {
+    opacity: 0.4;
+  }
+  .grid.customize-mode .card.card-is-hidden {
+    opacity: 0.45;
+  }
+
+  .card-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+  }
+  .card-hide-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .card-hide-btn:hover { border-color: var(--text); color: var(--text); }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -174,7 +218,7 @@
       justify-content: space-between;
     }
 
-    #refresh-btn, #ping-btn {
+    #refresh-btn, #ping-btn, #customize-btn {
       flex: 1 1 auto;
       text-align: center;
     }
@@ -685,6 +729,7 @@
     <span id="last-update">loading...</span>
     <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
     <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
+    <button id="customize-btn" onclick="toggleCustomizeMode()">⚙ customize</button>
     <span id="ping-result"></span>
   </div>
 </header>
@@ -1445,6 +1490,145 @@ async function runPingTest() {
   btn.disabled = false;
 }
 
+// ── Live card customization (hide/show + reorder) ──────────────────────────
+// Real deployed site, not an Artifact, so localStorage is fair game here —
+// persists per-browser across visits. Separate from the analysis panel's
+// Phase 2 "drag-and-drop multi-card" idea; this is only about the live
+// sensor-reading cards at the top of the dashboard.
+
+const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system'];
+const CARD_PREFS_KEY = 'gardenDashboardCardPrefs';
+
+function loadCardPrefs() {
+  try {
+    const raw = localStorage.getItem(CARD_PREFS_KEY);
+    if (!raw) return { order: CARD_IDS.slice(), hidden: [] };
+    const parsed = JSON.parse(raw);
+    const savedOrder = Array.isArray(parsed.order) ? parsed.order.filter(id => CARD_IDS.includes(id)) : [];
+    // Any card not in the saved order (e.g. added after prefs were saved) gets appended.
+    CARD_IDS.forEach(id => { if (!savedOrder.includes(id)) savedOrder.push(id); });
+    return { order: savedOrder, hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [] };
+  } catch (e) {
+    console.warn('[cards] failed to load saved layout, using default', e);
+    return { order: CARD_IDS.slice(), hidden: [] };
+  }
+}
+
+function saveCardPrefs() {
+  try {
+    localStorage.setItem(CARD_PREFS_KEY, JSON.stringify(cardPrefs));
+  } catch (e) {
+    console.warn('[cards] failed to save layout', e);
+  }
+}
+
+let cardPrefs = loadCardPrefs();
+let customizeMode = false;
+
+function applyCardOrder() {
+  const grid = document.getElementById('grid');
+  cardPrefs.order.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) grid.appendChild(el); // moves to end in this order, so final DOM order == cardPrefs.order
+  });
+}
+
+function applyCardVisibility() {
+  CARD_IDS.forEach(id => {
+    const card = document.getElementById(id);
+    if (!card) return;
+    const hidden = cardPrefs.hidden.includes(id);
+    card.classList.toggle('card-is-hidden', hidden);
+    // While customizing, keep hidden cards visible-but-dimmed so they can be un-hidden.
+    // Otherwise, actually hide them.
+    card.style.display = (hidden && !customizeMode) ? 'none' : '';
+  });
+}
+
+function toggleCardHidden(id) {
+  const idx = cardPrefs.hidden.indexOf(id);
+  if (idx >= 0) cardPrefs.hidden.splice(idx, 1); else cardPrefs.hidden.push(id);
+  saveCardPrefs();
+  applyCardVisibility();
+  renderCardControls();
+}
+
+function renderCardControls() {
+  CARD_IDS.forEach(id => {
+    const card = document.getElementById(id);
+    if (!card) return;
+    card.draggable = customizeMode;
+    let ctrl = card.querySelector('.card-controls');
+    if (!customizeMode) {
+      if (ctrl) ctrl.remove();
+      return;
+    }
+    const hidden = cardPrefs.hidden.includes(id);
+    if (!ctrl) {
+      ctrl = document.createElement('div');
+      ctrl.className = 'card-controls';
+      card.appendChild(ctrl);
+    }
+    ctrl.innerHTML = `<button type="button" class="card-hide-btn">${hidden ? 'show' : 'hide'}</button>`;
+    ctrl.querySelector('button').onclick = (e) => { e.stopPropagation(); toggleCardHidden(id); };
+  });
+}
+
+function toggleCustomizeMode() {
+  customizeMode = !customizeMode;
+  const grid = document.getElementById('grid');
+  const btn = document.getElementById('customize-btn');
+  grid.classList.toggle('customize-mode', customizeMode);
+  btn.classList.toggle('active', customizeMode);
+  btn.textContent = customizeMode ? '✓ done' : '⚙ customize';
+  applyCardVisibility();
+  renderCardControls();
+}
+
+// Native HTML5 drag-and-drop, scoped to #grid, only active in customize mode.
+let dragSrcId = null;
+
+function initCardDragAndDrop() {
+  const grid = document.getElementById('grid');
+
+  grid.addEventListener('dragstart', (e) => {
+    if (!customizeMode) return;
+    const card = e.target.closest('.card');
+    if (!card) return;
+    dragSrcId = card.id;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  grid.addEventListener('dragover', (e) => {
+    if (!customizeMode || !dragSrcId) return;
+    e.preventDefault();
+    const card = e.target.closest('.card');
+    if (!card || card.id === dragSrcId) return;
+    const dragEl = document.getElementById(dragSrcId);
+    if (!dragEl) return;
+    const rect = card.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    grid.insertBefore(dragEl, before ? card : card.nextSibling);
+  });
+
+  grid.addEventListener('dragend', (e) => {
+    const card = e.target.closest('.card');
+    if (card) card.classList.remove('dragging');
+    if (dragSrcId) {
+      cardPrefs.order = Array.from(grid.querySelectorAll('.card')).map(el => el.id).filter(id => CARD_IDS.includes(id));
+      saveCardPrefs();
+    }
+    dragSrcId = null;
+  });
+}
+
+function initCardCustomization() {
+  applyCardOrder();
+  applyCardVisibility();
+  initCardDragAndDrop();
+}
+
 // ── Analysis panel ───────────────────────────────────────────────────────────
 // Separate from the live cards above: no auto-refresh loop, queries /api/data
 // directly with sensor_type + start/end (already supported since the DB
@@ -1486,6 +1670,33 @@ const FIELD_COLORS = ['#39d0c4', '#58a6ff', '#bc8cff', '#d29922', '#3fb950', '#f
 
 function fieldById(id) { return ANALYSIS_FIELDS.find(f => f.id === id); }
 function fieldColor(f) { return FIELD_COLORS[ANALYSIS_FIELDS.indexOf(f) % FIELD_COLORS.length]; }
+// Color is keyed off position in the *full* ANALYSIS_FIELDS list (not the
+// filtered/available one) so a field's color stays stable regardless of
+// which other fields currently have data.
+
+// Which (sensor_type, key) pairs have ever actually logged a row — used to
+// hide checkboxes/dropdown options for sensors that were never wired up
+// (e.g. pw3). null = not yet fetched, or the fetch failed; in that case we
+// fail open and show every field rather than hiding things incorrectly.
+let availableFieldKeys = null;
+
+async function fetchAvailableFields() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/available_fields`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
+    availableFieldKeys = new Set(data.fields.map(f => `${f.sensor_type}.${f.key}`));
+  } catch (e) {
+    console.warn('[analysis] /api/available_fields failed, showing all fields', e);
+    availableFieldKeys = null;
+  }
+}
+
+function visibleAnalysisFields() {
+  if (!availableFieldKeys) return ANALYSIS_FIELDS; // fail open
+  return ANALYSIS_FIELDS.filter(f => availableFieldKeys.has(`${f.type}.${f.key}`));
+}
 
 let analysisMode = 'timeseries';
 // Default selection chosen for the exact soil s0/s2 gap this panel exists to help chase.
@@ -1506,8 +1717,13 @@ function toggleField(id, checked) {
 }
 
 function buildFieldPicker() {
+  const fields = visibleAnalysisFields();
+  // A field that was checked (e.g. from a saved default) but turns out to have
+  // no data shouldn't silently stay "selected" with no checkbox to uncheck it.
+  [...tsSelectedFields].forEach(id => { if (!fields.some(f => f.id === id)) tsSelectedFields.delete(id); });
+
   const wrap = document.getElementById('ts-field-picker');
-  wrap.innerHTML = ANALYSIS_FIELDS.map(f => {
+  wrap.innerHTML = fields.map(f => {
     const checked = tsSelectedFields.has(f.id);
     return `<label class="field-chip${checked ? ' checked' : ''}" style="--field-color:${fieldColor(f)}" data-field="${f.id}">
       <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleField('${f.id}', this.checked)">
@@ -1515,13 +1731,16 @@ function buildFieldPicker() {
     </label>`;
   }).join('');
 
-  const opts = ANALYSIS_FIELDS.map(f => `<option value="${f.id}">${f.label}</option>`).join('');
+  const opts = fields.map(f => `<option value="${f.id}">${f.label}</option>`).join('');
   const xSel = document.getElementById('scatter-x-select');
   const ySel = document.getElementById('scatter-y-select');
   xSel.innerHTML = opts;
   ySel.innerHTML = opts;
-  xSel.value = 's2.m';   // defaults toward the "soil moisture vs UV" comparison
-  ySel.value = 'uv.lux'; // that motivated scatter mode in the first place
+  // Defaults toward the "soil moisture vs UV" comparison that motivated
+  // scatter mode in the first place — fall back to whatever's first/second
+  // available if either of those specific fields has no data.
+  xSel.value = fields.some(f => f.id === 's2.m') ? 's2.m' : (fields[0]?.id ?? '');
+  ySel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[1]?.id ?? fields[0]?.id ?? '');
 }
 
 // ── Time range: presets + custom, same fetch either way ───────────────────────
@@ -1695,7 +1914,7 @@ function buildTimeSeriesLayout(fields) {
 }
 
 async function plotTimeSeries(start, end) {
-  const fields = ANALYSIS_FIELDS.filter(f => tsSelectedFields.has(f.id));
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
   if (!fields.length) {
     showAnalysisStatus('select at least one field above', true);
     Plotly.purge('analysis-plot');
@@ -1756,7 +1975,8 @@ async function plotScatter(start, end) {
   }, { responsive: true, displaylogo: false });
 }
 
-function initAnalysisPanel() {
+async function initAnalysisPanel() {
+  await fetchAvailableFields(); // determines which checkboxes/options even show up
   buildFieldPicker();
   buildPresetButtons();
   const defaultBtn = document.querySelector('.preset-btn[data-minutes="1440"]');
@@ -1768,6 +1988,7 @@ function initAnalysisPanel() {
 
 refresh();
 setInterval(refresh, REFRESH_MS);
+initCardCustomization();
 initAnalysisPanel();
 </script>
 </body>
