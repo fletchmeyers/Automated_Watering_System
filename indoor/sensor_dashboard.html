@@ -144,38 +144,35 @@
     min-width: 1px;
   }
 
-  #customize-btn {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  #customize-btn:hover { border-color: var(--text); color: var(--text); }
-  #customize-btn.active { border-color: var(--teal, #39d0c4); color: var(--teal, #39d0c4); }
-
-  .grid.customize-mode .card {
-    cursor: grab;
-    outline: 1px dashed var(--border);
-    outline-offset: 2px;
-  }
-  .grid.customize-mode .card.dragging {
+  .card.dragging {
     opacity: 0.4;
   }
-  .grid.customize-mode .card.card-is-hidden {
-    opacity: 0.45;
+
+  .card-drag-handle {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 2;
+    cursor: grab;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.3;
+    user-select: none;
+    transition: opacity 0.15s;
   }
+  .card-drag-handle:active { cursor: grabbing; }
+  .card:hover .card-drag-handle { opacity: 0.8; }
 
   .card-controls {
     position: absolute;
-    top: 10px;
-    right: 10px;
+    top: 8px;
+    right: 8px;
     z-index: 2;
+    opacity: 0.3;
+    transition: opacity 0.15s;
   }
+  .card:hover .card-controls { opacity: 1; }
   .card-hide-btn {
     background: var(--bg3);
     border: 1px solid var(--border);
@@ -187,6 +184,37 @@
     cursor: pointer;
   }
   .card-hide-btn:hover { border-color: var(--text); color: var(--text); }
+
+  #hidden-cards-bar {
+    display: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .hidden-card-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 6px 4px 12px;
+  }
+  .hidden-card-chip button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .hidden-card-chip button:hover { color: var(--text); background: var(--bg3); }
 
   .grid {
     display: grid;
@@ -218,7 +246,7 @@
       justify-content: space-between;
     }
 
-    #refresh-btn, #ping-btn, #customize-btn {
+    #refresh-btn, #ping-btn {
       flex: 1 1 auto;
       text-align: center;
     }
@@ -729,7 +757,6 @@
     <span id="last-update">loading...</span>
     <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
     <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
-    <button id="customize-btn" onclick="toggleCustomizeMode()">⚙ customize</button>
     <span id="ping-result"></span>
   </div>
 </header>
@@ -809,6 +836,9 @@
   </div>
 
 </div>
+
+<!-- Populated when one or more cards above are hidden; click "show" to restore -->
+<div id="hidden-cards-bar"></div>
 
 <!-- Analysis panel — separate section, its own refresh cadence (none, plot-on-demand) -->
 <div class="card card-wide" id="card-analysis" style="margin-top:16px;">
@@ -1492,11 +1522,26 @@ async function runPingTest() {
 
 // ── Live card customization (hide/show + reorder) ──────────────────────────
 // Real deployed site, not an Artifact, so localStorage is fair game here —
-// persists per-browser across visits. Separate from the analysis panel's
-// Phase 2 "drag-and-drop multi-card" idea; this is only about the live
-// sensor-reading cards at the top of the dashboard.
+// persists per-browser across visits. Always on — no separate "customize
+// mode" to step into first. Every card gets a drag handle (top-left) and a
+// hide button (top-right), both low-opacity until hovered so they don't
+// clutter normal viewing. Hidden cards disappear from the grid entirely and
+// collapse into a small "hidden: ..." chip bar below it, so there's always
+// a way back without needing a mode toggle. Separate from the analysis
+// panel's Phase 2 "drag-and-drop multi-card" idea; this is only about the
+// live sensor-reading cards at the top of the dashboard.
 
 const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system'];
+const CARD_LABELS = {
+  'card-batt':   'Battery',
+  'card-sht':    'Temperature & Humidity',
+  'card-voc':    'Air Quality (VOC)',
+  'card-uv':     'UV & Light',
+  'card-soil':   'Soil Sensors',
+  'card-power':  'Power Monitors',
+  'card-health': 'Sensor Health',
+  'card-system': 'Radio & System',
+};
 const CARD_PREFS_KEY = 'gardenDashboardCardPrefs';
 
 function loadCardPrefs() {
@@ -1523,7 +1568,6 @@ function saveCardPrefs() {
 }
 
 let cardPrefs = loadCardPrefs();
-let customizeMode = false;
 
 function applyCardOrder() {
   const grid = document.getElementById('grid');
@@ -1536,12 +1580,25 @@ function applyCardOrder() {
 function applyCardVisibility() {
   CARD_IDS.forEach(id => {
     const card = document.getElementById(id);
-    if (!card) return;
-    const hidden = cardPrefs.hidden.includes(id);
-    card.classList.toggle('card-is-hidden', hidden);
-    // While customizing, keep hidden cards visible-but-dimmed so they can be un-hidden.
-    // Otherwise, actually hide them.
-    card.style.display = (hidden && !customizeMode) ? 'none' : '';
+    if (card) card.style.display = cardPrefs.hidden.includes(id) ? 'none' : '';
+  });
+  renderHiddenCardsBar();
+}
+
+function renderHiddenCardsBar() {
+  const bar = document.getElementById('hidden-cards-bar');
+  if (!cardPrefs.hidden.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span>hidden:</span>' + cardPrefs.hidden.map(id => `
+    <span class="hidden-card-chip">${CARD_LABELS[id] || id}
+      <button type="button" data-restore="${id}">show</button>
+    </span>`).join('');
+  bar.querySelectorAll('[data-restore]').forEach(btn => {
+    btn.addEventListener('click', () => toggleCardHidden(btn.dataset.restore));
   });
 }
 
@@ -1550,58 +1607,53 @@ function toggleCardHidden(id) {
   if (idx >= 0) cardPrefs.hidden.splice(idx, 1); else cardPrefs.hidden.push(id);
   saveCardPrefs();
   applyCardVisibility();
-  renderCardControls();
 }
 
-function renderCardControls() {
+function buildCardControls() {
   CARD_IDS.forEach(id => {
     const card = document.getElementById(id);
-    if (!card) return;
-    card.draggable = customizeMode;
-    let ctrl = card.querySelector('.card-controls');
-    if (!customizeMode) {
-      if (ctrl) ctrl.remove();
-      return;
-    }
-    const hidden = cardPrefs.hidden.includes(id);
-    if (!ctrl) {
-      ctrl = document.createElement('div');
-      ctrl.className = 'card-controls';
-      card.appendChild(ctrl);
-    }
-    ctrl.innerHTML = `<button type="button" class="card-hide-btn">${hidden ? 'show' : 'hide'}</button>`;
-    ctrl.querySelector('button').onclick = (e) => { e.stopPropagation(); toggleCardHidden(id); };
+    if (!card || card.querySelector('.card-controls')) return; // built once, reused
+
+    const handle = document.createElement('div');
+    handle.className = 'card-drag-handle';
+    handle.textContent = '⠿';
+    handle.title = 'Drag to reorder';
+    // Native drag-and-drop drags the whole element it's set on; arming
+    // `draggable` only while the handle is actively pressed keeps the rest
+    // of the card (text, values) normally selectable the rest of the time.
+    handle.addEventListener('mousedown', () => { card.draggable = true; });
+    card.appendChild(handle);
+
+    const ctrl = document.createElement('div');
+    ctrl.className = 'card-controls';
+    ctrl.innerHTML = `<button type="button" class="card-hide-btn" title="Hide this card">hide</button>`;
+    ctrl.querySelector('button').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCardHidden(id);
+    });
+    card.appendChild(ctrl);
+
+    card.draggable = false;
   });
 }
 
-function toggleCustomizeMode() {
-  customizeMode = !customizeMode;
-  const grid = document.getElementById('grid');
-  const btn = document.getElementById('customize-btn');
-  grid.classList.toggle('customize-mode', customizeMode);
-  btn.classList.toggle('active', customizeMode);
-  btn.textContent = customizeMode ? '✓ done' : '⚙ customize';
-  applyCardVisibility();
-  renderCardControls();
-}
-
-// Native HTML5 drag-and-drop, scoped to #grid, only active in customize mode.
+// Native HTML5 drag-and-drop, scoped to #grid, always active (arming happens
+// per-drag via the handle's mousedown above).
 let dragSrcId = null;
 
 function initCardDragAndDrop() {
   const grid = document.getElementById('grid');
 
   grid.addEventListener('dragstart', (e) => {
-    if (!customizeMode) return;
     const card = e.target.closest('.card');
-    if (!card) return;
+    if (!card || !card.draggable) return;
     dragSrcId = card.id;
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
   });
 
   grid.addEventListener('dragover', (e) => {
-    if (!customizeMode || !dragSrcId) return;
+    if (!dragSrcId) return;
     e.preventDefault();
     const card = e.target.closest('.card');
     if (!card || card.id === dragSrcId) return;
@@ -1614,17 +1666,28 @@ function initCardDragAndDrop() {
 
   grid.addEventListener('dragend', (e) => {
     const card = e.target.closest('.card');
-    if (card) card.classList.remove('dragging');
+    if (card) { card.classList.remove('dragging'); card.draggable = false; }
     if (dragSrcId) {
       cardPrefs.order = Array.from(grid.querySelectorAll('.card')).map(el => el.id).filter(id => CARD_IDS.includes(id));
       saveCardPrefs();
     }
     dragSrcId = null;
   });
+
+  // If the mouse is pressed on a handle and released without a drag ever
+  // starting (a click, essentially), un-arm draggable so it doesn't linger.
+  document.addEventListener('mouseup', () => {
+    if (dragSrcId) return; // an actual drag is in progress; dragend will handle it
+    CARD_IDS.forEach(id => {
+      const card = document.getElementById(id);
+      if (card) card.draggable = false;
+    });
+  });
 }
 
 function initCardCustomization() {
   applyCardOrder();
+  buildCardControls();
   applyCardVisibility();
   initCardDragAndDrop();
 }
