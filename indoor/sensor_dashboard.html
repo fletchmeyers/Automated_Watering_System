@@ -166,7 +166,7 @@
 
   .card-controls {
     position: absolute;
-    top: 8px;
+    bottom: 8px;
     right: 8px;
     z-index: 2;
     opacity: 0.3;
@@ -226,7 +226,7 @@
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 20px;
+    padding: 20px 20px 44px 20px;
     position: relative;
     overflow: hidden;
   }
@@ -766,7 +766,7 @@
   <!-- Battery -->
   <div class="card" id="card-batt">
     <div class="card-header">
-      <span class="card-title">Battery</span>
+      <span class="card-title">Lipo</span>
       <span id="batt-badge" class="card-badge badge-gray">–</span>
     </div>
     <div id="batt-body"><div class="no-data">No data</div></div>
@@ -811,7 +811,7 @@
   <!-- Power Monitors -->
   <div class="card card-wide" id="card-power">
     <div class="card-header">
-      <span class="card-title">Power Monitors</span>
+      <span class="card-title">Car Battery</span>
       <span id="power-badge" class="card-badge badge-gray">–</span>
     </div>
     <div id="power-body"><div class="no-data">No data</div></div>
@@ -1533,12 +1533,12 @@ async function runPingTest() {
 
 const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system'];
 const CARD_LABELS = {
-  'card-batt':   'Battery',
+  'card-batt':   'Lipo',
   'card-sht':    'Temperature & Humidity',
   'card-voc':    'Air Quality (VOC)',
   'card-uv':     'UV & Light',
   'card-soil':   'Soil Sensors',
-  'card-power':  'Power Monitors',
+  'card-power':  'Car Battery',
   'card-health': 'Sensor Health',
   'card-system': 'Radio & System',
 };
@@ -1712,21 +1712,21 @@ const ANALYSIS_FIELDS = [
   { id: 'uv.lux',   type: 'uv',   key: 'lux', label: 'Light (lux)' },
   { id: 'uv.uvi',   type: 'uv',   key: 'uvi', label: 'UV Index' },
   { id: 'voc.voc',  type: 'voc',  key: 'voc', label: 'VOC (raw)' },
-  { id: 'batt.soc', type: 'batt', key: 'soc', label: 'Battery %' },
-  { id: 'batt.v',   type: 'batt', key: 'v',   label: 'Battery Voltage' },
+  { id: 'batt.soc', type: 'batt', key: 'soc', label: 'Lipo %' },
+  { id: 'batt.v',   type: 'batt', key: 'v',   label: 'Lipo Voltage' },
   { id: 'rt.tmp',   type: 'rt',   key: 'tmp', label: 'Radio Temp' },
-  { id: 'pw0.ma',   type: 'pw0',  key: 'ma',  label: 'Power 0 · Current' },
-  { id: 'pw0.v',    type: 'pw0',  key: 'v',   label: 'Power 0 · Voltage' },
-  { id: 'pw0.mw',   type: 'pw0',  key: 'mw',  label: 'Power 0 · Wattage' },
-  { id: 'pw1.ma',   type: 'pw1',  key: 'ma',  label: 'Power 1 · Current' },
-  { id: 'pw1.v',    type: 'pw1',  key: 'v',   label: 'Power 1 · Voltage' },
-  { id: 'pw1.mw',   type: 'pw1',  key: 'mw',  label: 'Power 1 · Wattage' },
-  { id: 'pw2.ma',   type: 'pw2',  key: 'ma',  label: 'Power 2 · Current' },
-  { id: 'pw2.v',    type: 'pw2',  key: 'v',   label: 'Power 2 · Voltage' },
-  { id: 'pw2.mw',   type: 'pw2',  key: 'mw',  label: 'Power 2 · Wattage' },
-  { id: 'pw3.ma',   type: 'pw3',  key: 'ma',  label: 'Power 3 · Current' },
-  { id: 'pw3.v',    type: 'pw3',  key: 'v',   label: 'Power 3 · Voltage' },
-  { id: 'pw3.mw',   type: 'pw3',  key: 'mw',  label: 'Power 3 · Wattage' },
+  { id: 'pw0.ma',   type: 'pw0',  key: 'ma',  label: 'Car Battery 0 · Current' },
+  { id: 'pw0.v',    type: 'pw0',  key: 'v',   label: 'Car Battery 0 · Voltage' },
+  { id: 'pw0.mw',   type: 'pw0',  key: 'mw',  label: 'Car Battery 0 · Wattage' },
+  { id: 'pw1.ma',   type: 'pw1',  key: 'ma',  label: 'Car Battery 1 · Current' },
+  { id: 'pw1.v',    type: 'pw1',  key: 'v',   label: 'Car Battery 1 · Voltage' },
+  { id: 'pw1.mw',   type: 'pw1',  key: 'mw',  label: 'Car Battery 1 · Wattage' },
+  { id: 'pw2.ma',   type: 'pw2',  key: 'ma',  label: 'Car Battery 2 · Current' },
+  { id: 'pw2.v',    type: 'pw2',  key: 'v',   label: 'Car Battery 2 · Voltage' },
+  { id: 'pw2.mw',   type: 'pw2',  key: 'mw',  label: 'Car Battery 2 · Wattage' },
+  { id: 'pw3.ma',   type: 'pw3',  key: 'ma',  label: 'Car Battery 3 · Current' },
+  { id: 'pw3.v',    type: 'pw3',  key: 'v',   label: 'Car Battery 3 · Voltage' },
+  { id: 'pw3.mw',   type: 'pw3',  key: 'mw',  label: 'Car Battery 3 · Wattage' },
 ];
 
 const FIELD_COLORS = ['#39d0c4', '#58a6ff', '#bc8cff', '#d29922', '#3fb950', '#f85149', '#8b949e', '#56d364'];
@@ -1941,15 +1941,27 @@ async function runAnalysisPlot() {
 // further out. Auto-assigned per field for now, uncapped — revisit with a
 // cap (or a "share an axis" option) once we've seen what it looks like with
 // a lot of fields checked at once.
-const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-side axes
+const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-side axes, desktop baseline
+const MIN_AXIS_PX = 46;       // minimum real pixels reserved per stacked axis so its title text
+                               // (e.g. "Soil 2 Moisture") doesn't run into the neighboring axis line
 
 function buildTimeSeriesLayout(fields) {
   const layout = { ...PLOTLY_LAYOUT_BASE };
   const extraAxes = Math.max(0, fields.length - 1);
-  const rightMargin = extraAxes > 1 ? (extraAxes - 1) * EXTRA_AXIS_STEP : 0;
+
+  // EXTRA_AXIS_STEP is a *paper-fraction*, so the same value reserves fewer
+  // and fewer actual pixels as the plot gets narrower (e.g. on mobile).
+  // Read the plot's real rendered width and widen the step when needed so
+  // every stacked axis keeps at least MIN_AXIS_PX of room regardless of
+  // screen size.
+  const plotEl = document.getElementById('analysis-plot');
+  const plotWidth = (plotEl && plotEl.clientWidth) || 600;
+  const extraAxisStep = Math.max(EXTRA_AXIS_STEP, MIN_AXIS_PX / plotWidth);
+
+  const rightMargin = extraAxes > 1 ? (extraAxes - 1) * extraAxisStep : 0;
 
   layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin] };
-  layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: 20 + rightMargin * 600 };
+  layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: 20 + rightMargin * plotWidth };
 
   fields.forEach((f, i) => {
     const color = fieldColor(f);
@@ -1968,7 +1980,7 @@ function buildTimeSeriesLayout(fields) {
         overlaying: 'y',
         side: 'right',
         anchor: i === 1 ? 'x' : 'free',
-        position: i === 1 ? undefined : (1 - rightMargin) + (i - 1) * EXTRA_AXIS_STEP,
+        position: i === 1 ? undefined : (1 - rightMargin) + (i - 1) * extraAxisStep,
       };
     }
   });
