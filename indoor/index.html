@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Garden Sensor Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon"><div class="logo-leaf"></div></div>
+    <h1>garden<span>/</span>dashboard</h1>
+  </div>
+  <div class="header-right">
+    <div id="status-dot" class="status-dot stale"></div>
+    <span id="last-update">loading...</span>
+    <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
+    <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
+    <span id="ping-result"></span>
+  </div>
+</header>
+
+<div class="grid" id="grid">
+
+  <!-- Battery -->
+  <div class="card" id="card-batt">
+    <div class="card-header">
+      <span class="card-title">Lipo</span>
+      <span id="batt-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="batt-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Air: SHT40 -->
+  <div class="card" id="card-sht">
+    <div class="card-header">
+      <span class="card-title">Temperature & Humidity</span>
+      <span class="node-badge">SHT40</span>
+    </div>
+    <div id="sht-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Air Quality: SGP40 -->
+  <div class="card" id="card-voc">
+    <div class="card-header">
+      <span class="card-title">Air Quality (VOC)</span>
+      <span id="voc-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="voc-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- UV & Light -->
+  <div class="card" id="card-uv">
+    <div class="card-header">
+      <span class="card-title">UV & Light</span>
+      <span class="node-badge">LTR390</span>
+    </div>
+    <div id="uv-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Soil Sensors -->
+  <div class="card card-wide" id="card-soil">
+    <div class="card-header">
+      <span class="card-title">Soil Sensors</span>
+      <span class="node-badge">Seesaw</span>
+    </div>
+    <div id="soil-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- Power Monitors -->
+  <div class="card card-wide" id="card-power">
+    <div class="card-header">
+      <span class="card-title">Battery</span>
+      <span id="power-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="power-body"><div class="no-data">No data</div></div>
+  </div>
+
+  <!-- System Health -->
+  <div class="card" id="card-health">
+    <div class="card-header">
+      <span class="card-title">Sensor Health</span>
+      <span id="health-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="health-body"><div class="no-data">Loading...</div></div>
+  </div>
+
+  <!-- Radio / System -->
+  <div class="card" id="card-system">
+    <div class="card-header">
+      <span class="card-title">Radio & System</span>
+      <span class="node-badge">RFM69</span>
+    </div>
+    <div id="system-body"><div class="no-data">No data</div></div>
+  </div>
+
+</div>
+
+<!-- Populated when one or more cards above are hidden; click "show" to restore -->
+<div id="hidden-cards-bar"></div>
+
+<!-- Analysis panel — separate section, its own refresh cadence (none, plot-on-demand) -->
+<div class="card card-wide" id="card-analysis" style="margin-top:16px;">
+  <div class="card-header">
+    <span class="card-title">Analysis</span>
+    <div class="analysis-mode-toggle">
+      <button id="mode-timeseries-btn" class="mode-btn active" onclick="setAnalysisMode('timeseries')" type="button">Time-series</button>
+      <button id="mode-scatter-btn" class="mode-btn" onclick="setAnalysisMode('scatter')" type="button">Scatter</button>
+    </div>
+  </div>
+
+  <div id="ts-field-picker" class="field-picker"></div>
+  <div id="scatter-field-picker" class="scatter-field-row" style="display:none;">
+    <div class="scatter-axis-row">
+      <label>X axis</label>
+      <select id="scatter-x-select"></select>
+    </div>
+    <div class="scatter-axis-row">
+      <label>Y axis</label>
+      <select id="scatter-y-select"></select>
+    </div>
+  </div>
+
+  <div class="time-range-row">
+    <div class="preset-btns" id="preset-btns"></div>
+    <div class="custom-range">
+      <input type="datetime-local" id="range-start">
+      <span>to</span>
+      <input type="datetime-local" id="range-end">
+    </div>
+    <button id="plot-btn" onclick="runAnalysisPlot()" type="button">Plot</button>
+  </div>
+
+  <div id="analysis-status" class="no-data" style="display:none;"></div>
+  <div id="analysis-plot"></div>
+</div>
+
+<footer>
+  <span>live from sensors.db · auto-refresh 10s</span>
+  <span>packets in window: <span id="packets-count">–</span></span>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="dashboard.js"></script>
+<script src="analysis.js"></script>
+<script>
+// ── Boot ─────────────────────────────────────────────────────────────────────
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+initCardCustomization();
+initAnalysisPanel();
+</script>
+</body>
+</html>
