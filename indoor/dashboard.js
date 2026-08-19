@@ -1,597 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Garden Sensor Dashboard</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
-
-  :root {
-    --bg: #0d1117;
-    --bg2: #161b22;
-    --bg3: #21262d;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --green: #3fb950;
-    --green-dim: #1a3822;
-    --green-bright: #56d364;
-    --amber: #d29922;
-    --amber-dim: #2d2208;
-    --red: #f85149;
-    --red-dim: #3d1a1a;
-    --blue: #58a6ff;
-    --blue-dim: #0d2444;
-    --teal: #39d0c4;
-    --teal-dim: #0d2e2c;
-    --purple: #bc8cff;
-    --purple-dim: #261a3d;
-    --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
-    --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 14px;
-    min-height: 100vh;
-    padding: 24px;
-  }
-
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    row-gap: 12px;
-    margin-bottom: 28px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .logo-icon {
-    width: 32px; height: 32px;
-    background: var(--green-dim);
-    border: 1px solid var(--green);
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-  }
-
-  .logo-leaf {
-    width: 16px; height: 16px;
-    background: var(--green);
-    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 20% 70%, 50% 40%, 80% 70%, 50% 100%, 0% 50%);
-  }
-
-  h1 {
-    font-family: var(--font-mono);
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
-    color: var(--text);
-  }
-
-  h1 span { color: var(--green); }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px 16px;
-  }
-
-  .status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--green);
-    box-shadow: 0 0 6px var(--green);
-    animation: pulse 2s ease-in-out infinite;
-  }
-  .status-dot.stale { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: none; }
-  .status-dot.offline { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-
-  #last-update {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  #refresh-btn {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  #refresh-btn:hover { border-color: var(--text); color: var(--text); }
-
-  #ping-btn {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  #ping-btn:hover { border-color: var(--text); color: var(--text); }
-
-  #ping-result {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--muted);
-    min-width: 1px;
-  }
-
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 16px;
-  }
-
-  .card {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .card-wide {
-    grid-column: span 2;
-  }
-
-  @media (max-width: 700px) {
-    .card-wide { grid-column: span 1; }
-    body { padding: 12px; }
-
-    header { row-gap: 10px; }
-
-    .header-right {
-      width: 100%;
-      justify-content: space-between;
-    }
-
-    #refresh-btn, #ping-btn {
-      flex: 1 1 auto;
-      text-align: center;
-    }
-
-    #ping-result {
-      width: 100%;
-      order: 10;             /* push below the buttons instead of squeezing beside them */
-      text-align: center;
-    }
-  }
-
-  .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-  }
-
-  .card-title {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-
-  .card-badge {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-weight: 500;
-  }
-  .badge-green  { background: var(--green-dim);  color: var(--green-bright); border: 1px solid var(--green); }
-  .badge-amber  { background: var(--amber-dim);  color: var(--amber);        border: 1px solid var(--amber); }
-  .badge-red    { background: var(--red-dim);    color: var(--red);          border: 1px solid var(--red); }
-  .badge-blue   { background: var(--blue-dim);   color: var(--blue);         border: 1px solid var(--blue); }
-  .badge-gray   { background: var(--bg3);        color: var(--muted);        border: 1px solid var(--border); }
-
-  .big-value {
-    font-family: var(--font-mono);
-    font-size: 38px;
-    font-weight: 500;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    margin-bottom: 4px;
-  }
-
-  .big-unit {
-    font-size: 16px;
-    color: var(--muted);
-    font-weight: 400;
-  }
-
-  .sub-value {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 6px;
-    font-family: var(--font-mono);
-  }
-
-  .bar-track {
-    height: 6px;
-    background: var(--bg3);
-    border-radius: 3px;
-    margin-top: 12px;
-    overflow: hidden;
-  }
-
-  .bar-fill {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 0.6s ease;
-  }
-
-  .sparkline-row {
-    margin-top: 14px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .sparkline-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  canvas.spark {
-    height: 30px;
-    flex: 1;
-  }
-
-  .row2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-top: 12px;
-  }
-
-  .row3 {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 10px;
-    margin-top: 12px;
-  }
-
-  .mini-metric {
-    background: var(--bg3);
-    border-radius: 8px;
-    padding: 10px 12px;
-  }
-
-  .mini-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    letter-spacing: 0.04em;
-    margin-bottom: 4px;
-  }
-
-  .mini-value {
-    font-family: var(--font-mono);
-    font-size: 18px;
-    font-weight: 500;
-  }
-
-  .soil-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-  }
-
-  .soil-card {
-    background: var(--bg3);
-    border-radius: 8px;
-    padding: 12px;
-    text-align: center;
-  }
-
-  .soil-arc-wrap {
-    position: relative;
-    width: 80px;
-    height: 80px;
-    margin: 0 auto 8px;
-  }
-
-  .soil-pct {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .soil-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    letter-spacing: 0.06em;
-  }
-
-  .soil-temp {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 4px;
-  }
-
-  /* Power monitor grid */
-  .power-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-  }
-
-  .power-node {
-    background: var(--bg3);
-    border-radius: 8px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-  }
-
-  .power-node-label {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    letter-spacing: 0.06em;
-    margin-bottom: 8px;
-  }
-
-  .power-metrics {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 6px;
-  }
-
-  .power-metric-inner {
-    text-align: center;
-  }
-
-  .power-metric-val {
-    font-family: var(--font-mono);
-    font-size: 15px;
-    font-weight: 500;
-    color: var(--blue);
-  }
-
-  .power-metric-unit {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    color: var(--muted);
-    letter-spacing: 0.04em;
-    margin-top: 2px;
-  }
-
-  .power-node.no-data-node {
-    opacity: 0.35;
-    border-style: dashed;
-  }
-
-  .health-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 12px;
-  }
-
-  .health-row:last-child { border-bottom: none; }
-
-  .health-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .health-name { flex: 1; color: var(--muted); }
-  .health-count { color: var(--text); }
-
-  .no-data {
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 8px 0;
-  }
-
-  .history-canvas-wrap {
-    position: relative;
-    width: 100%;
-    height: 120px;
-    margin-top: 8px;
-  }
-
-  .voc-gauge {
-    margin-top: 8px;
-  }
-
-  .voc-labels {
-    display: flex;
-    justify-content: space-between;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    margin-bottom: 4px;
-  }
-
-  .voc-gradient-bar {
-    height: 8px;
-    border-radius: 4px;
-    background: linear-gradient(to right, var(--red), var(--amber), var(--green));
-    position: relative;
-    margin-bottom: 6px;
-  }
-
-  .voc-pointer {
-    position: absolute;
-    top: -3px;
-    width: 2px;
-    height: 14px;
-    background: var(--text);
-    border-radius: 1px;
-    transform: translateX(-50%);
-    transition: left 0.6s ease;
-  }
-
-  .node-badge {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    padding: 2px 8px;
-    border-radius: 4px;
-  }
-
-  footer {
-    margin-top: 24px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--muted);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  #packets-count { color: var(--blue); }
-</style>
-</head>
-<body>
-
-<header>
-  <div class="logo">
-    <div class="logo-icon"><div class="logo-leaf"></div></div>
-    <h1>garden<span>/</span>dashboard</h1>
-  </div>
-  <div class="header-right">
-    <div id="status-dot" class="status-dot stale"></div>
-    <span id="last-update">loading...</span>
-    <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
-    <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
-    <span id="ping-result"></span>
-  </div>
-</header>
-
-<div class="grid" id="grid">
-
-  <!-- Battery -->
-  <div class="card" id="card-batt">
-    <div class="card-header">
-      <span class="card-title">Battery</span>
-      <span id="batt-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="batt-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Air: SHT40 -->
-  <div class="card" id="card-sht">
-    <div class="card-header">
-      <span class="card-title">Temperature & Humidity</span>
-      <span class="node-badge">SHT40</span>
-    </div>
-    <div id="sht-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Air Quality: SGP40 -->
-  <div class="card" id="card-voc">
-    <div class="card-header">
-      <span class="card-title">Air Quality (VOC)</span>
-      <span id="voc-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="voc-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- UV & Light -->
-  <div class="card" id="card-uv">
-    <div class="card-header">
-      <span class="card-title">UV & Light</span>
-      <span class="node-badge">LTR390</span>
-    </div>
-    <div id="uv-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Soil Sensors -->
-  <div class="card card-wide" id="card-soil">
-    <div class="card-header">
-      <span class="card-title">Soil Sensors</span>
-      <span class="node-badge">Seesaw</span>
-    </div>
-    <div id="soil-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Power Monitors -->
-  <div class="card card-wide" id="card-power">
-    <div class="card-header">
-      <span class="card-title">Power Monitors</span>
-      <span id="power-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="power-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- System Health -->
-  <div class="card" id="card-health">
-    <div class="card-header">
-      <span class="card-title">Sensor Health</span>
-      <span id="health-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="health-body"><div class="no-data">Loading...</div></div>
-  </div>
-
-  <!-- Radio / System -->
-  <div class="card" id="card-system">
-    <div class="card-header">
-      <span class="card-title">Radio & System</span>
-      <span class="node-badge">RFM69</span>
-    </div>
-    <div id="system-body"><div class="no-data">No data</div></div>
-  </div>
-
-</div>
-
-<footer>
-  <span>live from sensors.db · auto-refresh 10s</span>
-  <span>packets in window: <span id="packets-count">–</span></span>
-</footer>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script>
 const DATA_WINDOW_MINUTES = 360;  // how much history /api/data returns (6 hours)
 const WINDOW = 2000;              // cap on packets kept in memory (used when triggerRefresh merges a manual poll in)
 const REFRESH_MS = 10000;
@@ -1228,10 +634,174 @@ async function runPingTest() {
   btn.disabled = false;
 }
 
-// ── Boot ─────────────────────────────────────────────────────────────────────
+// ── Live card customization (hide/show + reorder) ──────────────────────────
+// Real deployed site, not an Artifact, so localStorage is fair game here —
+// persists per-browser across visits. Always on — no separate "customize
+// mode" to step into first. Every card gets a drag handle (top-left) and a
+// hide button (top-right), both low-opacity until hovered so they don't
+// clutter normal viewing. Hidden cards disappear from the grid entirely and
+// collapse into a small "hidden: ..." chip bar below it, so there's always
+// a way back without needing a mode toggle. Separate from the analysis
+// panel's Phase 2 "drag-and-drop multi-card" idea; this is only about the
+// live sensor-reading cards at the top of the dashboard.
 
-refresh();
-setInterval(refresh, REFRESH_MS);
-</script>
-</body>
-</html>
+const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system'];
+const CARD_LABELS = {
+  'card-batt':   'Lipo',
+  'card-sht':    'Temperature & Humidity',
+  'card-voc':    'Air Quality (VOC)',
+  'card-uv':     'UV & Light',
+  'card-soil':   'Soil Sensors',
+  'card-power':  'Battery',
+  'card-health': 'Sensor Health',
+  'card-system': 'Radio & System',
+};
+const CARD_PREFS_KEY = 'gardenDashboardCardPrefs';
+
+function loadCardPrefs() {
+  try {
+    const raw = localStorage.getItem(CARD_PREFS_KEY);
+    if (!raw) return { order: CARD_IDS.slice(), hidden: [] };
+    const parsed = JSON.parse(raw);
+    const savedOrder = Array.isArray(parsed.order) ? parsed.order.filter(id => CARD_IDS.includes(id)) : [];
+    // Any card not in the saved order (e.g. added after prefs were saved) gets appended.
+    CARD_IDS.forEach(id => { if (!savedOrder.includes(id)) savedOrder.push(id); });
+    return { order: savedOrder, hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [] };
+  } catch (e) {
+    console.warn('[cards] failed to load saved layout, using default', e);
+    return { order: CARD_IDS.slice(), hidden: [] };
+  }
+}
+
+function saveCardPrefs() {
+  try {
+    localStorage.setItem(CARD_PREFS_KEY, JSON.stringify(cardPrefs));
+  } catch (e) {
+    console.warn('[cards] failed to save layout', e);
+  }
+}
+
+let cardPrefs = loadCardPrefs();
+
+function applyCardOrder() {
+  const grid = document.getElementById('grid');
+  cardPrefs.order.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) grid.appendChild(el); // moves to end in this order, so final DOM order == cardPrefs.order
+  });
+}
+
+function applyCardVisibility() {
+  CARD_IDS.forEach(id => {
+    const card = document.getElementById(id);
+    if (card) card.style.display = cardPrefs.hidden.includes(id) ? 'none' : '';
+  });
+  renderHiddenCardsBar();
+}
+
+function renderHiddenCardsBar() {
+  const bar = document.getElementById('hidden-cards-bar');
+  if (!cardPrefs.hidden.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span>hidden:</span>' + cardPrefs.hidden.map(id => `
+    <span class="hidden-card-chip">${CARD_LABELS[id] || id}
+      <button type="button" data-restore="${id}">show</button>
+    </span>`).join('');
+  bar.querySelectorAll('[data-restore]').forEach(btn => {
+    btn.addEventListener('click', () => toggleCardHidden(btn.dataset.restore));
+  });
+}
+
+function toggleCardHidden(id) {
+  const idx = cardPrefs.hidden.indexOf(id);
+  if (idx >= 0) cardPrefs.hidden.splice(idx, 1); else cardPrefs.hidden.push(id);
+  saveCardPrefs();
+  applyCardVisibility();
+}
+
+function buildCardControls() {
+  CARD_IDS.forEach(id => {
+    const card = document.getElementById(id);
+    if (!card || card.querySelector('.card-controls')) return; // built once, reused
+
+    const handle = document.createElement('div');
+    handle.className = 'card-drag-handle';
+    handle.textContent = '⠿';
+    handle.title = 'Drag to reorder';
+    // Native drag-and-drop drags the whole element it's set on; arming
+    // `draggable` only while the handle is actively pressed keeps the rest
+    // of the card (text, values) normally selectable the rest of the time.
+    handle.addEventListener('mousedown', () => { card.draggable = true; });
+    card.appendChild(handle);
+
+    const ctrl = document.createElement('div');
+    ctrl.className = 'card-controls';
+    ctrl.innerHTML = `<button type="button" class="card-hide-btn" title="Hide this card">hide</button>`;
+    ctrl.querySelector('button').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCardHidden(id);
+    });
+    card.appendChild(ctrl);
+
+    card.draggable = false;
+  });
+}
+
+// Native HTML5 drag-and-drop, scoped to #grid, always active (arming happens
+// per-drag via the handle's mousedown above).
+let dragSrcId = null;
+
+function initCardDragAndDrop() {
+  const grid = document.getElementById('grid');
+
+  grid.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.card');
+    if (!card || !card.draggable) return;
+    dragSrcId = card.id;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  grid.addEventListener('dragover', (e) => {
+    if (!dragSrcId) return;
+    e.preventDefault();
+    const card = e.target.closest('.card');
+    if (!card || card.id === dragSrcId) return;
+    const dragEl = document.getElementById(dragSrcId);
+    if (!dragEl) return;
+    const rect = card.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    grid.insertBefore(dragEl, before ? card : card.nextSibling);
+  });
+
+  grid.addEventListener('dragend', (e) => {
+    const card = e.target.closest('.card');
+    if (card) { card.classList.remove('dragging'); card.draggable = false; }
+    if (dragSrcId) {
+      cardPrefs.order = Array.from(grid.querySelectorAll('.card')).map(el => el.id).filter(id => CARD_IDS.includes(id));
+      saveCardPrefs();
+    }
+    dragSrcId = null;
+  });
+
+  // If the mouse is pressed on a handle and released without a drag ever
+  // starting (a click, essentially), un-arm draggable so it doesn't linger.
+  document.addEventListener('mouseup', () => {
+    if (dragSrcId) return; // an actual drag is in progress; dragend will handle it
+    CARD_IDS.forEach(id => {
+      const card = document.getElementById(id);
+      if (card) card.draggable = false;
+    });
+  });
+}
+
+function initCardCustomization() {
+  applyCardOrder();
+  buildCardControls();
+  applyCardVisibility();
+  initCardDragAndDrop();
+}

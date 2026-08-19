@@ -196,6 +196,23 @@ def api_data():
         print(f"[API] /api/data query failed: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
+@app.route("/api/available_fields", methods=["GET"])
+def api_available_fields():
+    # Cheap SELECT DISTINCT, no cooldown needed (same reasoning as /api/data:
+    # it's a read against a local SQLite file, not something that hits the
+    # radio or blocks on the Pico). Lets the dashboard hide analysis-panel
+    # checkboxes for sensor+field combos that have never actually logged data.
+    try:
+        conn = db.get_connection()
+        try:
+            fields = db.get_available_fields(conn)
+        finally:
+            conn.close()
+        return jsonify({"status": "ok", "fields": fields})
+    except Exception as e:
+        print(f"[API] /api/available_fields query failed: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 # ── Gated endpoints (Cloudflare Access enforces login before these are hit) ──
 
 @app.route("/api/set_interval", methods=["POST"])
