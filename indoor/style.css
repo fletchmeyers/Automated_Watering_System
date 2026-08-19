@@ -625,6 +625,34 @@
     flex-shrink: 0;
   }
 
+  .overlay-toggle {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+
+  .overlay-btn {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+  }
+
+  .overlay-btn.active {
+    color: var(--teal);
+    border-color: var(--teal);
+  }
+
+  /* Dimmed (not hidden) when off, so it still reads as a toggle rather than
+     a button that vanished — distinct from .preset-btn's exclusive-select look. */
+  .overlay-btn:not(.active) { opacity: 0.55; }
+  .overlay-btn:hover { color: var(--text); }
+
   .scatter-field-row {
     display: flex;
     flex-wrap: wrap;

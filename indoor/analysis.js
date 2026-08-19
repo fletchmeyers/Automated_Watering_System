@@ -71,12 +71,50 @@ let analysisMode = 'timeseries';
 // Default selection chosen for the exact soil s0/s2 gap this panel exists to help chase.
 const tsSelectedFields = new Set(['s0.m', 's2.m']);
 
+// Smoothing is a simple centered moving average over N *points*, not N
+// minutes — readings aren't on a fixed time grid, so an index-based window
+// is simpler than a time-based one and good enough for "make the noise
+// readable." Revisit if a field's poll interval changes a lot mid-range.
+const SMOOTHING_WINDOW = 9;
+
+// Both default on: raw shows the real data, smoothed shows the overlay.
+// Independent toggles (not a mode swap) since seeing both at once is the
+// normal case — you turn one off to declutter a specific comparison.
+let showRawData = true;
+let showSmoothedData = true;
+
 function setAnalysisMode(mode) {
   analysisMode = mode;
   document.getElementById('mode-timeseries-btn').classList.toggle('active', mode === 'timeseries');
   document.getElementById('mode-scatter-btn').classList.toggle('active', mode === 'scatter');
   document.getElementById('ts-field-picker').style.display = mode === 'timeseries' ? 'flex' : 'none';
+  document.getElementById('ts-overlay-toggle').style.display = mode === 'timeseries' ? 'flex' : 'none';
   document.getElementById('scatter-field-picker').style.display = mode === 'scatter' ? 'flex' : 'none';
+}
+
+function toggleOverlay(which) {
+  if (which === 'raw') showRawData = !showRawData;
+  else showSmoothedData = !showSmoothedData;
+  document.getElementById('raw-toggle-btn').classList.toggle('active', showRawData);
+  document.getElementById('smoothed-toggle-btn').classList.toggle('active', showSmoothedData);
+  if (analysisMode === 'timeseries') runAnalysisPlot();
+}
+
+// Centered simple moving average. Edges use whatever window is available
+// (e.g. point 0 only averages itself + the next `half`) rather than padding
+// or dropping them, so the smoothed line still spans the full range.
+function movingAverage(ys, window) {
+  const half = Math.floor(window / 2);
+  const out = new Array(ys.length);
+  for (let i = 0; i < ys.length; i++) {
+    let sum = 0, count = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(ys.length - 1, i + half); j++) {
+      sum += ys[j];
+      count++;
+    }
+    out[i] = sum / count;
+  }
+  return out;
 }
 
 function toggleField(id, checked) {
@@ -301,6 +339,11 @@ async function plotTimeSeries(start, end) {
     Plotly.purge('analysis-plot');
     return;
   }
+  if (!showRawData && !showSmoothedData) {
+    showAnalysisStatus('enable raw or smoothed data above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
 
   // One fetch per distinct sensor_type, reused across fields that share it
   // (e.g. s0.m and s0.tmp both come from a single sensor_type=s0 call).
@@ -308,19 +351,49 @@ async function plotTimeSeries(start, end) {
   const packetsByType = {};
   await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
 
-  const traces = fields.map((f, i) => {
+  // Up to two traces per field (raw + smoothed), sharing that field's axis.
+  // When both are on, the raw trace is faded so the smoothed line reads as
+  // the headline and raw shows through as texture underneath it; when
+  // smoothed is off, raw goes back to full weight (the original look).
+  // Only one of the two carries the legend entry per field, so turning a
+  // trace off doesn't leave a stale legend label or double it up.
+  const traces = [];
+  let anyPoints = false;
+
+  fields.forEach((f, i) => {
     const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
-    return {
-      x: xs, y: ys,
-      type: 'scatter', mode: 'lines+markers',
-      name: f.label,
-      line: { color: fieldColor(f), width: 1.5 },
-      marker: { size: 3 },
-      yaxis: i === 0 ? 'y' : `y${i + 1}`,
-    };
+    if (xs.length) anyPoints = true;
+    const yaxis = i === 0 ? 'y' : `y${i + 1}`;
+    const color = fieldColor(f);
+
+    if (showRawData) {
+      traces.push({
+        x: xs, y: ys,
+        type: 'scatter', mode: 'lines+markers',
+        name: f.label,
+        line: { color, width: showSmoothedData ? 1 : 1.5 },
+        marker: { color, size: showSmoothedData ? 2 : 3 },
+        opacity: showSmoothedData ? 0.4 : 1,
+        yaxis,
+        showlegend: !showSmoothedData,
+      });
+    }
+
+    // Skip smoothing on series too short for the window to mean anything —
+    // it'd just redraw the raw line under a different name.
+    if (showSmoothedData && ys.length >= 3) {
+      traces.push({
+        x: xs, y: movingAverage(ys, SMOOTHING_WINDOW),
+        type: 'scatter', mode: 'lines',
+        name: f.label,
+        line: { color, width: 2.5 },
+        yaxis,
+        showlegend: true,
+      });
+    }
   });
 
-  showAnalysisStatus(traces.some(t => t.x.length) ? '' : 'no data in that range for the selected field(s)', true);
+  showAnalysisStatus(anyPoints ? '' : 'no data in that range for the selected field(s)', true);
 
   Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
 }
