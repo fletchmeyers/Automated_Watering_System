@@ -87,9 +87,11 @@ function setAnalysisMode(mode) {
   analysisMode = mode;
   document.getElementById('mode-timeseries-btn').classList.toggle('active', mode === 'timeseries');
   document.getElementById('mode-scatter-btn').classList.toggle('active', mode === 'scatter');
+  document.getElementById('mode-dayover-btn').classList.toggle('active', mode === 'dayover');
   document.getElementById('ts-field-picker').style.display = mode === 'timeseries' ? 'flex' : 'none';
   document.getElementById('ts-overlay-toggle').style.display = mode === 'timeseries' ? 'flex' : 'none';
   document.getElementById('scatter-field-picker').style.display = mode === 'scatter' ? 'flex' : 'none';
+  document.getElementById('dayover-field-picker').style.display = mode === 'dayover' ? 'flex' : 'none';
 }
 
 function toggleOverlay(which) {
@@ -148,6 +150,12 @@ function buildFieldPicker() {
   // available if either of those specific fields has no data.
   xSel.value = fields.some(f => f.id === 's2.m') ? 's2.m' : (fields[0]?.id ?? '');
   ySel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[1]?.id ?? fields[0]?.id ?? '');
+
+  // Day-over-day defaults to lux — a diurnal cycle is exactly the pattern
+  // this view exists to show off, and it makes a good first impression.
+  const dayoverSel = document.getElementById('dayover-field-select');
+  dayoverSel.innerHTML = opts;
+  dayoverSel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[0]?.id ?? '');
 }
 
 // ── Time range: presets + custom, same fetch either way ───────────────────────
@@ -244,8 +252,8 @@ const PLOTLY_LAYOUT_BASE = {
   plot_bgcolor: 'transparent',
   font: { family: 'IBM Plex Mono, monospace', size: 11, color: '#8b949e' },
   margin: { l: 50, r: 20, t: 20, b: 40 },
-  xaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d' },
-  yaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d' },
+  xaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d', automargin: true },
+  yaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d', automargin: true },
   legend: { orientation: 'h', y: -0.2 },
 };
 
@@ -268,8 +276,10 @@ async function runAnalysisPlot() {
   try {
     if (analysisMode === 'timeseries') {
       await plotTimeSeries(start, end);
-    } else {
+    } else if (analysisMode === 'scatter') {
       await plotScatter(start, end);
+    } else {
+      await plotDayOverDay(start, end);
     }
   } catch (e) {
     console.error('analysis plot failed', e);
@@ -302,7 +312,11 @@ function buildTimeSeriesLayout(fields) {
   const plotWidth = (plotEl && plotEl.clientWidth) || 600;
   const extraAxisStep = Math.max(EXTRA_AXIS_STEP, MIN_AXIS_PX / plotWidth);
 
-  const rightMargin = extraAxes > 1 ? (extraAxes - 1) * extraAxisStep : 0;
+  // Reserve margin starting at the *first* right-side axis, not the second —
+  // previously this only kicked in once extraAxes > 1 (i.e. 3+ fields
+  // total), so with exactly one right axis (2 fields) its tick labels had
+  // no reserved room and collided with its own title.
+  const rightMargin = extraAxes >= 1 ? extraAxes * extraAxisStep : 0;
 
   layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin] };
   layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: 20 + rightMargin * plotWidth };
@@ -315,6 +329,13 @@ function buildTimeSeriesLayout(fields) {
       zerolinecolor: PLOTLY_LAYOUT_BASE.yaxis.zerolinecolor,
       tickfont: { color },
       title: { text: f.label, font: { color } },
+      // Without this, Plotly draws the title at a fixed offset from the axis
+      // line regardless of how wide the tick labels render — fine once there
+      // are enough stacked axes pushing everything outward, but with only
+      // one or two axes the title sits right on top of the tick numbers.
+      // automargin makes Plotly measure the actual rendered label width and
+      // reserve room for it instead.
+      automargin: true,
     };
     if (i === 0) {
       layout.yaxis = axisStyle;
@@ -426,6 +447,75 @@ async function plotScatter(start, end) {
     ...PLOTLY_LAYOUT_BASE,
     xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: xField.label },
     yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: yField.label },
+  }, { responsive: true, displaylogo: false });
+}
+
+// Splits a series into one bucket per calendar date (using the date portion
+// of each already-local ts string), and rewrites every timestamp onto a
+// shared reference date ("2000-01-01") so Plotly can plot all days on one
+// time-of-day x-axis instead of them trailing off across real calendar time.
+// Returns [[dateStr, {times, values}], ...] sorted oldest first.
+function groupByCalendarDay(xs, ys) {
+  const days = new Map();
+  for (let i = 0; i < xs.length; i++) {
+    const [dateStr, timeStr] = xs[i].split(' ');
+    if (!dateStr || !timeStr) continue;
+    if (!days.has(dateStr)) days.set(dateStr, { times: [], values: [] });
+    const day = days.get(dateStr);
+    day.times.push(`2000-01-01 ${timeStr}`);
+    day.values.push(ys[i]);
+  }
+  return [...days.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+async function plotDayOverDay(start, end) {
+  const field = fieldById(document.getElementById('dayover-field-select').value);
+  if (!field) {
+    showAnalysisStatus('select a field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const packets = await fetchSeries(field.type, start, end);
+  const { xs, ys } = extractPoints(packets, field.key);
+  const dayGroups = groupByCalendarDay(xs, ys);
+
+  if (!dayGroups.length) {
+    showAnalysisStatus('no data in that range for the selected field', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const color = fieldColor(field);
+  const n = dayGroups.length;
+
+  // Oldest day faintest, most recent day at full strength and a slightly
+  // thicker line, so "today vs. the usual pattern" reads at a glance instead
+  // of needing to check the legend. Ranges longer than ~7-10 days will get
+  // crowded/hard to tell apart — that's expected for this view; use a
+  // shorter preset for a cleaner overlay.
+  const traces = dayGroups.map(([dateStr, day], i) => {
+    const age = n > 1 ? i / (n - 1) : 1;
+    return {
+      x: day.times, y: day.values,
+      type: 'scatter', mode: 'lines',
+      name: dateStr,
+      line: { color, width: i === n - 1 ? 2.5 : 1.5 },
+      opacity: 0.25 + age * 0.75,
+    };
+  });
+
+  showAnalysisStatus('');
+  Plotly.newPlot('analysis-plot', traces, {
+    ...PLOTLY_LAYOUT_BASE,
+    xaxis: {
+      ...PLOTLY_LAYOUT_BASE.xaxis,
+      type: 'date',
+      tickformat: '%H:%M',
+      title: { text: 'Time of day' },
+      range: ['2000-01-01 00:00:00', '2000-01-02 00:00:00'],
+    },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: { text: field.label } },
   }, { responsive: true, displaylogo: false });
 }
 

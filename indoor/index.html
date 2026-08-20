@@ -108,6 +108,7 @@
     <div class="analysis-mode-toggle">
       <button id="mode-timeseries-btn" class="mode-btn active" onclick="setAnalysisMode('timeseries')" type="button">Time-series</button>
       <button id="mode-scatter-btn" class="mode-btn" onclick="setAnalysisMode('scatter')" type="button">Scatter</button>
+      <button id="mode-dayover-btn" class="mode-btn" onclick="setAnalysisMode('dayover')" type="button">Day/day</button>
     </div>
   </div>
 
@@ -124,6 +125,13 @@
     <div class="scatter-axis-row">
       <label>Y axis</label>
       <select id="scatter-y-select"></select>
+    </div>
+  </div>
+
+  <div id="dayover-field-picker" class="scatter-field-row" style="display:none;">
+    <div class="scatter-axis-row">
+      <label>Field</label>
+      <select id="dayover-field-select"></select>
     </div>
   </div>
 
