@@ -255,6 +255,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
     margin-bottom: 16px;
   }
 
@@ -561,6 +563,7 @@
 
   .analysis-mode-toggle {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     background: var(--bg3);
     border: 1px solid var(--border);
