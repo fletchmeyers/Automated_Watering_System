@@ -88,7 +88,14 @@ function setAnalysisMode(mode) {
   document.getElementById('mode-timeseries-btn').classList.toggle('active', mode === 'timeseries');
   document.getElementById('mode-scatter-btn').classList.toggle('active', mode === 'scatter');
   document.getElementById('mode-dayover-btn').classList.toggle('active', mode === 'dayover');
-  document.getElementById('ts-field-picker').style.display = mode === 'timeseries' ? 'flex' : 'none';
+  document.getElementById('mode-trend-btn').classList.toggle('active', mode === 'trend');
+  document.getElementById('mode-rate-btn').classList.toggle('active', mode === 'rate');
+
+  // Trend and rate-of-change both operate on the same multi-field checkbox
+  // selection as time-series (they're different lenses on the same
+  // selected fields), so they share its picker instead of getting their own.
+  const usesFieldPicker = mode === 'timeseries' || mode === 'trend' || mode === 'rate';
+  document.getElementById('ts-field-picker').style.display = usesFieldPicker ? 'flex' : 'none';
   document.getElementById('ts-overlay-toggle').style.display = mode === 'timeseries' ? 'flex' : 'none';
   document.getElementById('scatter-field-picker').style.display = mode === 'scatter' ? 'flex' : 'none';
   document.getElementById('dayover-field-picker').style.display = mode === 'dayover' ? 'flex' : 'none';
@@ -278,8 +285,12 @@ async function runAnalysisPlot() {
       await plotTimeSeries(start, end);
     } else if (analysisMode === 'scatter') {
       await plotScatter(start, end);
-    } else {
+    } else if (analysisMode === 'dayover') {
       await plotDayOverDay(start, end);
+    } else if (analysisMode === 'trend') {
+      await plotTrend(start, end);
+    } else {
+      await plotRateOfChange(start, end);
     }
   } catch (e) {
     console.error('analysis plot failed', e);
@@ -299,7 +310,7 @@ const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-
 const MIN_AXIS_PX = 46;       // minimum real pixels reserved per stacked axis so its title text
                                // (e.g. "Soil 2 Moisture") doesn't run into the neighboring axis line
 
-function buildTimeSeriesLayout(fields) {
+function buildTimeSeriesLayout(fields, titleFn = f => f.label) {
   const layout = { ...PLOTLY_LAYOUT_BASE };
   const extraAxes = Math.max(0, fields.length - 1);
 
@@ -328,7 +339,7 @@ function buildTimeSeriesLayout(fields) {
       linecolor: color,
       zerolinecolor: PLOTLY_LAYOUT_BASE.yaxis.zerolinecolor,
       tickfont: { color },
-      title: { text: f.label, font: { color } },
+      title: { text: titleFn(f), font: { color } },
       // Without this, Plotly draws the title at a fixed offset from the axis
       // line regardless of how wide the tick labels render — fine once there
       // are enough stacked axes pushing everything outward, but with only
@@ -517,6 +528,160 @@ async function plotDayOverDay(start, end) {
     },
     yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: { text: field.label } },
   }, { responsive: true, displaylogo: false });
+}
+
+// Ordinary least squares on (timestamp, value) pairs. xs are the same
+// 'YYYY-MM-DD HH:MM:SS' local strings extractPoints returns everywhere else.
+// Returns null when there's nothing to fit (fewer than 2 points, or every
+// point landed on the same timestamp).
+function linearRegression(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+
+  const xNums = xs.map(t => new Date(t).getTime());
+  const xMean = xNums.reduce((a, b) => a + b, 0) / n;
+  const yMean = ys.reduce((a, b) => a + b, 0) / n;
+
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xNums[i] - xMean) * (ys[i] - yMean);
+    den += (xNums[i] - xMean) ** 2;
+  }
+  if (den === 0) return null; // all points at the same timestamp — no time spread to fit against
+
+  const slope = num / den; // units per millisecond
+  const intercept = yMean - slope * xMean;
+
+  let ssRes = 0, ssTot = 0;
+  for (let i = 0; i < n; i++) {
+    const predicted = intercept + slope * xNums[i];
+    ssRes += (ys[i] - predicted) ** 2;
+    ssTot += (ys[i] - yMean) ** 2;
+  }
+  const r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot; // ssTot===0 means every y was identical — a flat fit is a perfect fit
+
+  // xNums[0]/[n-1] rather than Math.min/max — extractPoints' input is
+  // already ts-ascending, so this avoids an extra pass over n points.
+  return { slope, intercept, r2, xMinMs: xNums[0], xMaxMs: xNums[n - 1] };
+}
+
+// Inverse of extractPoints' `p.ts.replace('T', ' ')` — turns a millisecond
+// timestamp back into the same local 'YYYY-MM-DD HH:MM:SS' string format so
+// the regression line's endpoints plot on the same local-time axis as the
+// raw points instead of drifting via a UTC round-trip through toISOString().
+function msToLocalTsString(ms) {
+  const d = new Date(ms);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+async function plotTrend(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (!fields.length) {
+    showAnalysisStatus('select at least one field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  const traces = [];
+  let anyFit = false;
+
+  fields.forEach((f, i) => {
+    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const yaxis = i === 0 ? 'y' : `y${i + 1}`;
+    const color = fieldColor(f);
+
+    // Faint raw points behind the fitted line so a straight line drawn
+    // through genuinely noisy, non-trending data still reads as "noisy,
+    // not really trending" rather than looking authoritative on its own.
+    traces.push({
+      x: xs, y: ys,
+      type: 'scatter', mode: 'markers',
+      marker: { color, size: 3, opacity: 0.3 },
+      yaxis,
+      showlegend: false,
+      hoverinfo: 'skip',
+    });
+
+    const fit = linearRegression(xs, ys);
+    if (!fit) return;
+    anyFit = true;
+
+    const slopePerDay = fit.slope * 86400000; // ms -> day, easier to read than a per-ms number
+    const p0 = fit.intercept + fit.slope * fit.xMinMs;
+    const p1 = fit.intercept + fit.slope * fit.xMaxMs;
+    const sign = slopePerDay >= 0 ? '+' : '';
+
+    traces.push({
+      x: [msToLocalTsString(fit.xMinMs), msToLocalTsString(fit.xMaxMs)],
+      y: [p0, p1],
+      type: 'scatter', mode: 'lines',
+      name: `${f.label} (${sign}${slopePerDay.toFixed(3)}/day, R²=${fit.r2.toFixed(2)})`,
+      line: { color, width: 2.5 },
+      yaxis,
+    });
+  });
+
+  showAnalysisStatus(anyFit ? '' : 'not enough data to fit a trend for the selected field(s)', true);
+
+  Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
+}
+
+// First-difference rate of change, expressed as units-per-minute regardless
+// of how far apart consecutive readings actually were, so a gap in polling
+// doesn't masquerade as a slow rate. Output is one point shorter than the
+// input (no rate defined before the first reading).
+function computeRateOfChange(xs, ys) {
+  const outX = [], outY = [];
+  for (let i = 1; i < xs.length; i++) {
+    const dtMs = new Date(xs[i]).getTime() - new Date(xs[i - 1]).getTime();
+    if (dtMs <= 0) continue; // guard against a duplicate or out-of-order timestamp
+    outX.push(xs[i]);
+    outY.push((ys[i] - ys[i - 1]) / (dtMs / 60000));
+  }
+  return { xs: outX, ys: outY };
+}
+
+async function plotRateOfChange(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (!fields.length) {
+    showAnalysisStatus('select at least one field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  const traces = [];
+  let anyPoints = false;
+
+  fields.forEach((f, i) => {
+    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const { xs: rxs, ys: rys } = computeRateOfChange(xs, ys);
+    if (rxs.length) anyPoints = true;
+
+    traces.push({
+      x: rxs, y: rys,
+      type: 'scatter', mode: 'lines',
+      name: f.label,
+      line: { color: fieldColor(f), width: 1.5 },
+      yaxis: i === 0 ? 'y' : `y${i + 1}`,
+    });
+  });
+
+  showAnalysisStatus(anyPoints ? '' : 'no data in that range for the selected field(s)', true);
+
+  // titleFn appends the unit so an axis reading "Soil 2 · Moisture (Δ/min)"
+  // doesn't get mistaken for the raw-value axis it's derived from.
+  const layout = buildTimeSeriesLayout(fields, f => `${f.label} (Δ/min)`);
+  Plotly.newPlot('analysis-plot', traces, layout, { responsive: true, displaylogo: false });
 }
 
 async function initAnalysisPanel() {
