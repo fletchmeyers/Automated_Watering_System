@@ -111,8 +111,12 @@
       <button id="mode-dayover-btn" class="mode-btn" onclick="setAnalysisMode('dayover')" type="button">Day/day</button>
       <button id="mode-trend-btn" class="mode-btn" onclick="setAnalysisMode('trend')" type="button">Trend</button>
       <button id="mode-rate-btn" class="mode-btn" onclick="setAnalysisMode('rate')" type="button">Rate of change</button>
+      <button id="mode-correlation-btn" class="mode-btn" onclick="setAnalysisMode('correlation')" type="button">Correlation</button>
+      <button id="mode-gaps-btn" class="mode-btn" onclick="setAnalysisMode('gaps')" type="button">Data gaps</button>
     </div>
   </div>
+
+  <div id="mode-info" class="mode-info"></div>
 
   <div id="ts-field-picker" class="field-picker"></div>
   <div class="overlay-toggle" id="ts-overlay-toggle">
@@ -124,6 +128,7 @@
       <label>X axis</label>
       <select id="scatter-x-select"></select>
     </div>
+    <button id="scatter-swap-btn" class="scatter-swap-btn" onclick="swapScatterFields()" type="button" title="Swap X and Y">⇄</button>
     <div class="scatter-axis-row">
       <label>Y axis</label>
       <select id="scatter-y-select"></select>
