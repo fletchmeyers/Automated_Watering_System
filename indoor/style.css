@@ -656,6 +656,47 @@
   .overlay-btn:not(.active) { opacity: 0.55; }
   .overlay-btn:hover { color: var(--text); }
 
+  .mode-info {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+  }
+
+  .mode-info p { margin: 0; }
+  .mode-info p + p { margin-top: 6px; }
+  .mode-info-example strong { color: var(--text); font-weight: 600; }
+
+  .mode-info-link {
+    display: inline-block;
+    margin-top: 6px;
+    color: var(--blue);
+    text-decoration: none;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .mode-info-link:hover { text-decoration: underline; }
+
+  .scatter-swap-btn {
+    align-self: flex-end;
+    margin-bottom: 8px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .scatter-swap-btn:hover { color: var(--teal); border-color: var(--teal); }
+
   .scatter-field-row {
     display: flex;
     flex-wrap: wrap;

@@ -67,6 +67,59 @@ function visibleAnalysisFields() {
   return ANALYSIS_FIELDS.filter(f => availableFieldKeys.has(`${f.type}.${f.key}`));
 }
 
+// One entry per mode: what it shows, why it's useful, a concrete example
+// tailored to this system's actual sensors, and (optionally) a link for
+// anyone who wants the underlying stats concept explained properly rather
+// than my paraphrase of it.
+const MODE_INFO = {
+  timeseries: {
+    description: 'Plots one or more sensor fields against time. Turn on the smoothed overlay to see the underlying trend through noisy raw readings.',
+    example: 'Soil 0 vs Soil 2 moisture, to see how far apart the two probes have drifted lately.',
+    link: { text: 'Moving average', url: 'https://en.wikipedia.org/wiki/Moving_average' },
+  },
+  scatter: {
+    description: 'Plots one field against another, pairing readings by nearest timestamp, to see whether two measurements move together.',
+    example: 'Light (lux) on X, Lipo Voltage on Y — sunny stretches should show the battery charging faster.',
+    link: { text: 'Correlation', url: 'https://en.wikipedia.org/wiki/Correlation' },
+  },
+  dayover: {
+    description: "Overlays each day's readings on a shared 24-hour clock, so the daily rhythm shows up on its own instead of blending into the noise of a longer range.",
+    example: 'Light (lux) over the last week, to see how consistent each day\'s sunlight curve actually is.',
+    link: { text: 'Circadian rhythm (related concept)', url: 'https://en.wikipedia.org/wiki/Circadian_rhythm' },
+  },
+  trend: {
+    description: "Fits a straight line through each field to estimate whether it's drifting up or down over the selected range. R² (0 to 1) is a rough measure of how well that line actually fits — low values mean the field isn't really trending, just noisy.",
+    example: "Lipo % over the last 30 days, to check whether the battery's overall charge is holding steady or slowly declining.",
+    link: { text: 'Simple linear regression', url: 'https://en.wikipedia.org/wiki/Simple_linear_regression' },
+  },
+  rate: {
+    description: 'Turns each field into its rate of change per minute. Step changes and short spikes are far easier to spot here than in the raw values.',
+    example: 'Soil 2 moisture after a rain or watering event — the spike shows up immediately instead of blending into the noise.',
+    link: { text: 'Derivative', url: 'https://en.wikipedia.org/wiki/Derivative' },
+  },
+  correlation: {
+    description: 'Shows how strongly every pair of selected fields moves together, from -1 (opposite directions) through 0 (unrelated) to +1 (same direction), using the same nearest-timestamp pairing as Scatter.',
+    example: 'Select Ambient Temp, Ambient Humidity, VOC, and Light together — a good first look at which readings actually move together versus just being noisy at the same time.',
+    link: { text: 'Pearson correlation coefficient', url: 'https://en.wikipedia.org/wiki/Pearson_correlation_coefficient' },
+  },
+  gaps: {
+    description: "Shows when each selected field has and hasn't logged data, bucketed across the selected range, so outages and dropped connections are visible directly instead of inferred from packet counts.",
+    example: "Select Soil 0 alongside Soil 1 or Soil 2 — the known loose I2C connection on Soil 0 should show up as a scattered, inconsistent row next to the steadier ones.",
+    link: { text: 'Missing data', url: 'https://en.wikipedia.org/wiki/Missing_data' },
+  },
+};
+
+function renderModeInfo(mode) {
+  const info = MODE_INFO[mode];
+  const el = document.getElementById('mode-info');
+  if (!info) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <p class="mode-info-desc">${info.description}</p>
+    ${info.example ? `<p class="mode-info-example"><strong>Try:</strong> ${info.example}</p>` : ''}
+    ${info.link ? `<a class="mode-info-link" href="${info.link.url}" target="_blank" rel="noopener">${info.link.text} ↗</a>` : ''}
+  `;
+}
+
 let analysisMode = 'timeseries';
 // Default selection chosen for the exact soil s0/s2 gap this panel exists to help chase.
 const tsSelectedFields = new Set(['s0.m', 's2.m']);
@@ -90,15 +143,30 @@ function setAnalysisMode(mode) {
   document.getElementById('mode-dayover-btn').classList.toggle('active', mode === 'dayover');
   document.getElementById('mode-trend-btn').classList.toggle('active', mode === 'trend');
   document.getElementById('mode-rate-btn').classList.toggle('active', mode === 'rate');
+  document.getElementById('mode-correlation-btn').classList.toggle('active', mode === 'correlation');
+  document.getElementById('mode-gaps-btn').classList.toggle('active', mode === 'gaps');
 
-  // Trend and rate-of-change both operate on the same multi-field checkbox
-  // selection as time-series (they're different lenses on the same
-  // selected fields), so they share its picker instead of getting their own.
-  const usesFieldPicker = mode === 'timeseries' || mode === 'trend' || mode === 'rate';
+  // Trend, rate-of-change, correlation, and gaps all operate on the same
+  // multi-field checkbox selection as time-series (they're different lenses
+  // on the same selected fields), so they share its picker instead of each
+  // getting their own.
+  const usesFieldPicker = mode === 'timeseries' || mode === 'trend' || mode === 'rate'
+    || mode === 'correlation' || mode === 'gaps';
   document.getElementById('ts-field-picker').style.display = usesFieldPicker ? 'flex' : 'none';
   document.getElementById('ts-overlay-toggle').style.display = mode === 'timeseries' ? 'flex' : 'none';
   document.getElementById('scatter-field-picker').style.display = mode === 'scatter' ? 'flex' : 'none';
   document.getElementById('dayover-field-picker').style.display = mode === 'dayover' ? 'flex' : 'none';
+
+  renderModeInfo(mode);
+}
+
+function swapScatterFields() {
+  const xSel = document.getElementById('scatter-x-select');
+  const ySel = document.getElementById('scatter-y-select');
+  const tmp = xSel.value;
+  xSel.value = ySel.value;
+  ySel.value = tmp;
+  if (analysisMode === 'scatter') runAnalysisPlot();
 }
 
 function toggleOverlay(which) {
@@ -289,8 +357,12 @@ async function runAnalysisPlot() {
       await plotDayOverDay(start, end);
     } else if (analysisMode === 'trend') {
       await plotTrend(start, end);
-    } else {
+    } else if (analysisMode === 'rate') {
       await plotRateOfChange(start, end);
+    } else if (analysisMode === 'correlation') {
+      await plotCorrelation(start, end);
+    } else {
+      await plotDataGaps(start, end);
     }
   } catch (e) {
     console.error('analysis plot failed', e);
@@ -684,10 +756,149 @@ async function plotRateOfChange(start, end) {
   Plotly.newPlot('analysis-plot', traces, layout, { responsive: true, displaylogo: false });
 }
 
+// Standard Pearson correlation coefficient. Returns null rather than NaN
+// when either series has zero variance (e.g. a field that didn't move at
+// all in this window) — a flat line isn't "uncorrelated", it's undefined,
+// and the heatmap renders null cells as blank instead of misleadingly 0.
+function pearsonCorrelation(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const xMean = xs.reduce((a, b) => a + b, 0) / n;
+  const yMean = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, denX = 0, denY = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - xMean, dy = ys[i] - yMean;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+  if (denX === 0 || denY === 0) return null;
+  return num / Math.sqrt(denX * denY);
+}
+
+async function plotCorrelation(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (fields.length < 2) {
+    showAnalysisStatus('select at least two fields above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  const series = fields.map(f => extractPoints(packetsByType[f.type], f.key));
+
+  // nearestJoin walks from series i's timestamps toward series j's, so the
+  // pairing (and therefore the coefficient) can differ very slightly
+  // depending on which of the two is "i" — fine for a heatmap meant to
+  // surface which pairs are worth a closer look in Scatter, not to be a
+  // precise statistical instrument.
+  const n = fields.length;
+  const z = [];
+  let anyPair = false;
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < n; j++) {
+      if (i === j) { row.push(1); continue; }
+      const { pairedX, pairedY } = nearestJoin(series[i].xs, series[i].ys, series[j].xs, series[j].ys);
+      const r = pearsonCorrelation(pairedX, pairedY);
+      if (r !== null) anyPair = true;
+      row.push(r);
+    }
+    z.push(row);
+  }
+
+  showAnalysisStatus(anyPair ? '' : 'not enough overlapping data to correlate the selected fields', true);
+
+  const labels = fields.map(f => f.label);
+  Plotly.newPlot('analysis-plot', [{
+    type: 'heatmap',
+    z, x: labels, y: labels,
+    zmin: -1, zmax: 1,
+    colorscale: [[0, '#f85149'], [0.5, '#161b22'], [1, '#39d0c4']],
+    texttemplate: '%{z:.2f}',
+    textfont: { color: '#c9d1d9', size: 10 },
+    hoverongaps: false,
+    colorbar: { tickfont: { color: '#8b949e' }, outlinewidth: 0 },
+  }], {
+    ...PLOTLY_LAYOUT_BASE,
+    margin: { l: 120, r: 20, t: 20, b: 100 },
+    xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, tickangle: -35, automargin: true },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, automargin: true },
+  }, { responsive: true, displaylogo: false });
+}
+
+// Aim for a manageable number of columns regardless of how wide the
+// selected range is, so a 30-day view and a 1-hour view both render as a
+// readable grid instead of either a wall of pixels or a nearly-empty row.
+const GAP_TARGET_BUCKETS = 60;
+
+async function plotDataGaps(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (!fields.length) {
+    showAnalysisStatus('select at least one field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  // start/end come from inputToIso as "YYYY-MM-DDTHH:MM:SS"; normalize to
+  // the same space-separated form extractPoints() already uses everywhere
+  // else so both sides of the bucketing math parse identically.
+  const startMs = new Date(start.replace('T', ' ')).getTime();
+  const endMs = new Date(end.replace('T', ' ')).getTime();
+  const bucketMs = Math.max(60000, Math.ceil((endMs - startMs) / GAP_TARGET_BUCKETS));
+  const bucketCount = Math.max(1, Math.ceil((endMs - startMs) / bucketMs));
+  const bucketStarts = Array.from({ length: bucketCount }, (_, i) => msToLocalTsString(startMs + i * bucketMs));
+
+  const z = [];          // 0/1 per bucket, drives cell color
+  const rawCounts = [];  // actual reading count per bucket, drives hover text
+  let anyData = false;
+
+  fields.forEach(f => {
+    const { xs } = extractPoints(packetsByType[f.type], f.key);
+    const counts = new Array(bucketCount).fill(0);
+    for (const x of xs) {
+      const t = new Date(x).getTime();
+      if (t < startMs || t > endMs) continue;
+      const idx = Math.min(bucketCount - 1, Math.floor((t - startMs) / bucketMs));
+      counts[idx]++;
+    }
+    if (counts.some(c => c > 0)) anyData = true;
+    rawCounts.push(counts);
+    z.push(counts.map(c => (c > 0 ? 1 : 0)));
+  });
+
+  showAnalysisStatus(anyData ? '' : 'no data in that range for the selected field(s)', true);
+
+  Plotly.newPlot('analysis-plot', [{
+    type: 'heatmap',
+    z, x: bucketStarts, y: fields.map(f => f.label),
+    customdata: rawCounts,
+    hovertemplate: '%{y}<br>%{x}<br>%{customdata} reading(s)<extra></extra>',
+    zmin: 0, zmax: 1,
+    colorscale: [[0, '#f85149'], [1, '#39d0c4']],
+    showscale: false,
+    hoverongaps: false,
+    xgap: 1, ygap: 4,
+  }], {
+    ...PLOTLY_LAYOUT_BASE,
+    margin: { l: 140, r: 20, t: 20, b: 60 },
+    xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, type: 'date', automargin: true },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, automargin: true },
+  }, { responsive: true, displaylogo: false });
+}
+
 async function initAnalysisPanel() {
   await fetchAvailableFields(); // determines which checkboxes/options even show up
   buildFieldPicker();
   buildPresetButtons();
+  renderModeInfo(analysisMode); // HTML marks 'timeseries' active by default but never calls setAnalysisMode() for it
   const defaultBtn = document.querySelector('.preset-btn[data-minutes="1440"]');
   applyPreset(1440, defaultBtn); // default range: last 24h
   runAnalysisPlot(); // draw something on load rather than an empty panel
