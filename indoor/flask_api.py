@@ -119,7 +119,19 @@ def api_poll():
         if packets and PUSH_SCRIPT.exists():
             def _publish():
                 try:
-                    subprocess.run(["bash", str(PUSH_SCRIPT)], timeout=30, check=False)
+                    result = subprocess.run(
+                        ["bash", str(PUSH_SCRIPT)],
+                        timeout=30, check=False,
+                        capture_output=True, text=True,
+                    )
+                    # check=False means a non-zero exit doesn't raise, so it
+                    # has to be checked explicitly — previously a failing
+                    # push_data.sh (bad git state, network hiccup, etc.) just
+                    # went silent since only a failure to *spawn* the process
+                    # hit the except block below.
+                    if result.returncode != 0:
+                        detail = (result.stderr or result.stdout).strip()
+                        print(f"[API] push_data.sh exited {result.returncode}: {detail}")
                 except Exception as e:
                     print(f"[API] push_data.sh failed to run: {e}")
             threading.Thread(target=_publish, daemon=True).start()

@@ -162,10 +162,18 @@ function donutArc(pct, color, bg) {
   const r = 34, cx = 40, cy = 40;
   const circ = 2 * Math.PI * r;
   const dash = (pct / 100) * circ;
+  // The gap length must be exactly (circ - dash), not the full circumference.
+  // With a nonzero stroke-dashoffset (used below to rotate the start point to
+  // 12 o'clock), an oversized gap makes the dash+gap pattern longer than the
+  // circle's own path length — the offset then "eats into" the dash segment,
+  // so the visible fill comes out shorter than pct (e.g. only ~75% shown at
+  // pct=99). Matching the gap to the dash's complement keeps the pattern's
+  // period exactly equal to the circle's circumference, so the offset only
+  // rotates where the arc starts, without truncating how much of it shows.
   return `<svg viewBox="0 0 80 80" width="80" height="80">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${bg}" stroke-width="7"/>
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="7"
-      stroke-dasharray="${dash.toFixed(1)} ${circ.toFixed(1)}"
+      stroke-dasharray="${dash.toFixed(1)} ${(circ - dash).toFixed(1)}"
       stroke-dashoffset="${(circ/4).toFixed(1)}"
       stroke-linecap="round" transform="rotate(-90 ${cx} ${cy})"/>
   </svg>`;
@@ -281,20 +289,31 @@ function renderUV(latest, luxHist) {
   if (luxHist.length > 1) renderSparkline('spark-lux', luxHist, '#d29922');
 }
 
-function renderSoil(soilData) {
-  const ids = [0, 1, 2];
-  let html = '<div class="soil-grid">';
+// Toggles whether a card spans 2 outer-grid columns (`.card-wide`) or just
+// one — called from renderSoil/renderPower with the actual connected-sensor
+// count so a card that's only using 1 of its possible slots doesn't keep
+// reserving the same width it would need for a full set.
+function setCardWide(cardId, wide) {
+  const card = document.getElementById(cardId);
+  if (card) card.classList.toggle('card-wide', wide);
+}
 
-  for (const id of ids) {
+function renderSoil(soilData) {
+  const present = [0, 1, 2].filter(id => soilData[id]);
+
+  // Wide only once all 3 slots are actually in use — 1 or 2 arcs fit
+  // comfortably in a single-width card, matching how many columns the
+  // inner grid is given below.
+  setCardWide('card-soil', present.length >= 3);
+
+  if (!present.length) {
+    document.getElementById('soil-body').innerHTML = '<div class="no-data">No soil sensor data</div>';
+    return;
+  }
+
+  let html = `<div class="soil-grid" style="grid-template-columns:repeat(${present.length}, 1fr)">`;
+  for (const id of present) {
     const d = soilData[id];
-    if (!d) {
-      html += `<div class="soil-card">
-        <div class="soil-arc-wrap">${donutArc(0, '#30363d', '#21262d')}<div class="soil-pct" style="color:var(--muted)">–</div></div>
-        <div class="soil-label">S${id}</div>
-        <div class="soil-temp" style="color:var(--border)">no data</div>
-      </div>`;
-      continue;
-    }
     const pct = soilPct(d.m);
     const color = pct < 20 ? '#f85149' : pct < 40 ? '#d29922' : '#3fb950';
     html += `<div class="soil-card">
@@ -306,15 +325,9 @@ function renderSoil(soilData) {
       <div class="soil-temp">${formatTemp(d.tmp).toFixed(1)}${tempUnitLabel()}</div>
     </div>`;
   }
-
   html += '</div>';
 
-  const anyData = ids.some(id => soilData[id]);
-  if (!anyData) {
-    document.getElementById('soil-body').innerHTML = '<div class="no-data">No soil sensor data</div>';
-  } else {
-    document.getElementById('soil-body').innerHTML = html;
-  }
+  document.getElementById('soil-body').innerHTML = html;
 }
 
 // Power monitor node labels — edit these to match what each INA238 is actually measuring
@@ -326,35 +339,33 @@ const POWER_NODE_LABELS = {
 };
 
 function renderPower(powerData) {
-  const ids = [0, 1, 2, 3];
-  const anyData = ids.some(id => powerData[id]);
+  const present = [0, 1, 2, 3].filter(id => powerData[id]);
 
-  // Badge: count how many nodes have data
-  const activeCount = ids.filter(id => powerData[id]).length;
   const badge = document.getElementById('power-badge');
-  if (activeCount === 0) {
+  if (!present.length) {
     badge.className = 'card-badge badge-gray';
     badge.textContent = 'no data';
   } else {
     badge.className = 'card-badge badge-blue';
-    badge.textContent = `${activeCount} active`;
+    badge.textContent = `${present.length} active`;
   }
 
-  if (!anyData) {
+  // Wide as soon as there are 2+ nodes to show side by side — each node's
+  // 3-metric row (V / mA / mW) needs more width than a single-column card
+  // can spare once there's more than one of them.
+  setCardWide('card-power', present.length >= 2);
+
+  if (!present.length) {
     document.getElementById('power-body').innerHTML = '<div class="no-data">No power monitor data</div>';
     return;
   }
 
-  let html = '<div class="power-grid">';
-  for (const id of ids) {
+  // 1 node gets the full card width; 2+ split into 2 columns (wrapping to
+  // additional rows for 3-4) rather than growing wider still.
+  const cols = Math.min(present.length, 2);
+  let html = `<div class="power-grid" style="grid-template-columns:repeat(${cols}, 1fr)">`;
+  for (const id of present) {
     const d = powerData[id];
-    if (!d) {
-      html += `<div class="power-node no-data-node">
-        <div class="power-node-label">${POWER_NODE_LABELS[id]}</div>
-        <div class="no-data" style="padding:4px 0;font-size:11px">not connected</div>
-      </div>`;
-      continue;
-    }
     const v  = (d.v  ?? 0).toFixed(2);
     const ma = (d.ma ?? 0).toFixed(0);
     const mw = (d.mw ?? 0).toFixed(0);

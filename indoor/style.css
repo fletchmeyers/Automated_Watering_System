@@ -563,11 +563,6 @@
     margin-top: 2px;
   }
 
-  .power-node.no-data-node {
-    opacity: 0.35;
-    border-style: dashed;
-  }
-
   .health-row {
     display: flex;
     align-items: center;
@@ -902,6 +897,7 @@
   }
 
   #analysis-status.error { color: var(--red); }
+  #analysis-status.warn { color: var(--amber); }
 
   @media (max-width: 700px) {
     .time-range-row { flex-direction: column; align-items: stretch; }

@@ -106,7 +106,7 @@ const MODE_INFO = {
     link: { text: 'Correlation', url: 'https://en.wikipedia.org/wiki/Correlation' },
   },
   dayover: {
-    description: "Overlays each day's readings on a shared 24-hour clock, so the daily rhythm shows up on its own instead of blending into the noise of a longer range.",
+    description: "Overlays each day's readings on a shared 24-hour clock, so the daily rhythm shows up on its own instead of blending into the noise of a longer range. Click a day in the legend to isolate it and fade the rest; click it again to restore the normal fade.",
     example: 'Light (lux) over the last week, to see how consistent each day\'s sunlight curve actually is.',
     link: { text: 'Circadian rhythm (related concept)', url: 'https://en.wikipedia.org/wiki/Circadian_rhythm' },
   },
@@ -355,12 +355,15 @@ const PLOTLY_LAYOUT_BASE = {
   legend: { orientation: 'h', y: -0.2 },
 };
 
-function showAnalysisStatus(msg, isError = false) {
+function showAnalysisStatus(msg, level = false) {
   const el = document.getElementById('analysis-status');
-  if (!msg) { el.style.display = 'none'; return; }
+  if (!msg) { el.style.display = 'none'; el.classList.remove('error', 'warn'); return; }
   el.style.display = 'block';
   el.textContent = msg;
-  el.classList.toggle('error', isError);
+  // `level` accepts the legacy boolean (true = error) alongside 'warn', so
+  // every existing call site keeps working unchanged.
+  el.classList.toggle('error', level === true || level === 'error');
+  el.classList.toggle('warn', level === 'warn');
 }
 
 async function runAnalysisPlot() {
@@ -577,6 +580,20 @@ function groupByCalendarDay(xs, ys) {
   return [...days.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
+// Past this many overlapping days, the day/day view gets hard to read as
+// distinct lines rather than a solid band — not a hard limit (it still
+// renders), just the point where the in-panel warning below suggests a
+// shorter range or using the isolate-on-click interaction.
+const DAYOVER_CROWD_THRESHOLD = 10;
+
+// Legend-click isolation state for the currently-drawn day/day plot: which
+// trace (if any) is isolated, and the original per-trace opacity/width to
+// restore to when it's un-isolated. Module-level since it needs to survive
+// between the click handler and later re-renders of the same plot.
+let dayOverIsolatedIndex = null;
+let dayOverBaseOpacities = [];
+let dayOverBaseWidths = [];
+
 async function plotDayOverDay(start, end) {
   const field = fieldById(document.getElementById('dayover-field-select').value);
   if (!field) {
@@ -601,9 +618,7 @@ async function plotDayOverDay(start, end) {
 
   // Oldest day faintest, most recent day at full strength and a slightly
   // thicker line, so "today vs. the usual pattern" reads at a glance instead
-  // of needing to check the legend. Ranges longer than ~7-10 days will get
-  // crowded/hard to tell apart — that's expected for this view; use a
-  // shorter preset for a cleaner overlay.
+  // of needing to check the legend.
   const traces = dayGroups.map(([dateStr, day], i) => {
     const age = n > 1 ? i / (n - 1) : 1;
     return {
@@ -615,8 +630,20 @@ async function plotDayOverDay(start, end) {
     };
   });
 
-  showAnalysisStatus('');
-  Plotly.newPlot('analysis-plot', traces, {
+  dayOverIsolatedIndex = null;
+  dayOverBaseOpacities = traces.map(t => t.opacity);
+  dayOverBaseWidths = traces.map(t => t.line.width);
+
+  if (n > DAYOVER_CROWD_THRESHOLD) {
+    showAnalysisStatus(
+      `showing ${n} overlapping days — click a day in the legend to isolate it, or use a shorter range for a cleaner overlay`,
+      'warn'
+    );
+  } else {
+    showAnalysisStatus('');
+  }
+
+  const gd = await Plotly.newPlot('analysis-plot', traces, {
     ...PLOTLY_LAYOUT_BASE,
     xaxis: {
       ...PLOTLY_LAYOUT_BASE.xaxis,
@@ -627,6 +654,27 @@ async function plotDayOverDay(start, end) {
     },
     yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: { text: fieldLabel(field) } },
   }, { responsive: true, displaylogo: false });
+
+  // Redraws reuse the same DOM node, so drop any listener from a previous
+  // draw before attaching a fresh one — otherwise clicks would fire the
+  // stale closure's traces/lengths alongside the current one.
+  if (gd.removeAllListeners) gd.removeAllListeners('plotly_legendclick');
+  gd.on('plotly_legendclick', (evt) => {
+    const idx = evt.curveNumber;
+    if (dayOverIsolatedIndex === idx) {
+      // Clicking the already-isolated day again restores the normal
+      // age-based fade for every day.
+      Plotly.restyle(gd, { opacity: dayOverBaseOpacities, 'line.width': dayOverBaseWidths });
+      dayOverIsolatedIndex = null;
+    } else {
+      const total = dayOverBaseOpacities.length;
+      const opacities = Array.from({ length: total }, (_, i) => (i === idx ? 1 : 0.06));
+      const widths = Array.from({ length: total }, (_, i) => (i === idx ? Math.max(3, dayOverBaseWidths[idx] + 0.5) : 1));
+      Plotly.restyle(gd, { opacity: opacities, 'line.width': widths });
+      dayOverIsolatedIndex = idx;
+    }
+    return false; // suppress Plotly's default legend-click behavior (hiding the trace)
+  });
 }
 
 // Ordinary least squares on (timestamp, value) pairs. xs are the same
