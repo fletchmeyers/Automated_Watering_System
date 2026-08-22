@@ -104,6 +104,31 @@
     color: var(--muted);
   }
 
+  .unit-toggle {
+    display: flex;
+    gap: 4px;
+  }
+
+  .unit-btn {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+  }
+
+  .unit-btn.active {
+    color: var(--teal);
+    border-color: var(--teal);
+  }
+
+  .unit-btn:not(.active) { opacity: 0.55; }
+  .unit-btn:hover { color: var(--text); }
+
   #refresh-btn {
     background: var(--bg3);
     border: 1px solid var(--border);
