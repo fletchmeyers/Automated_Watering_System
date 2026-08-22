@@ -100,6 +100,15 @@
     <div id="system-body"><div class="no-data">No data</div></div>
   </div>
 
+  <!-- Weather Forecast -->
+  <div class="card card-wide" id="card-weather">
+    <div class="card-header">
+      <span class="card-title">Weather Forecast</span>
+      <span id="weather-badge" class="card-badge badge-gray">–</span>
+    </div>
+    <div id="weather-body"><div class="no-data">Loading...</div></div>
+  </div>
+
 </div>
 
 <!-- Populated when one or more cards above are hidden; click "show" to restore -->
@@ -168,6 +177,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <script src="dashboard.js"></script>
+<script src="weather.js"></script>
 <script src="analysis.js"></script>
 <script>
 // ── Boot ─────────────────────────────────────────────────────────────────────
@@ -177,6 +187,7 @@ refresh();
 setInterval(refresh, REFRESH_MS);
 initCardCustomization();
 initAnalysisPanel();
+initWeatherPanel();
 </script>
 </body>
 </html>

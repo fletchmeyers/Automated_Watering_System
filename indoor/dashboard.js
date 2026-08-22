@@ -38,10 +38,11 @@ function setUnitPref(pref) {
 
   // Re-render everything that shows a temperature under the new unit.
   if (currentPackets.length) renderAll(currentPackets);
-  // analysis.js, loaded right after this file — guard in case it hasn't
-  // initialized yet (e.g. this ever runs before initAnalysisPanel()).
+  // analysis.js and weather.js, loaded right after this file — guarded in
+  // case either hasn't initialized yet.
   if (typeof buildFieldPicker === 'function') buildFieldPicker();
   if (typeof runAnalysisPlot === 'function') runAnalysisPlot();
+  if (typeof renderWeather === 'function' && lastWeatherData) renderWeather(lastWeatherData);
 }
 
 function initUnitToggle() {
@@ -697,16 +698,17 @@ async function runPingTest() {
 // panel's Phase 2 "drag-and-drop multi-card" idea; this is only about the
 // live sensor-reading cards at the top of the dashboard.
 
-const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system'];
+const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system', 'card-weather'];
 const CARD_LABELS = {
-  'card-batt':   'Lipo',
-  'card-sht':    'Temperature & Humidity',
-  'card-voc':    'Air Quality (VOC)',
-  'card-uv':     'UV & Light',
-  'card-soil':   'Soil Sensors',
-  'card-power':  'Battery',
-  'card-health': 'Sensor Health',
-  'card-system': 'Radio & System',
+  'card-batt':    'Lipo',
+  'card-sht':     'Temperature & Humidity',
+  'card-voc':     'Air Quality (VOC)',
+  'card-uv':      'UV & Light',
+  'card-soil':    'Soil Sensors',
+  'card-power':   'Battery',
+  'card-health':  'Sensor Health',
+  'card-system':  'Radio & System',
+  'card-weather': 'Weather Forecast',
 };
 const CARD_PREFS_KEY = 'gardenDashboardCardPrefs';
 

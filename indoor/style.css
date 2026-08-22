@@ -441,6 +441,81 @@
     margin-top: 4px;
   }
 
+  /* Weather forecast card */
+  .weather-current {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .weather-current-icon {
+    font-size: 48px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .weather-current-main {
+    flex-shrink: 0;
+  }
+
+  .weather-current-extra {
+    flex: 1 1 240px;
+    margin-top: 0;
+  }
+
+  .weather-daily {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+    overflow-x: auto;
+  }
+
+  .weather-day {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 12px 10px;
+    text-align: center;
+    flex: 1 1 0;
+    min-width: 72px;
+  }
+
+  .weather-day-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+
+  .weather-day-icon {
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+
+  .weather-day-temps {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .weather-day-hi { color: var(--text); }
+  .weather-day-lo { color: var(--muted); }
+
+  .weather-day-precip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--blue);
+    margin-top: 6px;
+  }
+
+  @media (max-width: 700px) {
+    .weather-daily { gap: 6px; }
+    .weather-day { min-width: 56px; padding: 10px 6px; }
+  }
+
   /* Power monitor grid */
   .power-grid {
     display: grid;
