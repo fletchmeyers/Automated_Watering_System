@@ -5,6 +5,50 @@ const REFRESH_MS = 10000;
 // Cloudflare Tunnel + domain — dashboard reads live from sensors.db via /api/data.
 const API_BASE = "https://api.fletchermeyers.com";
 
+// ── Unit preference (°C/°F) ─────────────────────────────────────────────────
+// Single global flag, shared with analysis.js (loaded right after this file,
+// same page scope — no module system here, so a plain global is simplest).
+// Sensors always report Celsius; this only affects display. Conversion
+// happens at render/trace-build time on already-fetched data, never at the
+// query layer, so it's cheap arithmetic regardless of range length.
+// Persisted the same way card layout prefs are (plain localStorage — this is
+// the real deployed site, not an Artifact).
+
+const UNIT_PREF_KEY = 'gardenDashboardUnitPref';
+
+let useFahrenheit = (function () {
+  try { return localStorage.getItem(UNIT_PREF_KEY) === 'F'; } catch (e) { return false; }
+})();
+
+function celsiusToFahrenheit(c) { return c * 9 / 5 + 32; }
+
+// Always format for display through this — never read `useFahrenheit`
+// directly when showing a value, so a missed spot can't silently show raw
+// Celsius under an °F label.
+function formatTemp(c) { return useFahrenheit ? celsiusToFahrenheit(c) : c; }
+
+function tempUnitLabel() { return useFahrenheit ? '°F' : '°C'; }
+
+function setUnitPref(pref) {
+  useFahrenheit = pref === 'F';
+  try { localStorage.setItem(UNIT_PREF_KEY, pref); } catch (e) { /* non-fatal */ }
+
+  document.getElementById('unit-c-btn')?.classList.toggle('active', !useFahrenheit);
+  document.getElementById('unit-f-btn')?.classList.toggle('active', useFahrenheit);
+
+  // Re-render everything that shows a temperature under the new unit.
+  if (currentPackets.length) renderAll(currentPackets);
+  // analysis.js, loaded right after this file — guard in case it hasn't
+  // initialized yet (e.g. this ever runs before initAnalysisPanel()).
+  if (typeof buildFieldPicker === 'function') buildFieldPicker();
+  if (typeof runAnalysisPlot === 'function') runAnalysisPlot();
+}
+
+function initUnitToggle() {
+  document.getElementById('unit-c-btn')?.classList.toggle('active', !useFahrenheit);
+  document.getElementById('unit-f-btn')?.classList.toggle('active', useFahrenheit);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -21,6 +65,9 @@ function vocPollution(raw) {
   return clamp(Math.round((1 - pct) * 100), 0, 100);
 }
 
+// Always called with the raw Celsius reading, never the display-converted
+// value — the thresholds encode real thermal state, which doesn't change
+// with the unit toggle.
 function tempColor(t) {
   if (t < 10) return '#58a6ff';
   if (t < 25) return '#3fb950';
@@ -148,14 +195,14 @@ function renderBattery(latest, history) {
 }
 
 function renderSHT(latest, tempHist, rhHist) {
-  const tmp = latest.tmp ?? 0;
-  const rh  = latest.rh ?? 0;
+  const tmpC = latest.tmp ?? 0;   // always Celsius as read from the sensor
+  const rh   = latest.rh ?? 0;
 
   document.getElementById('sht-body').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>
         <div class="mini-label">TEMP</div>
-        <div class="big-value" style="color:${tempColor(tmp)};font-size:30px">${tmp.toFixed(1)}<span class="big-unit">°C</span></div>
+        <div class="big-value" style="color:${tempColor(tmpC)};font-size:30px">${formatTemp(tmpC).toFixed(1)}<span class="big-unit">${tempUnitLabel()}</span></div>
       </div>
       <div>
         <div class="mini-label">HUMIDITY</div>
@@ -171,7 +218,12 @@ function renderSHT(latest, tempHist, rhHist) {
       <div style="position:relative;height:28px;flex:1"><canvas id="spark-rh"></canvas></div>
     </div>`;
 
-  if (tempHist.length > 1) renderSparkline('spark-tmp', tempHist, tempColor(tmp));
+  // tempColor is keyed off real thermal state, so it always takes the raw
+  // Celsius reading — never the display-converted value — regardless of
+  // which unit is currently shown. The sparkline is a shape-only visual (no
+  // axis), so an affine unit conversion wouldn't change it; converting
+  // anyway keeps the underlying values consistent with what's displayed.
+  if (tempHist.length > 1) renderSparkline('spark-tmp', tempHist.map(formatTemp), tempColor(tmpC));
   if (rhHist.length > 1)   renderSparkline('spark-rh',  rhHist,  rhColor(rh));
 }
 
@@ -250,7 +302,7 @@ function renderSoil(soilData) {
         <div class="soil-pct" style="color:${color}">${pct}%</div>
       </div>
       <div class="soil-label">SENSOR ${id}</div>
-      <div class="soil-temp">${d.tmp.toFixed(1)}°C</div>
+      <div class="soil-temp">${formatTemp(d.tmp).toFixed(1)}${tempUnitLabel()}</div>
     </div>`;
   }
 
@@ -369,7 +421,7 @@ function renderSystem(rtLatest, lastTs, seqLatest) {
   if (rtLatest) {
     html += `<div class="mini-metric" style="margin-bottom:8px">
       <div class="mini-label">RADIO MODULE TEMP</div>
-      <div class="mini-value" style="color:${tempColor(rtLatest.tmp)}">${rtLatest.tmp.toFixed(1)} °C</div>
+      <div class="mini-value" style="color:${tempColor(rtLatest.tmp)}">${formatTemp(rtLatest.tmp).toFixed(1)} ${tempUnitLabel()}</div>
     </div>`;
   }
   if (lastTs) {

@@ -16,6 +16,10 @@
   <div class="header-right">
     <div id="status-dot" class="status-dot stale"></div>
     <span id="last-update">loading...</span>
+    <div class="unit-toggle" id="unit-toggle">
+      <button id="unit-c-btn" class="unit-btn active" onclick="setUnitPref('C')" type="button">°C</button>
+      <button id="unit-f-btn" class="unit-btn" onclick="setUnitPref('F')" type="button">°F</button>
+    </div>
     <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
     <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
     <span id="ping-result"></span>
@@ -168,6 +172,7 @@
 <script>
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
+initUnitToggle();
 refresh();
 setInterval(refresh, REFRESH_MS);
 initCardCustomization();
