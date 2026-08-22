@@ -67,16 +67,131 @@ function visibleAnalysisFields() {
   return ANALYSIS_FIELDS.filter(f => availableFieldKeys.has(`${f.type}.${f.key}`));
 }
 
+// One entry per mode: what it shows, why it's useful, a concrete example
+// tailored to this system's actual sensors, and (optionally) a link for
+// anyone who wants the underlying stats concept explained properly rather
+// than my paraphrase of it.
+const MODE_INFO = {
+  timeseries: {
+    description: 'Plots one or more sensor fields against time. Turn on the smoothed overlay to see the underlying trend through noisy raw readings.',
+    example: 'Soil 0 vs Soil 2 moisture, to see how far apart the two probes have drifted lately.',
+    link: { text: 'Moving average', url: 'https://en.wikipedia.org/wiki/Moving_average' },
+  },
+  scatter: {
+    description: 'Plots one field against another, pairing readings by nearest timestamp, to see whether two measurements move together.',
+    example: 'Light (lux) on X, Lipo Voltage on Y — sunny stretches should show the battery charging faster.',
+    link: { text: 'Correlation', url: 'https://en.wikipedia.org/wiki/Correlation' },
+  },
+  dayover: {
+    description: "Overlays each day's readings on a shared 24-hour clock, so the daily rhythm shows up on its own instead of blending into the noise of a longer range.",
+    example: 'Light (lux) over the last week, to see how consistent each day\'s sunlight curve actually is.',
+    link: { text: 'Circadian rhythm (related concept)', url: 'https://en.wikipedia.org/wiki/Circadian_rhythm' },
+  },
+  trend: {
+    description: "Fits a straight line through each field to estimate whether it's drifting up or down over the selected range. R² (0 to 1) is a rough measure of how well that line actually fits — low values mean the field isn't really trending, just noisy.",
+    example: "Lipo % over the last 30 days, to check whether the battery's overall charge is holding steady or slowly declining.",
+    link: { text: 'Simple linear regression', url: 'https://en.wikipedia.org/wiki/Simple_linear_regression' },
+  },
+  rate: {
+    description: 'Turns each field into its rate of change per minute. Step changes and short spikes are far easier to spot here than in the raw values.',
+    example: 'Soil 2 moisture after a rain or watering event — the spike shows up immediately instead of blending into the noise.',
+    link: { text: 'Derivative', url: 'https://en.wikipedia.org/wiki/Derivative' },
+  },
+  correlation: {
+    description: 'Shows how strongly every pair of selected fields moves together, from -1 (opposite directions) through 0 (unrelated) to +1 (same direction), using the same nearest-timestamp pairing as Scatter.',
+    example: 'Select Ambient Temp, Ambient Humidity, VOC, and Light together — a good first look at which readings actually move together versus just being noisy at the same time.',
+    link: { text: 'Pearson correlation coefficient', url: 'https://en.wikipedia.org/wiki/Pearson_correlation_coefficient' },
+  },
+  gaps: {
+    description: "Shows when each selected field has and hasn't logged data, bucketed across the selected range, so outages and dropped connections are visible directly instead of inferred from packet counts.",
+    example: "Select Soil 0 alongside Soil 1 or Soil 2 — the known loose I2C connection on Soil 0 should show up as a scattered, inconsistent row next to the steadier ones.",
+    link: { text: 'Missing data', url: 'https://en.wikipedia.org/wiki/Missing_data' },
+  },
+};
+
+function renderModeInfo(mode) {
+  const info = MODE_INFO[mode];
+  const el = document.getElementById('mode-info');
+  if (!info) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <p class="mode-info-desc">${info.description}</p>
+    ${info.example ? `<p class="mode-info-example"><strong>Try:</strong> ${info.example}</p>` : ''}
+    ${info.link ? `<a class="mode-info-link" href="${info.link.url}" target="_blank" rel="noopener">${info.link.text} ↗</a>` : ''}
+  `;
+}
+
 let analysisMode = 'timeseries';
 // Default selection chosen for the exact soil s0/s2 gap this panel exists to help chase.
 const tsSelectedFields = new Set(['s0.m', 's2.m']);
+
+// Smoothing is a simple centered moving average over N *points*, not N
+// minutes — readings aren't on a fixed time grid, so an index-based window
+// is simpler than a time-based one and good enough for "make the noise
+// readable." Revisit if a field's poll interval changes a lot mid-range.
+const SMOOTHING_WINDOW = 9;
+
+// Both default on: raw shows the real data, smoothed shows the overlay.
+// Independent toggles (not a mode swap) since seeing both at once is the
+// normal case — you turn one off to declutter a specific comparison.
+let showRawData = true;
+let showSmoothedData = true;
 
 function setAnalysisMode(mode) {
   analysisMode = mode;
   document.getElementById('mode-timeseries-btn').classList.toggle('active', mode === 'timeseries');
   document.getElementById('mode-scatter-btn').classList.toggle('active', mode === 'scatter');
-  document.getElementById('ts-field-picker').style.display = mode === 'timeseries' ? 'flex' : 'none';
+  document.getElementById('mode-dayover-btn').classList.toggle('active', mode === 'dayover');
+  document.getElementById('mode-trend-btn').classList.toggle('active', mode === 'trend');
+  document.getElementById('mode-rate-btn').classList.toggle('active', mode === 'rate');
+  document.getElementById('mode-correlation-btn').classList.toggle('active', mode === 'correlation');
+  document.getElementById('mode-gaps-btn').classList.toggle('active', mode === 'gaps');
+
+  // Trend, rate-of-change, correlation, and gaps all operate on the same
+  // multi-field checkbox selection as time-series (they're different lenses
+  // on the same selected fields), so they share its picker instead of each
+  // getting their own.
+  const usesFieldPicker = mode === 'timeseries' || mode === 'trend' || mode === 'rate'
+    || mode === 'correlation' || mode === 'gaps';
+  document.getElementById('ts-field-picker').style.display = usesFieldPicker ? 'flex' : 'none';
+  document.getElementById('ts-overlay-toggle').style.display = mode === 'timeseries' ? 'flex' : 'none';
   document.getElementById('scatter-field-picker').style.display = mode === 'scatter' ? 'flex' : 'none';
+  document.getElementById('dayover-field-picker').style.display = mode === 'dayover' ? 'flex' : 'none';
+
+  renderModeInfo(mode);
+}
+
+function swapScatterFields() {
+  const xSel = document.getElementById('scatter-x-select');
+  const ySel = document.getElementById('scatter-y-select');
+  const tmp = xSel.value;
+  xSel.value = ySel.value;
+  ySel.value = tmp;
+  if (analysisMode === 'scatter') runAnalysisPlot();
+}
+
+function toggleOverlay(which) {
+  if (which === 'raw') showRawData = !showRawData;
+  else showSmoothedData = !showSmoothedData;
+  document.getElementById('raw-toggle-btn').classList.toggle('active', showRawData);
+  document.getElementById('smoothed-toggle-btn').classList.toggle('active', showSmoothedData);
+  if (analysisMode === 'timeseries') runAnalysisPlot();
+}
+
+// Centered simple moving average. Edges use whatever window is available
+// (e.g. point 0 only averages itself + the next `half`) rather than padding
+// or dropping them, so the smoothed line still spans the full range.
+function movingAverage(ys, window) {
+  const half = Math.floor(window / 2);
+  const out = new Array(ys.length);
+  for (let i = 0; i < ys.length; i++) {
+    let sum = 0, count = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(ys.length - 1, i + half); j++) {
+      sum += ys[j];
+      count++;
+    }
+    out[i] = sum / count;
+  }
+  return out;
 }
 
 function toggleField(id, checked) {
@@ -110,6 +225,12 @@ function buildFieldPicker() {
   // available if either of those specific fields has no data.
   xSel.value = fields.some(f => f.id === 's2.m') ? 's2.m' : (fields[0]?.id ?? '');
   ySel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[1]?.id ?? fields[0]?.id ?? '');
+
+  // Day-over-day defaults to lux — a diurnal cycle is exactly the pattern
+  // this view exists to show off, and it makes a good first impression.
+  const dayoverSel = document.getElementById('dayover-field-select');
+  dayoverSel.innerHTML = opts;
+  dayoverSel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[0]?.id ?? '');
 }
 
 // ── Time range: presets + custom, same fetch either way ───────────────────────
@@ -206,8 +327,8 @@ const PLOTLY_LAYOUT_BASE = {
   plot_bgcolor: 'transparent',
   font: { family: 'IBM Plex Mono, monospace', size: 11, color: '#8b949e' },
   margin: { l: 50, r: 20, t: 20, b: 40 },
-  xaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d' },
-  yaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d' },
+  xaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d', automargin: true },
+  yaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d', automargin: true },
   legend: { orientation: 'h', y: -0.2 },
 };
 
@@ -230,8 +351,18 @@ async function runAnalysisPlot() {
   try {
     if (analysisMode === 'timeseries') {
       await plotTimeSeries(start, end);
-    } else {
+    } else if (analysisMode === 'scatter') {
       await plotScatter(start, end);
+    } else if (analysisMode === 'dayover') {
+      await plotDayOverDay(start, end);
+    } else if (analysisMode === 'trend') {
+      await plotTrend(start, end);
+    } else if (analysisMode === 'rate') {
+      await plotRateOfChange(start, end);
+    } else if (analysisMode === 'correlation') {
+      await plotCorrelation(start, end);
+    } else {
+      await plotDataGaps(start, end);
     }
   } catch (e) {
     console.error('analysis plot failed', e);
@@ -251,7 +382,7 @@ const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-
 const MIN_AXIS_PX = 46;       // minimum real pixels reserved per stacked axis so its title text
                                // (e.g. "Soil 2 Moisture") doesn't run into the neighboring axis line
 
-function buildTimeSeriesLayout(fields) {
+function buildTimeSeriesLayout(fields, titleFn = f => f.label) {
   const layout = { ...PLOTLY_LAYOUT_BASE };
   const extraAxes = Math.max(0, fields.length - 1);
 
@@ -264,7 +395,11 @@ function buildTimeSeriesLayout(fields) {
   const plotWidth = (plotEl && plotEl.clientWidth) || 600;
   const extraAxisStep = Math.max(EXTRA_AXIS_STEP, MIN_AXIS_PX / plotWidth);
 
-  const rightMargin = extraAxes > 1 ? (extraAxes - 1) * extraAxisStep : 0;
+  // Reserve margin starting at the *first* right-side axis, not the second —
+  // previously this only kicked in once extraAxes > 1 (i.e. 3+ fields
+  // total), so with exactly one right axis (2 fields) its tick labels had
+  // no reserved room and collided with its own title.
+  const rightMargin = extraAxes >= 1 ? extraAxes * extraAxisStep : 0;
 
   layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin] };
   layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: 20 + rightMargin * plotWidth };
@@ -276,7 +411,14 @@ function buildTimeSeriesLayout(fields) {
       linecolor: color,
       zerolinecolor: PLOTLY_LAYOUT_BASE.yaxis.zerolinecolor,
       tickfont: { color },
-      title: { text: f.label, font: { color } },
+      title: { text: titleFn(f), font: { color } },
+      // Without this, Plotly draws the title at a fixed offset from the axis
+      // line regardless of how wide the tick labels render — fine once there
+      // are enough stacked axes pushing everything outward, but with only
+      // one or two axes the title sits right on top of the tick numbers.
+      // automargin makes Plotly measure the actual rendered label width and
+      // reserve room for it instead.
+      automargin: true,
     };
     if (i === 0) {
       layout.yaxis = axisStyle;
@@ -301,6 +443,11 @@ async function plotTimeSeries(start, end) {
     Plotly.purge('analysis-plot');
     return;
   }
+  if (!showRawData && !showSmoothedData) {
+    showAnalysisStatus('enable raw or smoothed data above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
 
   // One fetch per distinct sensor_type, reused across fields that share it
   // (e.g. s0.m and s0.tmp both come from a single sensor_type=s0 call).
@@ -308,19 +455,49 @@ async function plotTimeSeries(start, end) {
   const packetsByType = {};
   await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
 
-  const traces = fields.map((f, i) => {
+  // Up to two traces per field (raw + smoothed), sharing that field's axis.
+  // When both are on, the raw trace is faded so the smoothed line reads as
+  // the headline and raw shows through as texture underneath it; when
+  // smoothed is off, raw goes back to full weight (the original look).
+  // Only one of the two carries the legend entry per field, so turning a
+  // trace off doesn't leave a stale legend label or double it up.
+  const traces = [];
+  let anyPoints = false;
+
+  fields.forEach((f, i) => {
     const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
-    return {
-      x: xs, y: ys,
-      type: 'scatter', mode: 'lines+markers',
-      name: f.label,
-      line: { color: fieldColor(f), width: 1.5 },
-      marker: { size: 3 },
-      yaxis: i === 0 ? 'y' : `y${i + 1}`,
-    };
+    if (xs.length) anyPoints = true;
+    const yaxis = i === 0 ? 'y' : `y${i + 1}`;
+    const color = fieldColor(f);
+
+    if (showRawData) {
+      traces.push({
+        x: xs, y: ys,
+        type: 'scatter', mode: 'lines+markers',
+        name: f.label,
+        line: { color, width: showSmoothedData ? 1 : 1.5 },
+        marker: { color, size: showSmoothedData ? 2 : 3 },
+        opacity: showSmoothedData ? 0.4 : 1,
+        yaxis,
+        showlegend: !showSmoothedData,
+      });
+    }
+
+    // Skip smoothing on series too short for the window to mean anything —
+    // it'd just redraw the raw line under a different name.
+    if (showSmoothedData && ys.length >= 3) {
+      traces.push({
+        x: xs, y: movingAverage(ys, SMOOTHING_WINDOW),
+        type: 'scatter', mode: 'lines',
+        name: f.label,
+        line: { color, width: 2.5 },
+        yaxis,
+        showlegend: true,
+      });
+    }
   });
 
-  showAnalysisStatus(traces.some(t => t.x.length) ? '' : 'no data in that range for the selected field(s)', true);
+  showAnalysisStatus(anyPoints ? '' : 'no data in that range for the selected field(s)', true);
 
   Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
 }
@@ -356,10 +533,372 @@ async function plotScatter(start, end) {
   }, { responsive: true, displaylogo: false });
 }
 
+// Splits a series into one bucket per calendar date (using the date portion
+// of each already-local ts string), and rewrites every timestamp onto a
+// shared reference date ("2000-01-01") so Plotly can plot all days on one
+// time-of-day x-axis instead of them trailing off across real calendar time.
+// Returns [[dateStr, {times, values}], ...] sorted oldest first.
+function groupByCalendarDay(xs, ys) {
+  const days = new Map();
+  for (let i = 0; i < xs.length; i++) {
+    const [dateStr, timeStr] = xs[i].split(' ');
+    if (!dateStr || !timeStr) continue;
+    if (!days.has(dateStr)) days.set(dateStr, { times: [], values: [] });
+    const day = days.get(dateStr);
+    day.times.push(`2000-01-01 ${timeStr}`);
+    day.values.push(ys[i]);
+  }
+  return [...days.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+async function plotDayOverDay(start, end) {
+  const field = fieldById(document.getElementById('dayover-field-select').value);
+  if (!field) {
+    showAnalysisStatus('select a field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const packets = await fetchSeries(field.type, start, end);
+  const { xs, ys } = extractPoints(packets, field.key);
+  const dayGroups = groupByCalendarDay(xs, ys);
+
+  if (!dayGroups.length) {
+    showAnalysisStatus('no data in that range for the selected field', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const color = fieldColor(field);
+  const n = dayGroups.length;
+
+  // Oldest day faintest, most recent day at full strength and a slightly
+  // thicker line, so "today vs. the usual pattern" reads at a glance instead
+  // of needing to check the legend. Ranges longer than ~7-10 days will get
+  // crowded/hard to tell apart — that's expected for this view; use a
+  // shorter preset for a cleaner overlay.
+  const traces = dayGroups.map(([dateStr, day], i) => {
+    const age = n > 1 ? i / (n - 1) : 1;
+    return {
+      x: day.times, y: day.values,
+      type: 'scatter', mode: 'lines',
+      name: dateStr,
+      line: { color, width: i === n - 1 ? 2.5 : 1.5 },
+      opacity: 0.25 + age * 0.75,
+    };
+  });
+
+  showAnalysisStatus('');
+  Plotly.newPlot('analysis-plot', traces, {
+    ...PLOTLY_LAYOUT_BASE,
+    xaxis: {
+      ...PLOTLY_LAYOUT_BASE.xaxis,
+      type: 'date',
+      tickformat: '%H:%M',
+      title: { text: 'Time of day' },
+      range: ['2000-01-01 00:00:00', '2000-01-02 00:00:00'],
+    },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: { text: field.label } },
+  }, { responsive: true, displaylogo: false });
+}
+
+// Ordinary least squares on (timestamp, value) pairs. xs are the same
+// 'YYYY-MM-DD HH:MM:SS' local strings extractPoints returns everywhere else.
+// Returns null when there's nothing to fit (fewer than 2 points, or every
+// point landed on the same timestamp).
+function linearRegression(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+
+  const xNums = xs.map(t => new Date(t).getTime());
+  const xMean = xNums.reduce((a, b) => a + b, 0) / n;
+  const yMean = ys.reduce((a, b) => a + b, 0) / n;
+
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xNums[i] - xMean) * (ys[i] - yMean);
+    den += (xNums[i] - xMean) ** 2;
+  }
+  if (den === 0) return null; // all points at the same timestamp — no time spread to fit against
+
+  const slope = num / den; // units per millisecond
+  const intercept = yMean - slope * xMean;
+
+  let ssRes = 0, ssTot = 0;
+  for (let i = 0; i < n; i++) {
+    const predicted = intercept + slope * xNums[i];
+    ssRes += (ys[i] - predicted) ** 2;
+    ssTot += (ys[i] - yMean) ** 2;
+  }
+  const r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot; // ssTot===0 means every y was identical — a flat fit is a perfect fit
+
+  // xNums[0]/[n-1] rather than Math.min/max — extractPoints' input is
+  // already ts-ascending, so this avoids an extra pass over n points.
+  return { slope, intercept, r2, xMinMs: xNums[0], xMaxMs: xNums[n - 1] };
+}
+
+// Inverse of extractPoints' `p.ts.replace('T', ' ')` — turns a millisecond
+// timestamp back into the same local 'YYYY-MM-DD HH:MM:SS' string format so
+// the regression line's endpoints plot on the same local-time axis as the
+// raw points instead of drifting via a UTC round-trip through toISOString().
+function msToLocalTsString(ms) {
+  const d = new Date(ms);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+async function plotTrend(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (!fields.length) {
+    showAnalysisStatus('select at least one field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  const traces = [];
+  let anyFit = false;
+
+  fields.forEach((f, i) => {
+    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const yaxis = i === 0 ? 'y' : `y${i + 1}`;
+    const color = fieldColor(f);
+
+    // Faint raw points behind the fitted line so a straight line drawn
+    // through genuinely noisy, non-trending data still reads as "noisy,
+    // not really trending" rather than looking authoritative on its own.
+    traces.push({
+      x: xs, y: ys,
+      type: 'scatter', mode: 'markers',
+      marker: { color, size: 3, opacity: 0.3 },
+      yaxis,
+      showlegend: false,
+      hoverinfo: 'skip',
+    });
+
+    const fit = linearRegression(xs, ys);
+    if (!fit) return;
+    anyFit = true;
+
+    const slopePerDay = fit.slope * 86400000; // ms -> day, easier to read than a per-ms number
+    const p0 = fit.intercept + fit.slope * fit.xMinMs;
+    const p1 = fit.intercept + fit.slope * fit.xMaxMs;
+    const sign = slopePerDay >= 0 ? '+' : '';
+
+    traces.push({
+      x: [msToLocalTsString(fit.xMinMs), msToLocalTsString(fit.xMaxMs)],
+      y: [p0, p1],
+      type: 'scatter', mode: 'lines',
+      name: `${f.label} (${sign}${slopePerDay.toFixed(3)}/day, R²=${fit.r2.toFixed(2)})`,
+      line: { color, width: 2.5 },
+      yaxis,
+    });
+  });
+
+  showAnalysisStatus(anyFit ? '' : 'not enough data to fit a trend for the selected field(s)', true);
+
+  Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
+}
+
+// First-difference rate of change, expressed as units-per-minute regardless
+// of how far apart consecutive readings actually were, so a gap in polling
+// doesn't masquerade as a slow rate. Output is one point shorter than the
+// input (no rate defined before the first reading).
+function computeRateOfChange(xs, ys) {
+  const outX = [], outY = [];
+  for (let i = 1; i < xs.length; i++) {
+    const dtMs = new Date(xs[i]).getTime() - new Date(xs[i - 1]).getTime();
+    if (dtMs <= 0) continue; // guard against a duplicate or out-of-order timestamp
+    outX.push(xs[i]);
+    outY.push((ys[i] - ys[i - 1]) / (dtMs / 60000));
+  }
+  return { xs: outX, ys: outY };
+}
+
+async function plotRateOfChange(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (!fields.length) {
+    showAnalysisStatus('select at least one field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  const traces = [];
+  let anyPoints = false;
+
+  fields.forEach((f, i) => {
+    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const { xs: rxs, ys: rys } = computeRateOfChange(xs, ys);
+    if (rxs.length) anyPoints = true;
+
+    traces.push({
+      x: rxs, y: rys,
+      type: 'scatter', mode: 'lines',
+      name: f.label,
+      line: { color: fieldColor(f), width: 1.5 },
+      yaxis: i === 0 ? 'y' : `y${i + 1}`,
+    });
+  });
+
+  showAnalysisStatus(anyPoints ? '' : 'no data in that range for the selected field(s)', true);
+
+  // titleFn appends the unit so an axis reading "Soil 2 · Moisture (Δ/min)"
+  // doesn't get mistaken for the raw-value axis it's derived from.
+  const layout = buildTimeSeriesLayout(fields, f => `${f.label} (Δ/min)`);
+  Plotly.newPlot('analysis-plot', traces, layout, { responsive: true, displaylogo: false });
+}
+
+// Standard Pearson correlation coefficient. Returns null rather than NaN
+// when either series has zero variance (e.g. a field that didn't move at
+// all in this window) — a flat line isn't "uncorrelated", it's undefined,
+// and the heatmap renders null cells as blank instead of misleadingly 0.
+function pearsonCorrelation(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const xMean = xs.reduce((a, b) => a + b, 0) / n;
+  const yMean = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, denX = 0, denY = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - xMean, dy = ys[i] - yMean;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+  if (denX === 0 || denY === 0) return null;
+  return num / Math.sqrt(denX * denY);
+}
+
+async function plotCorrelation(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (fields.length < 2) {
+    showAnalysisStatus('select at least two fields above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  const series = fields.map(f => extractPoints(packetsByType[f.type], f.key));
+
+  // nearestJoin walks from series i's timestamps toward series j's, so the
+  // pairing (and therefore the coefficient) can differ very slightly
+  // depending on which of the two is "i" — fine for a heatmap meant to
+  // surface which pairs are worth a closer look in Scatter, not to be a
+  // precise statistical instrument.
+  const n = fields.length;
+  const z = [];
+  let anyPair = false;
+  for (let i = 0; i < n; i++) {
+    const row = [];
+    for (let j = 0; j < n; j++) {
+      if (i === j) { row.push(1); continue; }
+      const { pairedX, pairedY } = nearestJoin(series[i].xs, series[i].ys, series[j].xs, series[j].ys);
+      const r = pearsonCorrelation(pairedX, pairedY);
+      if (r !== null) anyPair = true;
+      row.push(r);
+    }
+    z.push(row);
+  }
+
+  showAnalysisStatus(anyPair ? '' : 'not enough overlapping data to correlate the selected fields', true);
+
+  const labels = fields.map(f => f.label);
+  Plotly.newPlot('analysis-plot', [{
+    type: 'heatmap',
+    z, x: labels, y: labels,
+    zmin: -1, zmax: 1,
+    colorscale: [[0, '#f85149'], [0.5, '#161b22'], [1, '#39d0c4']],
+    texttemplate: '%{z:.2f}',
+    textfont: { color: '#c9d1d9', size: 10 },
+    hoverongaps: false,
+    colorbar: { tickfont: { color: '#8b949e' }, outlinewidth: 0 },
+  }], {
+    ...PLOTLY_LAYOUT_BASE,
+    margin: { l: 120, r: 20, t: 20, b: 100 },
+    xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, tickangle: -35, automargin: true },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, automargin: true },
+  }, { responsive: true, displaylogo: false });
+}
+
+// Aim for a manageable number of columns regardless of how wide the
+// selected range is, so a 30-day view and a 1-hour view both render as a
+// readable grid instead of either a wall of pixels or a nearly-empty row.
+const GAP_TARGET_BUCKETS = 60;
+
+async function plotDataGaps(start, end) {
+  const fields = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+  if (!fields.length) {
+    showAnalysisStatus('select at least one field above', true);
+    Plotly.purge('analysis-plot');
+    return;
+  }
+
+  const typesNeeded = [...new Set(fields.map(f => f.type))];
+  const packetsByType = {};
+  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+
+  // start/end come from inputToIso as "YYYY-MM-DDTHH:MM:SS"; normalize to
+  // the same space-separated form extractPoints() already uses everywhere
+  // else so both sides of the bucketing math parse identically.
+  const startMs = new Date(start.replace('T', ' ')).getTime();
+  const endMs = new Date(end.replace('T', ' ')).getTime();
+  const bucketMs = Math.max(60000, Math.ceil((endMs - startMs) / GAP_TARGET_BUCKETS));
+  const bucketCount = Math.max(1, Math.ceil((endMs - startMs) / bucketMs));
+  const bucketStarts = Array.from({ length: bucketCount }, (_, i) => msToLocalTsString(startMs + i * bucketMs));
+
+  const z = [];          // 0/1 per bucket, drives cell color
+  const rawCounts = [];  // actual reading count per bucket, drives hover text
+  let anyData = false;
+
+  fields.forEach(f => {
+    const { xs } = extractPoints(packetsByType[f.type], f.key);
+    const counts = new Array(bucketCount).fill(0);
+    for (const x of xs) {
+      const t = new Date(x).getTime();
+      if (t < startMs || t > endMs) continue;
+      const idx = Math.min(bucketCount - 1, Math.floor((t - startMs) / bucketMs));
+      counts[idx]++;
+    }
+    if (counts.some(c => c > 0)) anyData = true;
+    rawCounts.push(counts);
+    z.push(counts.map(c => (c > 0 ? 1 : 0)));
+  });
+
+  showAnalysisStatus(anyData ? '' : 'no data in that range for the selected field(s)', true);
+
+  Plotly.newPlot('analysis-plot', [{
+    type: 'heatmap',
+    z, x: bucketStarts, y: fields.map(f => f.label),
+    customdata: rawCounts,
+    hovertemplate: '%{y}<br>%{x}<br>%{customdata} reading(s)<extra></extra>',
+    zmin: 0, zmax: 1,
+    colorscale: [[0, '#f85149'], [1, '#39d0c4']],
+    showscale: false,
+    hoverongaps: false,
+    xgap: 1, ygap: 4,
+  }], {
+    ...PLOTLY_LAYOUT_BASE,
+    margin: { l: 140, r: 20, t: 20, b: 60 },
+    xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, type: 'date', automargin: true },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, automargin: true },
+  }, { responsive: true, displaylogo: false });
+}
+
 async function initAnalysisPanel() {
   await fetchAvailableFields(); // determines which checkboxes/options even show up
   buildFieldPicker();
   buildPresetButtons();
+  renderModeInfo(analysisMode); // HTML marks 'timeseries' active by default but never calls setAnalysisMode() for it
   const defaultBtn = document.querySelector('.preset-btn[data-minutes="1440"]');
   applyPreset(1440, defaultBtn); // default range: last 24h
   runAnalysisPlot(); // draw something on load rather than an empty panel
