@@ -43,6 +43,29 @@ function fieldColor(f) { return FIELD_COLORS[ANALYSIS_FIELDS.indexOf(f) % FIELD_
 // filtered/available one) so a field's color stays stable regardless of
 // which other fields currently have data.
 
+// Every field whose raw key is "tmp" is a temperature reading (soil ×3,
+// ambient, radio module) and is affected by the °C/°F toggle. `useFahrenheit`,
+// `celsiusToFahrenheit`, and `formatTemp` come from dashboard.js, loaded
+// first — same page scope, no module system here.
+function isTempField(f) { return f.key === 'tmp'; }
+
+// Chip/dropdown/axis/legend label for a field, with the current unit made
+// explicit for temperature fields so a plot never shows a bare number that
+// could be either °C or °F depending on what was clicked when it was drawn.
+function fieldLabel(f) {
+  return isTempField(f) ? `${f.label} (${useFahrenheit ? '°F' : '°C'})` : f.label;
+}
+
+// Converts a temperature field's extracted y-values to the active display
+// unit; passes everything else through unchanged. Applied once, right after
+// extractPoints(), so every downstream computation (smoothing, regression,
+// rate-of-change) operates on already-converted values and its output lands
+// in the right unit for free — e.g. a trend slope on a Fahrenheit-converted
+// series comes out in °F/day without any extra handling.
+function convertForField(f, ys) {
+  return isTempField(f) && useFahrenheit ? ys.map(celsiusToFahrenheit) : ys;
+}
+
 // Which (sensor_type, key) pairs have ever actually logged a row — used to
 // hide checkboxes/dropdown options for sensors that were never wired up
 // (e.g. pw3). null = not yet fetched, or the fetch failed; in that case we
@@ -211,11 +234,11 @@ function buildFieldPicker() {
     const checked = tsSelectedFields.has(f.id);
     return `<label class="field-chip${checked ? ' checked' : ''}" style="--field-color:${fieldColor(f)}" data-field="${f.id}">
       <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleField('${f.id}', this.checked)">
-      <span class="swatch"></span>${f.label}
+      <span class="swatch"></span>${fieldLabel(f)}
     </label>`;
   }).join('');
 
-  const opts = fields.map(f => `<option value="${f.id}">${f.label}</option>`).join('');
+  const opts = fields.map(f => `<option value="${f.id}">${fieldLabel(f)}</option>`).join('');
   const xSel = document.getElementById('scatter-x-select');
   const ySel = document.getElementById('scatter-y-select');
   xSel.innerHTML = opts;
@@ -382,7 +405,7 @@ const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-
 const MIN_AXIS_PX = 46;       // minimum real pixels reserved per stacked axis so its title text
                                // (e.g. "Soil 2 Moisture") doesn't run into the neighboring axis line
 
-function buildTimeSeriesLayout(fields, titleFn = f => f.label) {
+function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f)) {
   const layout = { ...PLOTLY_LAYOUT_BASE };
   const extraAxes = Math.max(0, fields.length - 1);
 
@@ -465,7 +488,8 @@ async function plotTimeSeries(start, end) {
   let anyPoints = false;
 
   fields.forEach((f, i) => {
-    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const { xs, ys: rawYs } = extractPoints(packetsByType[f.type], f.key);
+    const ys = convertForField(f, rawYs);
     if (xs.length) anyPoints = true;
     const yaxis = i === 0 ? 'y' : `y${i + 1}`;
     const color = fieldColor(f);
@@ -474,7 +498,7 @@ async function plotTimeSeries(start, end) {
       traces.push({
         x: xs, y: ys,
         type: 'scatter', mode: 'lines+markers',
-        name: f.label,
+        name: fieldLabel(f),
         line: { color, width: showSmoothedData ? 1 : 1.5 },
         marker: { color, size: showSmoothedData ? 2 : 3 },
         opacity: showSmoothedData ? 0.4 : 1,
@@ -489,7 +513,7 @@ async function plotTimeSeries(start, end) {
       traces.push({
         x: xs, y: movingAverage(ys, SMOOTHING_WINDOW),
         type: 'scatter', mode: 'lines',
-        name: f.label,
+        name: fieldLabel(f),
         line: { color, width: 2.5 },
         yaxis,
         showlegend: true,
@@ -511,8 +535,10 @@ async function plotScatter(start, end) {
     fetchSeries(yField.type, start, end),
   ]);
 
-  const { xs: xTs, ys: xVals } = extractPoints(xPackets, xField.key);
-  const { xs: yTs, ys: yVals } = extractPoints(yPackets, yField.key);
+  const { xs: xTs, ys: xValsRaw } = extractPoints(xPackets, xField.key);
+  const { xs: yTs, ys: yValsRaw } = extractPoints(yPackets, yField.key);
+  const xVals = convertForField(xField, xValsRaw);
+  const yVals = convertForField(yField, yValsRaw);
   const { pairedX, pairedY } = nearestJoin(xTs, xVals, yTs, yVals);
 
   if (!pairedX.length) {
@@ -528,8 +554,8 @@ async function plotScatter(start, end) {
     marker: { color: '#39d0c4', size: 6, opacity: 0.7 },
   }], {
     ...PLOTLY_LAYOUT_BASE,
-    xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: xField.label },
-    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: yField.label },
+    xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: fieldLabel(xField) },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: fieldLabel(yField) },
   }, { responsive: true, displaylogo: false });
 }
 
@@ -560,7 +586,8 @@ async function plotDayOverDay(start, end) {
   }
 
   const packets = await fetchSeries(field.type, start, end);
-  const { xs, ys } = extractPoints(packets, field.key);
+  const { xs, ys: rawYs } = extractPoints(packets, field.key);
+  const ys = convertForField(field, rawYs);
   const dayGroups = groupByCalendarDay(xs, ys);
 
   if (!dayGroups.length) {
@@ -598,7 +625,7 @@ async function plotDayOverDay(start, end) {
       title: { text: 'Time of day' },
       range: ['2000-01-01 00:00:00', '2000-01-02 00:00:00'],
     },
-    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: { text: field.label } },
+    yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: { text: fieldLabel(field) } },
   }, { responsive: true, displaylogo: false });
 }
 
@@ -664,7 +691,8 @@ async function plotTrend(start, end) {
   let anyFit = false;
 
   fields.forEach((f, i) => {
-    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const { xs, ys: rawYs } = extractPoints(packetsByType[f.type], f.key);
+    const ys = convertForField(f, rawYs);
     const yaxis = i === 0 ? 'y' : `y${i + 1}`;
     const color = fieldColor(f);
 
@@ -684,6 +712,9 @@ async function plotTrend(start, end) {
     if (!fit) return;
     anyFit = true;
 
+    // Fit runs on the already-unit-converted ys, so for a temp field in °F
+    // mode the slope comes out directly in °F/day — no separate conversion
+    // of the fit result needed.
     const slopePerDay = fit.slope * 86400000; // ms -> day, easier to read than a per-ms number
     const p0 = fit.intercept + fit.slope * fit.xMinMs;
     const p1 = fit.intercept + fit.slope * fit.xMaxMs;
@@ -693,7 +724,7 @@ async function plotTrend(start, end) {
       x: [msToLocalTsString(fit.xMinMs), msToLocalTsString(fit.xMaxMs)],
       y: [p0, p1],
       type: 'scatter', mode: 'lines',
-      name: `${f.label} (${sign}${slopePerDay.toFixed(3)}/day, R²=${fit.r2.toFixed(2)})`,
+      name: `${fieldLabel(f)} (${sign}${slopePerDay.toFixed(3)}/day, R²=${fit.r2.toFixed(2)})`,
       line: { color, width: 2.5 },
       yaxis,
     });
@@ -735,14 +766,15 @@ async function plotRateOfChange(start, end) {
   let anyPoints = false;
 
   fields.forEach((f, i) => {
-    const { xs, ys } = extractPoints(packetsByType[f.type], f.key);
+    const { xs, ys: rawYs } = extractPoints(packetsByType[f.type], f.key);
+    const ys = convertForField(f, rawYs);
     const { xs: rxs, ys: rys } = computeRateOfChange(xs, ys);
     if (rxs.length) anyPoints = true;
 
     traces.push({
       x: rxs, y: rys,
       type: 'scatter', mode: 'lines',
-      name: f.label,
+      name: fieldLabel(f),
       line: { color: fieldColor(f), width: 1.5 },
       yaxis: i === 0 ? 'y' : `y${i + 1}`,
     });
@@ -752,7 +784,7 @@ async function plotRateOfChange(start, end) {
 
   // titleFn appends the unit so an axis reading "Soil 2 · Moisture (Δ/min)"
   // doesn't get mistaken for the raw-value axis it's derived from.
-  const layout = buildTimeSeriesLayout(fields, f => `${f.label} (Δ/min)`);
+  const layout = buildTimeSeriesLayout(fields, f => `${fieldLabel(f)} (Δ/min)`);
   Plotly.newPlot('analysis-plot', traces, layout, { responsive: true, displaylogo: false });
 }
 
@@ -812,7 +844,10 @@ async function plotCorrelation(start, end) {
 
   showAnalysisStatus(anyPair ? '' : 'not enough overlapping data to correlate the selected fields', true);
 
-  const labels = fields.map(f => f.label);
+  // Correlation itself is unaffected by an affine unit conversion (Pearson's
+  // r is scale/offset invariant), so only the labels need the unit suffix
+  // here — no need to run the paired values through convertForField.
+  const labels = fields.map(f => fieldLabel(f));
   Plotly.newPlot('analysis-plot', [{
     type: 'heatmap',
     z, x: labels, y: labels,
@@ -878,7 +913,7 @@ async function plotDataGaps(start, end) {
 
   Plotly.newPlot('analysis-plot', [{
     type: 'heatmap',
-    z, x: bucketStarts, y: fields.map(f => f.label),
+    z, x: bucketStarts, y: fields.map(f => fieldLabel(f)),
     customdata: rawCounts,
     hovertemplate: '%{y}<br>%{x}<br>%{customdata} reading(s)<extra></extra>',
     zmin: 0, zmax: 1,
