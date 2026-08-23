@@ -104,7 +104,10 @@
   <div class="card card-wide" id="card-weather">
     <div class="card-header">
       <span class="card-title">Weather Forecast</span>
-      <span id="weather-badge" class="card-badge badge-gray">–</span>
+      <div class="weather-header-right">
+        <select id="weather-source-select" onchange="onWeatherSourceChange(this.value)"></select>
+        <span id="weather-badge" class="card-badge badge-gray">–</span>
+      </div>
     </div>
     <div id="weather-body"><div class="no-data">Loading...</div></div>
   </div>
