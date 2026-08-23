@@ -516,6 +516,28 @@
     .weather-day { min-width: 56px; padding: 10px 6px; }
   }
 
+  .weather-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #weather-source-select {
+    font-size: 11px;
+    padding: 4px 6px;
+    color: var(--muted);
+  }
+  #weather-source-select:hover { color: var(--text); }
+
+  .weather-attribution {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-align: right;
+    margin-top: 10px;
+    opacity: 0.7;
+  }
+
   /* Power monitor grid */
   .power-grid {
     display: grid;
