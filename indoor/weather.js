@@ -126,16 +126,17 @@ async function fetchOpenMeteo() {
 // lookup would, and the first hourly period is close enough for a garden
 // dashboard) and 12-hour day/night forecast (used for the daily strip).
 
-function nwsIcon(shortForecast) {
-  // NWS gives free-text conditions, not a numeric code — a small keyword
-  // match onto the same emoji set Open-Meteo uses, so both sources render
-  // through one renderWeather().
-  const t = (shortForecast || '').toLowerCase();
+// Shared by every source that describes conditions with free text rather
+// than a WMO code (NWS, WeatherAPI.com, OpenWeatherMap) — a small keyword
+// match onto the same emoji set Open-Meteo's numeric codes resolve to, so
+// every source renders through one renderWeather().
+function conditionIcon(text) {
+  const t = (text || '').toLowerCase();
   if (t.includes('thunder')) return '⛈️';
-  if (t.includes('snow')) return '❄️';
+  if (t.includes('snow') || t.includes('sleet') || t.includes('ice pellet')) return '❄️';
   if (t.includes('rain') || t.includes('shower')) return '🌧️';
   if (t.includes('drizzle')) return '🌦️';
-  if (t.includes('fog') || t.includes('haze')) return '🌫️';
+  if (t.includes('fog') || t.includes('mist') || t.includes('haze')) return '🌫️';
   if (t.includes('overcast')) return '☁️';
   if (t.includes('cloud')) return '⛅';
   if (t.includes('clear') || t.includes('sunny')) return '☀️';
@@ -168,7 +169,7 @@ async function fetchNWS() {
     precipMm: null,
     precipProbPct: now.probabilityOfPrecipitation && now.probabilityOfPrecipitation.value != null
       ? now.probabilityOfPrecipitation.value : null,
-    icon: nwsIcon(now.shortForecast),
+    icon: conditionIcon(now.shortForecast),
     label: now.shortForecast,
   };
 
@@ -180,7 +181,7 @@ async function fetchNWS() {
     const entry = byDate.get(date) || { date, hiC: null, loC: null, icon: null, label: null, precipProbPct: null };
     if (p.isDaytime) {
       entry.hiC = fToC(p.temperature);
-      entry.icon = nwsIcon(p.shortForecast);
+      entry.icon = conditionIcon(p.shortForecast);
       entry.label = p.shortForecast;
     } else {
       entry.loC = fToC(p.temperature);
@@ -195,11 +196,173 @@ async function fetchNWS() {
   return { current, daily, attribution: 'National Weather Service' };
 }
 
+// ── Sources: WeatherAPI.com, OpenWeatherMap, Tomorrow.io ────────────────────
+// All three need an API key, so none of them are called directly from here —
+// they go through this dashboard's own Flask API (`/api/weather/<source>`),
+// which holds the real key server-side and forwards the request. See
+// flask_api.py's api_weather() for the proxy itself. If a key isn't
+// configured yet on the server, that endpoint returns a plain-language 501
+// which surfaces in the card instead of a raw fetch error.
+
+async function fetchViaBackend(sourceId) {
+  const resp = await fetch(`${API_BASE}/api/weather/${sourceId}`);
+  let body = null;
+  try { body = await resp.json(); } catch (e) { /* non-JSON error page, ignore */ }
+  if (!resp.ok) {
+    throw new Error((body && body.error) || `HTTP ${resp.status}`);
+  }
+  return body;
+}
+
+async function fetchWeatherAPI() {
+  const data = await fetchViaBackend('weatherapi');
+  const cur = data.current;
+
+  const daily = data.forecast.forecastday.map(d => ({
+    date: d.date,
+    icon: conditionIcon(d.day.condition.text),
+    label: d.day.condition.text,
+    hiC: d.day.maxtemp_c,
+    loC: d.day.mintemp_c,
+    precipProbPct: d.day.daily_chance_of_rain,
+  }));
+
+  return {
+    current: {
+      tempC: cur.temp_c,
+      apparentTempC: cur.feelslike_c,
+      humidityPct: cur.humidity,
+      windKmh: cur.wind_kph,
+      precipMm: cur.precip_mm,
+      precipProbPct: null,
+      icon: conditionIcon(cur.condition.text),
+      label: cur.condition.text,
+    },
+    daily,
+    attribution: 'WeatherAPI.com',
+  };
+}
+
+async function fetchOpenWeatherMap() {
+  const data = await fetchViaBackend('openweathermap');
+  const cur = data.current;
+  const curCond = (cur.weather && cur.weather[0]) || {};
+
+  // Free tier only gives a 3-hour-step, 5-day forecast — no true daily
+  // summary — so entries are grouped by calendar date here. Hi/lo take the
+  // extremes across that day's entries; the icon/label come from whichever
+  // entry falls closest to local noon, as a stand-in for "the day's weather"
+  // (same idea as NWS's isDaytime period, applied to OWM's flatter shape).
+  const byDate = new Map();
+  for (const entry of data.forecast.list) {
+    const date = entry.dt_txt.slice(0, 10);
+    const hour = parseInt(entry.dt_txt.slice(11, 13), 10);
+    const cond = (entry.weather && entry.weather[0]) || {};
+    const pop = entry.pop != null ? Math.round(entry.pop * 100) : null;
+
+    const e = byDate.get(date) || {
+      date, hiC: -Infinity, loC: Infinity, icon: null, label: null,
+      precipProbPct: null, _noonDist: Infinity,
+    };
+    e.hiC = Math.max(e.hiC, entry.main.temp_max);
+    e.loC = Math.min(e.loC, entry.main.temp_min);
+    if (pop != null) e.precipProbPct = e.precipProbPct == null ? pop : Math.max(e.precipProbPct, pop);
+    const dist = Math.abs(hour - 12);
+    if (dist < e._noonDist) {
+      e._noonDist = dist;
+      e.icon = conditionIcon(cond.main);
+      e.label = cond.description || cond.main || 'Unknown';
+    }
+    byDate.set(date, e);
+  }
+  const daily = Array.from(byDate.values()).map(({ _noonDist, ...rest }) => rest);
+
+  const rainMm = (cur.rain && cur.rain['1h']) || 0;
+  const snowMm = (cur.snow && cur.snow['1h']) || 0;
+
+  return {
+    current: {
+      tempC: cur.main.temp,
+      apparentTempC: cur.main.feels_like,
+      humidityPct: cur.main.humidity,
+      windKmh: cur.wind && cur.wind.speed != null ? cur.wind.speed * 3.6 : null, // m/s -> km/h
+      precipMm: rainMm + snowMm,
+      precipProbPct: null,
+      icon: conditionIcon(curCond.main),
+      label: curCond.description || curCond.main || 'Unknown',
+    },
+    daily,
+    attribution: 'OpenWeatherMap',
+  };
+}
+
+// Tomorrow.io uses its own numeric weather codes rather than free text —
+// mapped to a label here, then run through the same conditionIcon()
+// keyword match every other source uses (the labels below were chosen to
+// contain the right keywords, e.g. "fog" / "rain" / "thunderstorm").
+const TOMORROW_CODE_LABELS = {
+  1000: 'Clear', 1100: 'Mostly clear', 1101: 'Partly cloudy', 1102: 'Mostly cloudy', 1001: 'Cloudy',
+  2000: 'Fog', 2100: 'Light fog',
+  4000: 'Drizzle', 4001: 'Rain', 4200: 'Light rain', 4201: 'Heavy rain',
+  5000: 'Snow', 5001: 'Flurries', 5100: 'Light snow', 5101: 'Heavy snow',
+  6000: 'Freezing drizzle', 6001: 'Freezing rain', 6200: 'Light freezing rain', 6201: 'Heavy freezing rain',
+  7000: 'Ice pellets', 7101: 'Heavy ice pellets', 7102: 'Light ice pellets',
+  8000: 'Thunderstorm',
+};
+
+function tomorrowCodeInfo(code) {
+  const label = TOMORROW_CODE_LABELS[code] || 'Unknown';
+  return { icon: conditionIcon(label), label };
+}
+
+async function fetchTomorrowIO() {
+  const data = await fetchViaBackend('tomorrowio');
+  const hourly = data.timelines.hourly;
+  const daily = data.timelines.daily;
+
+  const now = hourly[0].values;
+  const nowInfo = tomorrowCodeInfo(now.weatherCode);
+
+  const dailyOut = daily.map(d => {
+    const v = d.values;
+    const info = tomorrowCodeInfo(v.weatherCodeMax != null ? v.weatherCodeMax : v.weatherCode);
+    const precipProbPct = v.precipitationProbabilityAvg != null
+      ? Math.round(v.precipitationProbabilityAvg)
+      : (v.precipitationProbabilityMax != null ? Math.round(v.precipitationProbabilityMax) : null);
+    return {
+      date: d.time.slice(0, 10),
+      icon: info.icon,
+      label: info.label,
+      hiC: v.temperatureMax,
+      loC: v.temperatureMin,
+      precipProbPct,
+    };
+  });
+
+  return {
+    current: {
+      tempC: now.temperature,
+      apparentTempC: now.temperatureApparent != null ? now.temperatureApparent : now.temperature,
+      humidityPct: now.humidity,
+      windKmh: now.windSpeed != null ? now.windSpeed * 3.6 : null, // m/s -> km/h
+      precipMm: now.rainIntensity != null ? now.rainIntensity : null,
+      precipProbPct: now.precipitationProbability != null ? now.precipitationProbability : null,
+      icon: nowInfo.icon,
+      label: nowInfo.label,
+    },
+    daily: dailyOut,
+    attribution: 'Tomorrow.io',
+  };
+}
+
 // ── Source registry ───────────────────────────────────────────────────────────
 
 const WEATHER_SOURCES = [
-  { id: 'open-meteo', label: 'Open-Meteo', fetch: fetchOpenMeteo },
-  { id: 'nws',        label: 'NWS',        fetch: fetchNWS },
+  { id: 'open-meteo',      label: 'Open-Meteo',      fetch: fetchOpenMeteo },
+  { id: 'nws',             label: 'NWS',              fetch: fetchNWS },
+  { id: 'weatherapi',      label: 'WeatherAPI.com',   fetch: fetchWeatherAPI },
+  { id: 'openweathermap',  label: 'OpenWeatherMap',   fetch: fetchOpenWeatherMap },
+  { id: 'tomorrowio',      label: 'Tomorrow.io',      fetch: fetchTomorrowIO },
 ];
 
 let currentWeatherSourceId = 'open-meteo';
