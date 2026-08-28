@@ -28,11 +28,13 @@ want the in-memory cooldown state shared across requests rather than
 sharded across separate worker processes.)
 '''
 
+import os
 import subprocess
 import threading
 import time
 from pathlib import Path
 import db
+import requests
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -59,6 +61,33 @@ PING_COOLDOWN   = 10   # seconds between allowed ping tests — short, since a
                         # test itself only takes a few seconds, but still
                         # enough to stop rapid button-mashing from repeatedly
                         # tying up main.py's loop back-to-back
+
+# Garden location, same coordinates weather.js uses — kept independently
+# rather than shared from a config file since this is the only other place
+# that needs them.
+GARDEN_LAT = 40.4406
+GARDEN_LON = -79.9959
+
+# Weather API keys — kept server-side and never shipped to the browser.
+# This is the whole reason this proxy exists: the dashboard is a static
+# site with no backend of its own, so any key baked into its JS would be
+# public. Set these as real environment variables on the Pi (e.g. in the
+# systemd unit or a .env loaded before gunicorn starts) — do not hardcode
+# a key here. A source with no key set returns 501 rather than crashing,
+# so the dashboard can show "not configured yet" instead of a raw error.
+WEATHER_API_KEYS = {
+    "weatherapi":     os.environ.get("WEATHERAPI_KEY"),
+    "openweathermap": os.environ.get("OPENWEATHERMAP_KEY"),
+    "tomorrowio":      os.environ.get("TOMORROWIO_KEY"),
+}
+
+# Shared cache, one slot per source — a forecast doesn't need to be
+# per-visitor fresh, and every provider here has a free-tier call cap, so
+# every dashboard viewer within this window gets the same cached response
+# instead of triggering their own upstream call.
+WEATHER_CACHE_TTL = 600  # 10 minutes
+_weather_lock  = threading.Lock()
+_weather_cache = {}  # source -> {"ts": monotonic, "result": dict}
 
 # Path to push_data.sh so a manual poll can publish immediately instead of
 # waiting for the next 5-minute cron tick.
@@ -119,7 +148,19 @@ def api_poll():
         if packets and PUSH_SCRIPT.exists():
             def _publish():
                 try:
-                    subprocess.run(["bash", str(PUSH_SCRIPT)], timeout=30, check=False)
+                    result = subprocess.run(
+                        ["bash", str(PUSH_SCRIPT)],
+                        timeout=30, check=False,
+                        capture_output=True, text=True,
+                    )
+                    # check=False means a non-zero exit doesn't raise, so it
+                    # has to be checked explicitly — previously a failing
+                    # push_data.sh (bad git state, network hiccup, etc.) just
+                    # went silent since only a failure to *spawn* the process
+                    # hit the except block below.
+                    if result.returncode != 0:
+                        detail = (result.stderr or result.stdout).strip()
+                        print(f"[API] push_data.sh exited {result.returncode}: {detail}")
                 except Exception as e:
                     print(f"[API] push_data.sh failed to run: {e}")
             threading.Thread(target=_publish, daemon=True).start()
@@ -212,6 +253,88 @@ def api_available_fields():
     except Exception as e:
         print(f"[API] /api/available_fields query failed: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
+
+@app.route("/api/weather/<source>", methods=["GET"])
+def api_weather(source):
+    '''
+    Thin server-side proxy for weather sources that require an API key.
+    The dashboard's weather.js calls this instead of the third-party API
+    directly, so the key never appears in anything shipped to the browser.
+    Returns each upstream API's response basically as-is (or, for
+    OpenWeatherMap, both calls it needs bundled together) — the parsing
+    and normalizing into the dashboard's common shape stays in weather.js
+    alongside the key-less Open-Meteo/NWS adapters, so this endpoint
+    doesn't need to change every time a source's response format does.
+    '''
+    if source not in WEATHER_API_KEYS:
+        return jsonify({"error": f"unknown weather source: {source}"}), 404
+
+    key = WEATHER_API_KEYS[source]
+    if not key:
+        return jsonify({"error": f"no API key configured on the server for {source}"}), 501
+
+    now = time.monotonic()
+    with _weather_lock:
+        cached = _weather_cache.get(source)
+        if cached and now - cached["ts"] < WEATHER_CACHE_TTL:
+            return jsonify(cached["result"])
+
+    try:
+        if source == "weatherapi":
+            resp = requests.get(
+                "https://api.weatherapi.com/v1/forecast.json",
+                params={"q": f"{GARDEN_LAT},{GARDEN_LON}", "days": 3, "key": key},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        elif source == "openweathermap":
+            # Free tier only exposes "current weather" and a separate
+            # 3-hour/5-day forecast as two distinct calls — bundle both
+            # into one response so the dashboard only makes one request.
+            cur_resp = requests.get(
+                "https://api.openweathermap.org/data/2.5/weather",
+                params={"lat": GARDEN_LAT, "lon": GARDEN_LON, "units": "metric", "appid": key},
+                timeout=10,
+            )
+            fc_resp = requests.get(
+                "https://api.openweathermap.org/data/2.5/forecast",
+                params={"lat": GARDEN_LAT, "lon": GARDEN_LON, "units": "metric", "appid": key},
+                timeout=10,
+            )
+            cur_resp.raise_for_status()
+            fc_resp.raise_for_status()
+            result = {"current": cur_resp.json(), "forecast": fc_resp.json()}
+
+        elif source == "tomorrowio":
+            resp = requests.get(
+                "https://api.tomorrow.io/v4/weather/forecast",
+                params={
+                    "location": f"{GARDEN_LAT},{GARDEN_LON}",
+                    "units": "metric",
+                    "timesteps": "1h,1d",
+                    "apikey": key,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        else:
+            # Shouldn't happen — every key in WEATHER_API_KEYS is handled
+            # above — but fail loudly rather than silently if it drifts.
+            return jsonify({"error": f"source {source} has a key slot but no handler"}), 500
+
+    except requests.RequestException as e:
+        print(f"[WEATHER] {source} request failed: {e}")
+        return jsonify({"error": f"upstream request to {source} failed: {e}"}), 502
+
+    with _weather_lock:
+        _weather_cache[source] = {"ts": time.monotonic(), "result": result}
+
+    return jsonify(result)
+
 
 # ── Gated endpoints (Cloudflare Access enforces login before these are hit) ──
 
