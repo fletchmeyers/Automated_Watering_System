@@ -5,7 +5,7 @@
 // SENSOR_COUNT gets computed. Add new sensors from board_config_feather_m0.h
 // as additional rows.
 
-Adafruit_seesaw   soil_seesaw;
+Adafruit_seesaw soil_0, soil_1, soil_2;
 Adafruit_MAX17048 max17;
 Adafruit_LTR390   ltr;
 Adafruit_SHT4x    sht40;
@@ -13,19 +13,21 @@ Adafruit_SGP40    sgp40;
 Adafruit_INA238 ina_0, ina_1, ina_2, ina_3;
 
 SensorEntry SENSOR_LIST[] = {
-  { "vbat", vbat_init,  vbat_read,  false },
-  { "soil", soil_init,  soil_read,  false },
-  { "batt", max17_init, max17_read, false },
-  { "uv",   ltr_init,   ltr_read,   false },
-  { "sht",  sht40_init, sht40_read, false },
-  { "voc",  sgp40_init, sgp40_read, false },
-  { "pw0",  ina_0_init, ina_0_read, false },
-  { "pw1",  ina_1_init, ina_1_read, false },
-  { "pw2",  ina_2_init, ina_2_read, false },
-  { "pw3",  ina_3_init, ina_3_read, false },
+  { "vbat", vbat_init,   vbat_read,   false },
+  { "s0",   soil_0_init, soil_0_read, false },
+  { "s1",   soil_1_init, soil_1_read, false },
+  { "s2",   soil_2_init, soil_2_read, false },
+  { "batt", max17_init,  max17_read,  false },
+  { "uv",   ltr_init,    ltr_read,    false },
+  { "sht",  sht40_init,  sht40_read,  false },
+  { "voc",  sgp40_init,  sgp40_read,  false },
+  { "pw0",  ina_0_init,  ina_0_read,  false },
+  { "pw1",  ina_1_init,  ina_1_read,  false },
+  { "pw2",  ina_2_init,  ina_2_read,  false },
+  { "pw3",  ina_3_init,  ina_3_read,  false },
 };
 const size_t SENSOR_COUNT = sizeof(SENSOR_LIST) / sizeof(SENSOR_LIST[0]);
-StaticJsonDocument<64> latest_readings[MAX_SENSORS];
+JsonDocument latest_readings[MAX_SENSORS];
 const char *latest_tags[MAX_SENSORS];
 size_t latest_count = 0;
 
@@ -58,7 +60,7 @@ void send_latest(PacketSender &sender, const char *timestamp) {
     return;
   }
 
-  StaticJsonDocument<64> ts_doc;
+  JsonDocument ts_doc;
   ts_doc["v"] = timestamp;
   sender.send(ts_doc, "ts");
   delay(100);
@@ -74,7 +76,6 @@ void send_latest(PacketSender &sender, const char *timestamp) {
 }
 
 // ── Command receive/dispatch ─────────────────────────────────────────────
-
 bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
   if (!radio.waitAvailableTimeout(timeout_ms)) {
     return false;
@@ -85,20 +86,6 @@ bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
   if (!radio.recv(buf, &len)) {
     return false;
   }
-
-  // Debug: show exactly what passed the radio's CRC check, before any JSON
-  // parsing. Temporary — remove once we've confirmed what's arriving.
-  Serial.print(F("[RX] "));
-  Serial.print(len);
-  Serial.print(F(" bytes, RSSI="));
-  Serial.print(radio.lastRssi());
-  Serial.print(F(": "));
-  for (uint8_t i = 0; i < len; i++) {
-    if (buf[i] < 0x10) Serial.print('0');
-    Serial.print(buf[i], HEX);
-    Serial.print(' ');
-  }
-  Serial.println();
 
   DeserializationError err = deserializeJson(out, (const char *)buf, len);
   if (err) {
@@ -123,7 +110,7 @@ static void handle_poll(JsonDocument &command, PacketSender &sender) {
 }
 
 static void handle_ping(JsonDocument &command, PacketSender &sender) {
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["pq"] = command["q"];
   sender.send(doc, "pong");
 }
@@ -136,7 +123,7 @@ static long handle_set_interval(JsonDocument &command, PacketSender &sender) {
   long seconds = command["v"].as<long>();
   delay(1000);
 
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["v"] = seconds;
   sender.send(doc, "set_interval_ack");
 
@@ -150,7 +137,7 @@ static void handle_sync_stub(PacketSender &sender) {
   // No SD card on this node yet — reply immediately so the Pi's
   // CommandManager doesn't sit waiting the full timeout for a node that
   // can't do bulk sync. Swap this out once SD support is added.
-  StaticJsonDocument<64> doc;
+  JsonDocument doc;
   doc["chunks"] = 0;
   sender.send(doc, "sync_complete");
   Serial.println(F("[SYNC] sync_request received but no SD configured — replied with 0 chunks."));

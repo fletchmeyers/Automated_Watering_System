@@ -55,7 +55,7 @@ class PacketSender {
 
     void send_batch_end(uint8_t expected, uint8_t sent,
                          int chunk = -1, int total = -1) {
-      StaticJsonDocument<128> doc;
+      JsonDocument doc;
       doc["exp"] = expected;
       doc["snt"] = sent;
       if (chunk >= 0) doc["chk"] = chunk;
@@ -74,7 +74,7 @@ class PacketSender {
 // Equivalent of latest_reading / store_latest_reading() on the Pico —
 // overwritten each sense cycle, sent back in response to a poll.
 #define MAX_SENSORS 12
-extern StaticJsonDocument<64> latest_readings[MAX_SENSORS];
+extern JsonDocument latest_readings[MAX_SENSORS];
 extern const char *latest_tags[MAX_SENSORS];
 extern size_t latest_count;
 

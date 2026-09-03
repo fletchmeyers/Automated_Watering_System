@@ -62,7 +62,7 @@ void loop() {
   }
 
   // ── Radio listen (short timeout so the sense loop stays on schedule) ──
-  StaticJsonDocument<256> command;
+  JsonDocument command;
   if (check_for_command(rf69, 100, command)) {
     long new_interval_ms = dispatch_command(command, sender, rf69, NODE_ID);
     if (new_interval_ms > 0) {
