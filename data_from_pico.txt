@@ -1,11 +1,3 @@
-{"m": 377, "tmp": 26.35, "t": "s0", "ts": "unknown"}
-{"m": 934, "tmp": 26.98, "t": "s2", "ts": "unknown"}
-{"tmp": 31.0, "t": "rt", "ts": "unknown"}
-{"tmp": 25.34, "t": "sht", "ts": "unknown", "rh": 80.1}
-{"t": "voc", "ts": "unknown", "voc": 33427}
-{"m": 377, "tmp": 26.05, "t": "s0", "ts": "unknown"}
-{"m": 934, "tmp": 27.08, "t": "s2", "ts": "unknown"}
-{"tmp": 31.0, "t": "rt", "ts": "unknown"}
 {"tmp": 25.33, "t": "sht", "ts": "unknown", "rh": 80.1}
 {"t": "voc", "ts": "unknown", "voc": 33444}
 {"m": 377, "tmp": 26.25, "t": "s0", "ts": "unknown"}
@@ -1998,3 +1990,11 @@
 {"n": 1, "tmp": 37.74, "q": 67971, "m": 392, "t": "s0", "ts": "unknown"}
 {"n": 1, "tmp": 38.7, "q": 67972, "m": 1013, "t": "s2", "ts": "unknown"}
 {"mw": 134.3, "n": 1, "q": 67973, "ma": 26.2, "v": 13.709, "t": "pw0", "ts": "unknown"}
+{"v": 4.299023628, "t": "vbat", "q": 181, "n": 2, "ts": "unknown"}
+{"m": 365, "tmp": 27.12472534, "t": "soil", "q": 182, "ts": "unknown"}
+{"v": 4.29257822, "t": "vbat", "q": 185, "n": 2, "ts": "unknown"}
+{"m": 365, "tmp": 27.12472534, "t": "soil", "q": 186, "ts": "unknown"}
+{"v": 4.299023628, "t": "vbat", "q": 189, "n": 2, "ts": "unknown"}
+{"m": 366, "tmp": 27.02513123, "t": "soil", "q": 190, "ts": "unknown"}
+{"v": 4.299023628, "t": "vbat", "q": 193, "n": 2, "ts": "unknown"}
+{"m": 367, "tmp": 27.23052979, "t": "soil", "q": 194, "ts": "unknown"}
