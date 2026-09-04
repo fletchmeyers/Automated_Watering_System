@@ -20,7 +20,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <RH_RF69.h>
-#include "board_config_feather_m0.h"
+#include "board_config.h" 
 
 // The sensor list itself is board-specific data, defined in the .cpp file
 // alongside SENSOR_COUNT so dispatch/sense code here can stay generic.

@@ -92,6 +92,7 @@
                 "ARDUINO_SAMD_FEATHER_M0",
                 "ARM_MATH_CM0PLUS",
                 "__SAMD21G18A__",
+                "BOARD_FEATHER_M0",
                 "ARDUINO=10805",
                 "F_CPU=48000000L",
                 "USBCON",

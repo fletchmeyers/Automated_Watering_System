@@ -13,7 +13,7 @@
 #include <SPI.h>
 #include <RH_RF69.h>
 #include <ArduinoJson.h>
-#include "board_config_feather_m0.h"
+#include "board_config.h"
 #include "packet_protocol.h"
 
 RH_RF69 rf69(RFM69_CS, RFM69_INT);
