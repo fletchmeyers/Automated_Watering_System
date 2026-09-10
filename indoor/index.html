@@ -21,11 +21,14 @@
       <button id="unit-f-btn" class="unit-btn" onclick="setUnitPref('F')" type="button">°F</button>
     </div>
     <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
+    <select id="ping-node-select">
+      <option value="1">Garden (Pico)</option>
+      <option value="2">Indoor (Feather M0)</option>
+    </select>
     <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
     <span id="ping-result"></span>
   </div>
 </header>
-
 <div class="grid" id="grid">
 
   <!-- Battery -->

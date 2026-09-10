@@ -43,7 +43,7 @@ while True:
         new_interval = dispatch_command(
             command, sender, rfm69, rtc,
             get_timestamp, send_latest, send_bulk_sync,
+            NODE_ID,
         )
         if new_interval is not None:
             SENSE_INTERVAL = new_interval
-

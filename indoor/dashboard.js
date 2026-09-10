@@ -638,6 +638,8 @@ async function triggerRefresh() {
 async function runPingTest() {
   const btn = document.getElementById('ping-btn');
   const resultEl = document.getElementById('ping-result');
+  const nodeSelect = document.getElementById('ping-node-select');
+  const nodeId = nodeSelect ? parseInt(nodeSelect.value, 10) : 1;
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⇄ pinging...';
@@ -653,9 +655,6 @@ async function runPingTest() {
 
   let progressTimer = null;
   try {
-    // Poll progress every 300ms while the test runs in the background on
-    // the Pi, so a slow/flaky connection shows "x/y pong..." live instead
-    // of a blank button for the whole test.
     progressTimer = setInterval(async () => {
       try {
         const pResp = await fetch(`${API_BASE}/api/ping_progress`);
@@ -669,7 +668,11 @@ async function runPingTest() {
       }
     }, 300);
 
-    const resp = await fetch(`${API_BASE}/api/ping_test`, { method: 'POST' });
+    const resp = await fetch(`${API_BASE}/api/ping_test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: nodeId }),
+    });
     const data = await resp.json();
     clearInterval(progressTimer);
 
@@ -697,7 +700,6 @@ async function runPingTest() {
   btn.textContent = original;
   btn.disabled = false;
 }
-
 // ── Live card customization (hide/show + reorder) ──────────────────────────
 // Real deployed site, not an Artifact, so localStorage is fair game here —
 // persists per-browser across visits. Always on — no separate "customize

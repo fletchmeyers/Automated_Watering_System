@@ -96,13 +96,25 @@ def handle_set_interval(command, sender):
     return v
 
 
-def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_bulk_sync_fn):
+def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_bulk_sync_fn, node_id):
     '''
     Central dispatcher — call this from code.py whenever check_for_command()
     returns a packet. Routes to the appropriate handler based on packet type.
     Returns the new SENSE_INTERVAL if set_interval was received, else None.
+
+    node_id is this node's own NODE_ID. Every command the Pi sends is
+    addressed via an "n" field — with more than one radio node listening on
+    the same frequency/encryption key (e.g. once an Arduino node joins),
+    every node hears every command, so a command not addressed to this node
+    is silently ignored here rather than acted on. Commands missing "n"
+    entirely are still accepted, for backward compatibility with any
+    hand-crafted single-node testing.
     '''
     if command is None:
+        return None
+
+    target = command.get("n")
+    if target is not None and target != node_id:
         return None
 
     t = command.get("t")

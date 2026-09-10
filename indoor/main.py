@@ -24,7 +24,7 @@ import db
 # ── Config ────────────────────────────────────────────────────────────────────
 NODE_IDS      = [1]    # add node IDs here as you expand the network
 POLL_INTERVAL = 60     # seconds between polls per node
-SYNC_INTERVAL = 3600   # seconds between automatic bulk SD syncs per node (0 = disabled)
+SYNC_INTERVAL = 0   # seconds between automatic bulk SD syncs per node (0 = disabled)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 stale = Path(COMMAND_FILE)
