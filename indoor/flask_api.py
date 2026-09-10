@@ -103,7 +103,7 @@ _health_lock = threading.Lock()
 _last_health = {"ts": 0.0, "result": None}
 
 _ping_lock = threading.Lock()
-_last_ping = {"ts": 0.0, "result": None}
+_last_ping = {}
 
 
 # ── Public, cooldown-limited endpoints ───────────────────────────────────────
