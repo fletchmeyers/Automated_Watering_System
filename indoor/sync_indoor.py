@@ -190,13 +190,7 @@ def wait_for_interval_ack(timeout=WAIT_TIMEOUT):
     return False
 
 
-def wait_for_ping_result(timeout=20):
-    '''
-    Block until PING_RESULT_FILE appears, then return its parsed contents.
-    Poll frequently (0.2s) since the whole test is expected to finish in a
-    few seconds — this shouldn't feel like the longer 1s-interval waits used
-    for polls/syncs.
-    '''
+def wait_for_ping_result(node_id=None, timeout=WAIT_TIMEOUT):
     print(f"[PING] Waiting up to {timeout}s for ping test result...")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -204,13 +198,16 @@ def wait_for_ping_result(timeout=20):
         if Path(PING_RESULT_FILE).exists():
             try:
                 result = json.loads(Path(PING_RESULT_FILE).read_text())
+                if node_id is not None and result.get("node_id") != node_id:
+                    # Leftover result from an earlier, already-abandoned
+                    # request for a different node — not ours, keep waiting.
+                    continue
                 print("[PING] Result received.")
                 return result
             except Exception:
                 continue
     print("[PING] Timed out waiting for ping test result.")
     return None
-
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────
 
