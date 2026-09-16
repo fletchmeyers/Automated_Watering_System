@@ -198,7 +198,7 @@ def api_ping_test():
             }), 429
 
         request_ping_test(node_id=node_id, count=10)
-        result = wait_for_ping_result(timeout=20)
+        result = wait_for_ping_result(node_id=node_id, timeout=70)
 
         response = {"status": "timeout"} if result is None else {"status": "ok", **result}
 

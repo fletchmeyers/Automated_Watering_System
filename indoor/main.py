@@ -91,15 +91,13 @@ while True:
         try:
             result = run_ping_test(rfm69, node_id=node_id, count=count)
         except Exception as e:
-            # A radio-level failure here must not take down the whole loop —
-            # log it, write an all-miss result so Flask doesn't just time out
-            # not knowing why, and let the loop continue normally.
             print(f"[PING] Test failed with exception: {e}")
             blink_led(RLED, times=3)
             result = {
                 "count": count, "hits": 0, "misses": count,
                 "avg_rtt_ms": None, "results": [], "error": str(e),
             }
+        result["node_id"] = node_id   # ← new — so a stale/leftover result can be identified
         Path(PING_RESULT_FILE).write_text(json.dumps(result))
         ping_req.unlink(missing_ok=True)
 
