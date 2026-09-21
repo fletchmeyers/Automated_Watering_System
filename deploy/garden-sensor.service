@@ -1,0 +1,14 @@
+[Unit]
+Description=Garden Sensor Main Loop
+After=network.target
+
+[Service]
+Type=simple
+User=<username>
+WorkingDirectory=/home/<username>/Automated_Watering_System/indoor
+ExecStart=/home/<username>/env/bin/python3 /home/<username>/Automated_Watering_System/indoor/main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
