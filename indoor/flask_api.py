@@ -103,7 +103,7 @@ _health_lock = threading.Lock()
 _last_health = {"ts": 0.0, "result": None}
 
 _ping_lock = threading.Lock()
-_last_ping = {"ts": 0.0, "result": None}
+_last_ping = {}
 
 
 # ── Public, cooldown-limited endpoints ───────────────────────────────────────
@@ -183,26 +183,27 @@ def api_ping_progress():
 
 @app.route("/api/ping_test", methods=["POST"])
 def api_ping_test():
+    body = request.get_json(silent=True) or {}
+    node_id = body.get("node_id", 1)
+
     now = time.monotonic()
     with _ping_lock:
-        elapsed = now - _last_ping["ts"]
-        if _last_ping["result"] is not None and elapsed < PING_COOLDOWN:
+        state = _last_ping.setdefault(node_id, {"ts": 0.0, "result": None})
+        elapsed = now - state["ts"]
+        if state["result"] is not None and elapsed < PING_COOLDOWN:
             return jsonify({
                 "status": "cooldown",
                 "retry_after": round(PING_COOLDOWN - elapsed, 1),
-                "last_result": _last_ping["result"],
+                "last_result": state["result"],
             }), 429
 
-        request_ping_test(count=10)
-        result = wait_for_ping_result(timeout=20)
+        request_ping_test(node_id=node_id, count=10)
+        result = wait_for_ping_result(node_id=node_id, timeout=70)
 
-        if result is None:
-            response = {"status": "timeout"}
-        else:
-            response = {"status": "ok", **result}
+        response = {"status": "timeout"} if result is None else {"status": "ok", **result}
 
-        _last_ping["ts"]     = time.monotonic()
-        _last_ping["result"] = response
+        state["ts"]     = time.monotonic()
+        state["result"] = response
 
     return jsonify(response)
 
