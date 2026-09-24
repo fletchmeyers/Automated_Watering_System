@@ -74,6 +74,9 @@ class PacketSender {
 // Equivalent of latest_reading / store_latest_reading() on the Pico —
 // overwritten each sense cycle, sent back in response to a poll.
 #define MAX_SENSORS 12
+
+// Pause before replying to any command — see dispatch_command().
+#define REPLY_DELAY_MS 50
 extern JsonDocument latest_readings[MAX_SENSORS];
 extern const char *latest_tags[MAX_SENSORS];
 extern size_t latest_count;
