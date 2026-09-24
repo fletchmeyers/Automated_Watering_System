@@ -156,7 +156,7 @@ class CommandManager:
         self._last_sent  = 0
 
 
-def run_ping_test(radio, node_id=1, count=10, timeout=0.3):
+def run_ping_test(radio, node_id=1, count=10, timeout=1.5):
     '''
     Fire `count` bare ping packets at the Pico back-to-back, each waiting up
     to `timeout` seconds for a matching pong, and return hit/miss + round-trip
