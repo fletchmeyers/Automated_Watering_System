@@ -157,6 +157,13 @@ long dispatch_command(JsonDocument &command, PacketSender &sender,
 
   const char *t = command["t"] | "";
 
+  // Give the Pi time to switch its radio from TX back to RX before we
+  // answer. Compiled C++ replies within ~1ms — faster than the Pi's Python
+  // loop gets back into receive() — so without this the first reply packet
+  // (the poll's "ts" header, or a pong) is always lost. The CircuitPython
+  // Pico never hit this because it's naturally slow enough to reply.
+  delay(REPLY_DELAY_MS);
+
   if (strcmp(t, "poll") == 0) {
     handle_poll(command, sender);
   } else if (strcmp(t, "ping") == 0) {
