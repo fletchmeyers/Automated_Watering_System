@@ -64,14 +64,13 @@ def handle_poll(command, sender, get_timestamp_fn, send_latest_fn):
     print(f"[POLL] Latest reading sent (ts={timestamp}).")
 
 
-def handle_bulk_sync(sender, radio, send_bulk_sync_fn):
+def handle_sync(command, sender, send_sync_chunk_fn):
     '''
-    Respond to a "sync_request" from the Pi.
-    Delegates to send_bulk_sync() in communication_garden.py which handles
-    the file rename, chunked transfer, per-chunk acks, and cleanup.
+    Respond to a "sync" request from the Pi with one chunk of SD data.
+    Delegates to send_sync_chunk() in communication_garden.py, which handles
+    the file rotation, cursor, and chunk transfer.
     '''
-    print("[SYNC] Bulk sync requested.")
-    send_bulk_sync_fn(sender, radio)
+    send_sync_chunk_fn(sender, command)
 
 
 def handle_ping(command, sender):
@@ -96,7 +95,7 @@ def handle_set_interval(command, sender):
     return v
 
 
-def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_bulk_sync_fn, node_id):
+def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_sync_chunk_fn, node_id):
     '''
     Central dispatcher — call this from code.py whenever check_for_command()
     returns a packet. Routes to the appropriate handler based on packet type.
@@ -125,8 +124,8 @@ def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_
     elif t == "ping":
         handle_ping(command, sender)
 
-    elif t == "sync_request":
-        handle_bulk_sync(sender, radio, send_bulk_sync_fn)
+    elif t == "sync":
+        handle_sync(command, sender, send_sync_chunk_fn)
 
     elif t == "set_interval":
         return handle_set_interval(command, sender)

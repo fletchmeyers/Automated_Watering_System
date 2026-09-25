@@ -2,7 +2,7 @@
 CircuitPython 10.0.3 running on Pico 2W RP2350
 
 Package sensor data and prepare it for radio and SD write.
-Provides send_latest() for poll responses and send_bulk_sync() for full SD transfers.
+Provides send_latest() for poll responses and send_sync_chunk() for Pi-driven SD sync.
 
 Written by Fletcher Meyers
 March 2026
@@ -31,7 +31,12 @@ except ImportError:
 
 SD_DATA_FILE    = "/sd/data.txt"
 SD_SENDING_FILE = "/sd/sending.txt"
-CHUNK_ACK_WAIT  = 5   # seconds to wait for a per-chunk ack before giving up
+SD_CURSOR_FILE  = "/sd/sync_cursor.txt"   # "<generation> <byte offset>" the Pi has confirmed
+
+RADIO_MAX_BYTES     = 60   # RFM69 payload limit with encryption on
+FRAGMENT_BODY_BYTES = 45   # leaves 15 bytes for the "~n.msg.i.k|" fragment header
+FRAGMENT_GAP        = 0.1  # seconds between fragments, same spacing as normal packets
+SYNC_LINE_GAP       = 0.1  # seconds between lines during a sync chunk
 
 
 # ---------------------------------------------------------------------------
@@ -48,10 +53,13 @@ CHUNK_ACK_WAIT  = 5   # seconds to wait for a per-chunk ack before giving up
 # lux      = lux
 # ma       = current (mA)
 # mw       = power (mW)
-# expected = number of sensors expected in batch
-# sent     = number of sensor packets actually sent
-# chunk    = chunk index (1-based) used during bulk sync
-# total    = total chunks in a bulk sync transfer
+# exp      = number of sensors expected in batch
+# snt      = number of sensor packets actually sent
+# g        = sync file generation (increments each time data.txt is rotated)
+# o        = sync byte offset into sending.txt
+# c        = lines sent in a sync chunk
+# m        = 1 if more sync data is waiting
+# k        = max lines requested per sync chunk
 # n        = node ID
 # q        = sequence number
 # ts       = ISO timestamp
@@ -69,6 +77,7 @@ class PacketSender:
         self.node_id = node_id
         self.radio = radio
         self.sequence = 0
+        self.fragment_id = 0
 
     def send(self, packet_dict):
         ordered = {"t": packet_dict["t"], "q": self.sequence, "n": self.node_id}
@@ -78,34 +87,37 @@ class PacketSender:
         self.sequence += 1
 
         packet_string = json.dumps(ordered, separators=(",", ":"))
-        try:
-            self.radio.send(packet_string.encode("utf-8"))
-        except AssertionError:
-            size = len(packet_string)
-            print(f"[ERROR] Packet too large: {size} bytes — {packet_string}")
-            # Notify the Pi with a compact error packet so it knows a reading was lost
-            err = json.dumps(
-                {"t": "err", "q": self.sequence - 1, "n": self.node_id, "sz": size},
-                separators=(",", ":")
-            )
-            try:
-                self.radio.send(err.encode("utf-8"))
-            except Exception as e:
-                print(f"[ERROR] Could not send error notification: {e}")
+        self.send_raw(packet_string.encode("utf-8"))
 
-    def send_batch_end(self, expected, sent, chunk=None, total=None):
+    def send_raw(self, data):
         '''
-        Send a batch_end packet.
-        chunk and total are included during bulk sync so the Pi can track progress
-        and send a matching per-chunk ack.
+        Send already-encoded bytes, splitting into fragments if they don't
+        fit in one radio packet. Each fragment is prefixed with a short
+        plain-text header "~<node>.<msg>.<i>.<k>|" (fragment i of k of message
+        msg) that the Pi's FragmentReassembler stitches back together. Plain
+        text rather than a JSON wrapper, since embedding JSON inside a JSON
+        string would escape every quote and nearly double the size.
         '''
-        # "exp"/"snt"/"chk"/"tot" instead of full words to stay under 60-byte radio limit
-        pkt = {"t": "batch_end", "exp": expected, "snt": sent}
-        if chunk is not None:
-            pkt["chk"] = chunk
-        if total is not None:
-            pkt["tot"] = total
-        self.send(pkt)
+        try:
+            if len(data) <= RADIO_MAX_BYTES:
+                self.radio.send(data)
+                return
+
+            parts = [data[i:i + FRAGMENT_BODY_BYTES]
+                     for i in range(0, len(data), FRAGMENT_BODY_BYTES)]
+            msg_id = self.fragment_id
+            self.fragment_id = (self.fragment_id + 1) % 1000
+            for i, part in enumerate(parts):
+                header = f"~{self.node_id}.{msg_id}.{i}.{len(parts)}|".encode("utf-8")
+                self.radio.send(header + part)
+                if i < len(parts) - 1:
+                    time.sleep(FRAGMENT_GAP)
+        except Exception as e:
+            print(f"[ERROR] Radio send failed ({len(data)} bytes): {e}")
+
+    def send_batch_end(self, expected, sent):
+        '''Send a batch_end packet closing out a poll response.'''
+        self.send({"t": "batch_end", "exp": expected, "snt": sent})
 
 
 def store_latest_reading(packets):
@@ -157,144 +169,110 @@ def append_to_sd(packets, timestamp):
         print(f"[SD] Write failed: {e}")
 
 
-def _count_lines(filepath):
-    '''Count lines in a file without loading it all into memory.'''
-    count = 0
+def _file_size(path):
+    '''Size in bytes, or None if the file doesn't exist.'''
     try:
-        with open(filepath, "r") as f:
-            for _ in f:
-                count += 1
+        import os
+        return os.stat(path)[6]
     except OSError:
-        pass
-    return count
+        return None
 
 
-def _read_chunk(filepath, start_line, chunk_size):
-    '''
-    Read up to chunk_size lines from filepath starting at start_line (0-indexed).
-    Returns a list of raw line strings (stripped).
-    CircuitPython has no seek(), so we iterate from the top each time.
-    This is O(n) but acceptable for the expected file sizes.
-
-    # TODO: if bulk sync of very large files becomes slow, consider writing
-    # a simple binary index file on the SD to allow faster seeking.
-    '''
-    lines = []
+def _read_cursor():
+    '''Return (generation, offset) the Pi last confirmed, or (0, 0) if none saved.'''
     try:
-        with open(filepath, "r") as f:
-            for i, line in enumerate(f):
-                if i < start_line:
-                    continue
-                if i >= start_line + chunk_size:
-                    break
-                line = line.strip()
-                if line:
-                    lines.append(line)
-    except OSError as e:
-        print(f"[SD] Read failed at line {start_line}: {e}")
-    return lines
+        with open(SD_CURSOR_FILE, "r") as f:
+            gen, offset = f.read().split()
+            return int(gen), int(offset)
+    except (OSError, ValueError):
+        return 0, 0
 
 
-def _wait_for_chunk_ack(radio, expected_chunk):
-    '''
-    Wait up to CHUNK_ACK_WAIT seconds for a data_ack matching expected_chunk.
-    Returns True if ack received, False on timeout.
-    '''
-    deadline = time.monotonic() + CHUNK_ACK_WAIT
-    while time.monotonic() < deadline:
-        remaining = deadline - time.monotonic()
-        packet = radio.receive(timeout=min(0.5, remaining), with_header=True)
-        if packet is None:
-            continue
-        try:
-            data = json.loads(packet[4:].decode("utf-8"))
-            if data.get("t") == "data_ack" and data.get("chk") == expected_chunk:
-                print(f"[SYNC] Chunk {expected_chunk} acked.")
-                return True
-        except Exception:
-            pass
-    print(f"[SYNC] No ack for chunk {expected_chunk} — aborting bulk sync.")
-    return False
-
-
-def send_bulk_sync(sender, radio):
-    '''
-    Rename data.txt → sending.txt so new sensor data can accumulate uninterrupted,
-    then send sending.txt to the Pi in chunk-sized bursts, one batch_end + data_ack
-    handshake per chunk. Delete sending.txt only after all chunks are acked.
-
-    Each chunk is one sense-cycle's worth of lines grouped by their ts field,
-    or LINES_PER_CHUNK lines if grouping isn't feasible — currently we use a flat
-    line count per chunk for simplicity.
-
-    # TODO: group chunks by ts so each chunk is a clean sense-cycle boundary.
-    # For now, flat line count is fine and keeps the logic simple.
-    '''
-    LINES_PER_CHUNK = 20  # tune based on packet size vs radio throughput
-
-    # Rename so new data writes to a fresh data.txt immediately
+def _write_cursor(gen, offset):
     try:
-        import os
-        os.rename(SD_DATA_FILE, SD_SENDING_FILE)
+        with open(SD_CURSOR_FILE, "w") as f:
+            f.write(f"{gen} {offset}")
     except OSError as e:
-        print(f"[SYNC] Could not rename data file: {e}")
-        return
+        print(f"[SYNC] Could not save cursor: {e}")
 
-    total_lines = _count_lines(SD_SENDING_FILE)
-    if total_lines == 0:
-        print("[SYNC] No data to send.")
+
+def send_sync_chunk(sender, command, max_lines=20):
+    '''
+    Answer one Pi "sync" request with up to max_lines lines from sending.txt,
+    followed by an "se" (sync end) packet. The Pi drives the whole transfer
+    one chunk at a time, so nothing here blocks waiting on the Pi, and the Pi
+    is free to poll other nodes in between chunks.
+
+    Request: {"t":"sync","g":<gen>,"o":<offset>,"k":<max lines>}
+      g/o are the generation and byte offset from the previous "se" — sending
+      them confirms the Pi has stored everything before o, so the cursor
+      advances. Omitting them (e.g. the Pi restarted) resumes from the saved
+      cursor instead.
+    Reply: lines..., then {"t":"se","g":<gen>,"o":<next offset>,"c":<lines>,"m":<0/1>}
+      m = 1 if more data is waiting after this chunk.
+
+    data.txt is renamed to sending.txt when a new transfer starts, so logging
+    carries on into a fresh data.txt. The generation number goes up with each
+    rename, so a late retry that still carries the previous file's offset is
+    recognised and ignored rather than applied to the new file. Reads seek
+    straight to the offset, so the chunk cost doesn't grow with file size.
+    '''
+    import os
+
+    gen, offset = _read_cursor()
+    if command.get("g") == gen and isinstance(command.get("o"), int):
+        offset = command["o"]
+        _write_cursor(gen, offset)
+    max_lines = command.get("k", max_lines)
+
+    size = _file_size(SD_SENDING_FILE)
+
+    # Previous file fully confirmed by the Pi — delete it and move on.
+    if size is not None and offset >= size:
         try:
-            import os
             os.remove(SD_SENDING_FILE)
-        except OSError:
-            pass
-        sender.send({"t": "sync_complete", "chunks": 0})
+        except OSError as e:
+            print(f"[SYNC] Could not delete sending.txt: {e}")
+        print(f"[SYNC] Generation {gen} fully synced.")
+        size = None
+
+    # Start a new generation from whatever has been logged since.
+    if size is None:
+        data_size = _file_size(SD_DATA_FILE)
+        if not data_size:
+            sender.send({"t": "se", "g": gen, "o": 0, "c": 0, "m": 0})
+            print("[SYNC] Nothing to send.")
+            return
+        try:
+            os.rename(SD_DATA_FILE, SD_SENDING_FILE)
+        except OSError as e:
+            print(f"[SYNC] Could not rename data file: {e}")
+            return
+        gen, offset, size = gen + 1, 0, data_size
+        _write_cursor(gen, offset)
+
+    sent = 0
+    try:
+        with open(SD_SENDING_FILE, "rb") as f:
+            f.seek(offset)
+            while sent < max_lines:
+                line = f.readline()
+                if not line:
+                    break
+                offset += len(line)
+                line = line.strip()
+                if not line:
+                    continue
+                sender.send_raw(line)
+                time.sleep(SYNC_LINE_GAP)
+                sent += 1
+    except OSError as e:
+        print(f"[SYNC] Read failed at offset {offset}: {e}")
         return
 
-    # Calculate total number of chunks (ceiling division)
-    total_chunks = (total_lines + LINES_PER_CHUNK - 1) // LINES_PER_CHUNK
-    print(f"[SYNC] Starting bulk sync: {total_lines} lines, {total_chunks} chunks.")
-
-    for chunk_idx in range(total_chunks):
-        chunk_num = chunk_idx + 1
-        start_line = chunk_idx * LINES_PER_CHUNK
-        lines = _read_chunk(SD_SENDING_FILE, start_line, LINES_PER_CHUNK)
-
-        if not lines:
-            print(f"[SYNC] Chunk {chunk_num}: no lines read, skipping.")
-            continue
-
-        # Send each line as a raw packet — lines are already JSON from append_to_sd
-        sent = 0
-        for line in lines:
-            try:
-                radio.send(line.encode("utf-8"))
-                time.sleep(0.1)
-                sent += 1
-            except Exception as e:
-                print(f"[SYNC] Failed to send line: {e}")
-
-        sender.send_batch_end(
-            expected=len(lines),
-            sent=sent,
-            chunk=chunk_num,
-            total=total_chunks,
-        )
-
-        if not _wait_for_chunk_ack(radio, chunk_num):
-            print(f"[SYNC] Aborting at chunk {chunk_num}/{total_chunks}.")
-            # Leave sending.txt intact — Pi can request again later
-            return
-
-    # All chunks acked — clean up
-    try:
-        import os
-        os.remove(SD_SENDING_FILE)
-        print("[SYNC] Bulk sync complete. sending.txt deleted.")
-    except OSError as e:
-        print(f"[SYNC] Could not delete sending.txt: {e}")
-
-    sender.send({"t": "sync_complete", "chunks": total_chunks})
+    more = 1 if offset < size or _file_size(SD_DATA_FILE) else 0
+    sender.send({"t": "se", "g": gen, "o": offset, "c": sent, "m": more})
+    print(f"[SYNC] Sent {sent} lines (gen {gen}, offset {offset}/{size}).")
 
 
 # ---------------------------------------------------------------------------
