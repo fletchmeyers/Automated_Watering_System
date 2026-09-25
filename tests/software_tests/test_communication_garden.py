@@ -80,8 +80,8 @@ class TestPacketSender(unittest.TestCase):
         sender.send_batch_end(expected=5, sent=4)
         sent = json.loads(sender.radio.last_sent.decode("utf-8"))
         self.assertEqual(sent["t"], "batch_end")
-        self.assertEqual(sent["expected"], 5)
-        self.assertEqual(sent["sent"], 4)
+        self.assertEqual(sent["exp"], 5)
+        self.assertEqual(sent["snt"], 4)
         self.assertIn("q", sent)
         self.assertIn("n", sent)
 

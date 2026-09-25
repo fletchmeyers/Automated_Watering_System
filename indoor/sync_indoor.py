@@ -6,7 +6,7 @@ Also provides sensor_health_report() for diagnostics.
 
 Usage (while main.py is running):
     python3 sync_indoor.py            — request a poll, wait for new data, run health report
-    python3 sync_indoor.py sync       — request a bulk SD sync, wait for completion
+    python3 sync_indoor.py sync [N]   — start an SD sync session for node N (default 1) now
     python3 sync_indoor.py health     — run health report only
     python3 sync_indoor.py interval N — set sense interval to N seconds
 
@@ -37,6 +37,10 @@ PING_RESULT_FILE   = "/tmp/pico_ping_result.json"
 # can poll this for a live "x/y pong" readout while a test is running.
 PING_PROGRESS_FILE = "/tmp/pico_ping_progress.json"
 
+# Manual "sync now" request — main.py's SyncManager picks it up and starts a
+# session right away instead of waiting for the next hour.
+SYNC_REQUEST_FILE = "/tmp/pico_sync_request.json"
+
 WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
 
@@ -62,13 +66,17 @@ def request_poll(node_id=1):
 
 def request_bulk_sync(node_id=1):
     '''
-    Write a sync_request command to the command file.
-    The Pico will rename its data.txt → sending.txt and stream the contents
-    back in chunks, waiting for a per-chunk ack before advancing.
+    Ask main.py to start an SD sync session for node_id now, rather than
+    waiting for its next hourly session. The session itself runs in main.py
+    (SyncManager in communication_indoor.py), one chunk at a time.
     '''
-    command = {"t": "sync_request", "n": node_id}
+    Path(SYNC_REQUEST_FILE).write_text(json.dumps({"n": node_id}))
+    print(f"[SYNC] Sync session requested for node {node_id}.")
+
+
+def request_sync_chunk(command):
+    '''Write one SyncManager chunk request to the command file.'''
     Path(COMMAND_FILE).write_text(json.dumps(command))
-    print(f"[SYNC] Command written: {command}")
 
 
 def request_set_interval(seconds, node_id=1):
@@ -158,22 +166,6 @@ def wait_for_new_data(timeout=WAIT_TIMEOUT):
     return False
 
 
-def wait_for_sync_complete(timeout=WAIT_TIMEOUT):
-    '''
-    Block until the command file disappears, which main.py does when it
-    receives sync_complete from the Pico. Returns True on success.
-    '''
-    print(f"[SYNC] Waiting up to {timeout}s for bulk sync to complete...")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(1)
-        if not Path(COMMAND_FILE).exists():
-            print("[SYNC] Bulk sync confirmed complete.")
-            return True
-    print("[SYNC] Timed out waiting for sync_complete.")
-    return False
-
-
 def wait_for_interval_ack(timeout=WAIT_TIMEOUT):
     '''
     Block until the command file disappears, indicating main.py received
@@ -218,7 +210,7 @@ def sensor_health_report(filepath=DATA_FILE, n=100):
 
     Returns a dict with keys: window, expected, seen, types, missing.
     '''
-    _NON_SENSOR_TYPES = {"ts", "sync_complete"}
+    _NON_SENSOR_TYPES = {"ts", "se"}
     try:
         with open(filepath, "r") as f:
             lines = f.readlines()
@@ -289,8 +281,9 @@ if __name__ == "__main__":
         sensor_health_report()
 
     elif args[0] == "sync":
-        request_bulk_sync()
-        wait_for_sync_complete()
+        node_id = int(args[1]) if len(args) > 1 else 1
+        request_bulk_sync(node_id)
+        print("[SYNC] Progress is logged by main.py — journalctl -u garden-sensor -f")
 
     elif args[0] == "health":
         sensor_health_report()
@@ -315,5 +308,5 @@ if __name__ == "__main__":
         wait_for_interval_ack()
 
     else:
-        print("Usage: python3 sync_indoor.py [poll|sync|health|ping|interval <seconds>]")
+        print("Usage: python3 sync_indoor.py [poll|sync [node]|health|ping|interval <seconds>]")
         sys.exit(1)
