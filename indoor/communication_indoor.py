@@ -1,14 +1,16 @@
 '''
 Python 3 running on Raspberry Pi 3B
 
-CommandManager: forward commands from the Pi to the Pico and verify acknowledgement.
-BatchReceiver:  collect incoming sensor packets, detect batch completion, send acks.
-PollingTimer:   decide when to poll each node on a regular schedule.
+CommandManager:      forward commands from the Pi to the Pico and verify acknowledgement.
+BatchReceiver:       collect incoming sensor packets, detect batch completion, send acks.
+PollingTimer:        decide when to poll each node on a regular schedule.
+FragmentReassembler: stitch oversized packets back together from radio fragments.
+SyncManager:         pull logged SD data from nodes, one chunk per request.
 '''
 
 import time
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE
 
@@ -25,23 +27,19 @@ def _archive_path():
 
 class PollingTimer:
     '''
-    Tracks when each node is due for a poll and when a bulk sync is due.
+    Tracks when each node is due for a poll.
 
     poll_interval  — seconds between polls per node.
-    sync_interval  — seconds between bulk SD syncs per node (0 or None = disabled).
 
     Call due_nodes() each loop iteration to get node IDs ready to be polled.
-    Call sync_due(node_id) to check whether a bulk sync should replace the next poll.
     '''
-    def __init__(self, node_ids, poll_interval=60, sync_interval=3600):
+    def __init__(self, node_ids, poll_interval=60):
         self.node_ids      = list(node_ids)
         self.poll_interval = poll_interval
-        self.sync_interval = sync_interval
         now = time.monotonic()
         # Stagger initial polls so nodes don't all fire at once on startup
         self._last_poll = {nid: now - i * (poll_interval / max(len(node_ids), 1))
                            for i, nid in enumerate(node_ids)}
-        self._last_sync = {nid: now for nid in node_ids}
 
     def due_nodes(self):
         '''Return list of node IDs whose poll timer has elapsed.'''
@@ -49,17 +47,8 @@ class PollingTimer:
         return [nid for nid in self.node_ids
                 if now - self._last_poll[nid] >= self.poll_interval]
 
-    def sync_due(self, node_id):
-        '''Return True if a bulk sync is due for this node.'''
-        if not self.sync_interval:
-            return False
-        return time.monotonic() - self._last_sync[node_id] >= self.sync_interval
-
     def mark_polled(self, node_id):
         self._last_poll[node_id] = time.monotonic()
-
-    def mark_synced(self, node_id):
-        self._last_sync[node_id] = time.monotonic()
 
 
 class CommandManager:
@@ -72,9 +61,15 @@ class CommandManager:
     indefinitely by an unresponsive node.
 
     Clears the command file only after a confirmed ack or timeout.
+
+    on_send, if given, is called with the command dict every time it goes out
+    over the radio (first send and every retry). timed_out holds the last
+    command that was given up on, until the caller clears it.
     '''
-    def __init__(self):
+    def __init__(self, on_send=None):
         self.pending     = None
+        self.timed_out   = None
+        self._on_send    = on_send
         self._last_sent  = 0
         self._first_sent = 0
 
@@ -91,6 +86,7 @@ class CommandManager:
             print(f"[CMD] Timed out after {CMD_TIMEOUT}s waiting for ack on "
                   f"{self.pending.get('t')!r} — giving up.")
             cmd_path.unlink(missing_ok=True)
+            self.timed_out   = self.pending
             self.pending     = None
             self._first_sent = 0
             self._last_sent  = 0
@@ -106,6 +102,8 @@ class CommandManager:
             time.sleep(0.5)  # let Pico finish any in-progress work before listening
             radio.send(bytes(packet, "utf-8"))
             print(f"[CMD] Sent: {packet}")
+            if self._on_send is not None:
+                self._on_send(command)
             self.pending    = command
             self._last_sent = now
             if not self._first_sent:
@@ -141,9 +139,7 @@ class CommandManager:
             self._clear_pending()
             return True
 
-        if pkt_type == "sync_complete" and pending_t == "sync_request":
-            chunks = data.get("chunks", "?")
-            print(f"[CMD] Bulk sync complete ({chunks} chunks).")
+        if pkt_type == "se" and pending_t == "sync":
             self._clear_pending()
             return True
 
@@ -241,7 +237,7 @@ class BatchReceiver:
     source of truth while the DB migration is still in progress.
     '''
 
-    _SKIP_TYPES = {"ts", "batch_end", "set_interval_ack", "sync_complete"}
+    _SKIP_TYPES = {"ts", "batch_end", "set_interval_ack", "se"}
 
     def __init__(self, data_file=DATA_FILE, db_conn=None):
         self.data_file = data_file
@@ -339,3 +335,174 @@ class BatchReceiver:
 
         self._reset()
         return written
+
+
+
+class FragmentReassembler:
+    '''
+    Rebuilds payloads a node had to split across several radio packets
+    (PacketSender.send_raw() in communication_garden.py). Each fragment
+    starts with a plain-text header "~<node>.<msg>.<i>.<k>|" — fragment i of
+    k for message msg. Messages still incomplete after max_age seconds are
+    dropped, since a lost fragment means the rest will never be usable.
+    '''
+    def __init__(self, max_age=15):
+        self.max_age = max_age
+        self._pending = {}   # (node, msg) -> {"k": total, "parts": {i: bytes}, "at": first seen}
+
+    def feed(self, payload):
+        '''Take one fragment; return the full payload once all its fragments are in, else None.'''
+        now = time.monotonic()
+        for key in [key for key, entry in self._pending.items() if now - entry["at"] > self.max_age]:
+            entry = self._pending.pop(key)
+            print(f"[FRAG] Dropped incomplete message node={key[0]} msg={key[1]} "
+                  f"({len(entry['parts'])}/{entry['k']} fragments).")
+
+        try:
+            header, body = payload[1:].split(b"|", 1)
+            node, msg, i, k = (int(x) for x in header.split(b"."))
+        except ValueError:
+            print(f"[FRAG] Bad fragment header: {payload[:16]!r}")
+            return None
+
+        entry = self._pending.setdefault((node, msg), {"k": k, "parts": {}, "at": now})
+        entry["parts"][i] = body
+        if not all(j in entry["parts"] for j in range(entry["k"])):
+            return None
+        del self._pending[(node, msg)]
+        return b"".join(entry["parts"][j] for j in range(entry["k"]))
+
+
+class SyncManager:
+    '''
+    Pulls logged SD data from nodes one chunk at a time, entirely driven from
+    the Pi (see send_sync_chunk() in communication_garden.py for the node side).
+
+    Each node gets one session per clock hour, capped at lines_per_session
+    lines, so a large backlog is worked through over many hours rather than
+    tying up the radio. main.py only asks for the next chunk when nothing
+    else is pending, so scheduled polls slot in between chunks.
+
+    A chunk's lines are buffered and only stored once its "se" (sync end)
+    packet arrives. If fewer lines arrived than the node says it sent, the
+    same chunk is requested again (up to max_retries) — the node only moves
+    its cursor forward once the next request confirms the previous offset.
+    The confirmed cursor is kept per node across sessions, so the next
+    session carries on without resending the last chunk (only a Pi restart
+    loses it, which costs at most one duplicated chunk).
+
+    Synced lines go to sensors.db and a sync archive file, never DATA_FILE —
+    that file is pushed to git every 5 minutes and isn't meant for backlog.
+    '''
+    def __init__(self, node_ids, lines_per_session=2000, chunk_lines=20,
+                 max_retries=3, db_conn=None):
+        self.node_ids          = list(node_ids)
+        self.lines_per_session = lines_per_session
+        self.chunk_lines       = chunk_lines
+        self.max_retries       = max_retries
+        self.db_conn           = db_conn
+
+        self.active   = None    # node ID with a session in progress
+        self.awaiting = False   # a chunk has been requested and its "se" hasn't arrived
+        self._last_hour     = {}      # node ID -> "YYYY-MM-DDTHH" of its last session
+        self._requested     = []      # node IDs with a manual "sync now" request
+        self._cursors       = {}      # node ID -> {"g": gen, "o": offset} last stored
+        self._buffer        = []
+        self._retries       = 0
+        self._session_lines = 0
+
+    def request_now(self, node_id):
+        '''Start a session for node_id as soon as the radio is free, regardless of the hour.'''
+        if node_id not in self._requested:
+            self._requested.append(node_id)
+
+    def next_command(self):
+        '''Return the next "sync" command to send, or None if there's nothing to do.'''
+        if self.active is None and not self._start_session():
+            return None
+        command = {"t": "sync", "n": self.active, "k": self.chunk_lines}
+        command.update(self._cursors.get(self.active, {}))
+        self.awaiting = True
+        return command
+
+    def _start_session(self):
+        hour = datetime.now().strftime("%Y-%m-%dT%H")
+        if self._requested:
+            node_id = self._requested.pop(0)
+        else:
+            due = [nid for nid in self.node_ids if self._last_hour.get(nid) != hour]
+            if not due:
+                return False
+            node_id = due[0]
+        self._last_hour[node_id] = hour
+        self.active         = node_id
+        self._buffer        = []
+        self._retries       = 0
+        self._session_lines = 0
+        print(f"[SYNC] Session started for node {node_id} (up to {self.lines_per_session} lines).")
+        return True
+
+    def on_send(self, command):
+        '''CommandManager hook: a (re)sent chunk request starts that chunk over.'''
+        if command.get("t") == "sync":
+            self._buffer = []
+
+    def collect(self, line):
+        self._buffer.append(line)
+
+    def handle_end(self, se):
+        '''Process a chunk's "se" packet: store the chunk, or re-request it if lines went missing.'''
+        if not self.awaiting:
+            return
+        self.awaiting = False
+        node_id = self.active
+        count   = se.get("c", 0)
+        got     = len(self._buffer)
+
+        if got < count and self._retries < self.max_retries:
+            self._retries += 1
+            print(f"[SYNC] Node {node_id}: got {got}/{count} lines — re-requesting chunk "
+                  f"(retry {self._retries}/{self.max_retries}).")
+            return
+        if got < count:
+            print(f"[SYNC] Node {node_id}: storing {got}/{count} lines after "
+                  f"{self.max_retries} retries — {count - got} lost.")
+
+        self._store(node_id, self._buffer)
+        self._buffer  = []
+        self._retries = 0
+        self._cursors[node_id] = {"g": se.get("g"), "o": se.get("o")}
+        self._session_lines += count
+
+        if not se.get("m") or count == 0:
+            self._end_session("caught up")
+        elif self._session_lines >= self.lines_per_session:
+            self._end_session("hourly limit reached, more waiting")
+
+    def abort(self):
+        '''The chunk request timed out — give up until the next hour.'''
+        if self.active is not None:
+            self._end_session("node stopped responding")
+
+    def _end_session(self, reason):
+        print(f"[SYNC] Session for node {self.active} ended after "
+              f"{self._session_lines} lines ({reason}).")
+        self.active   = None
+        self.awaiting = False
+        self._buffer  = []
+
+    def _store(self, node_id, lines):
+        if not lines:
+            return
+        for line in lines:
+            line.setdefault("n", node_id)
+
+        with open(ARCHIVE_DIR / f"sync_{date.today().isoformat()}.txt", "a") as f:
+            for line in lines:
+                f.write(json.dumps(line) + "\n")
+
+        if self.db_conn is not None:
+            try:
+                db.insert_batch(self.db_conn, lines)
+            except Exception as e:
+                print(f"[DB] Failed to write sync chunk to sensors.db: {e}")
