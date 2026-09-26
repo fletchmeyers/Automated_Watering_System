@@ -44,7 +44,7 @@ void setup() {
     Serial.println(F("[ERROR] setFrequency failed."));
   }
   rf69.setEncryptionKey((uint8_t *)RADIO_ENCRYPT_KEY);
-  rf69.setTxPower(13, true); // matches rfm69.tx_power = 13 on the Pico node
+  rf69.setTxPower(20, true); // RFM69HCW maximum, same as the Pi and Pico
 
   init_sensors();
 

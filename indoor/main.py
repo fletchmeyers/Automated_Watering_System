@@ -30,7 +30,7 @@ POLL_INTERVAL = 60     # seconds between polls per node
 
 SYNC_NODE_IDS       = [1]    # nodes with logged data to pull (the M0 has no storage yet)
 SYNC_LINES_PER_HOUR = 2000   # cap per hourly session — a backlog drains over several hours
-SYNC_CHUNK_LINES    = 20     # lines per chunk request; keep a chunk well under the 10s retry
+SYNC_CHUNK_LINES    = 8      # lines per chunk — small, so one lost packet costs little on a weak link
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 stale = Path(COMMAND_FILE)
@@ -184,10 +184,16 @@ while True:
         elif cmd.handle_ack(data):
             blink_led(YLED, times=2)
 
-        elif sync.awaiting and "q" not in data:
+        elif "q" not in data:
             # Logged SD lines are sent as-is — no sequence number, unlike
             # every live packet — so that's what marks them as sync data.
-            sync.collect(data)
+            # One arriving with no chunk outstanding is a late duplicate
+            # (the node answered a resend too); it must not be treated as a
+            # live reading.
+            if sync.awaiting:
+                sync.collect(data)
+            else:
+                print(f"[SYNC] Dropped late sync line: {data}")
 
         else:
             complete = batch.collect(data)
