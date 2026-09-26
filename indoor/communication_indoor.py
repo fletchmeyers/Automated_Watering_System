@@ -18,6 +18,11 @@ import db
 
 CMD_TIMEOUT =45   # seconds before giving up on an unacked command
 
+# Seconds between resends of an unacked command. A sync chunk answers within
+# ~2s, so a lost reply is retried quickly instead of costing a full 10s.
+RETRY_INTERVAL      = 10
+SYNC_RETRY_INTERVAL = 4
+
 ARCHIVE_DIR = Path(__file__).parent / "archive"
 ARCHIVE_DIR.mkdir(exist_ok=True)
 
@@ -56,7 +61,8 @@ class CommandManager:
     Reads the command file written by sync_indoor helpers, forwards the command
     to the Pico over radio, and waits for an acknowledgement packet.
 
-    Retries every 10 seconds up to CMD_TIMEOUT seconds total, then gives up
+    Retries every RETRY_INTERVAL seconds (SYNC_RETRY_INTERVAL for sync
+    chunks) up to CMD_TIMEOUT seconds total, then gives up
     and deletes the command file with a warning so the loop isn't blocked
     indefinitely by an unresponsive node.
 
@@ -93,7 +99,8 @@ class CommandManager:
             return False
 
         # Rate-limit retries
-        if now - self._last_sent < 10:
+        retry = SYNC_RETRY_INTERVAL if (self.pending or {}).get("t") == "sync" else RETRY_INTERVAL
+        if now - self._last_sent < retry:
             return False
 
         try:
