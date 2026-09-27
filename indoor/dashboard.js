@@ -11,11 +11,17 @@ const API_BASE = "https://api.fletchermeyers.com";
 // shows up, as "Node N" in one of the fallback colors. Colors stay clear of
 // the green/amber/red used for status so a node never reads as a warning.
 // Shared with analysis.js (loaded after this file, same page scope).
+//
+// `battery` says which sensor measures the node's supply, for the Nodes
+// card: a MAX17048 fuel gauge ("batt": charge % and cell voltage) unless
+// set otherwise, e.g. an INA238 power monitor ("pw0": voltage and current).
 
 const NODES = {
-  1: { name: 'Pico (CircuitPython)', short: 'Pico', color: '#79c0ff' },
+  1: { name: 'Pico (CircuitPython)', short: 'Pico', color: '#79c0ff',
+       battery: { type: 'pw0', label: 'CAR BATTERY' } },
   2: { name: 'M0 (Arduino)',         short: 'M0',   color: '#f778ba' },
 };
+const DEFAULT_BATTERY = { type: 'batt', label: 'BATTERY' };
 const NODE_FALLBACK_COLORS = ['#d2a8ff', '#ffa657', '#a5d6ff', '#7ee787'];
 
 function nodeInfo(n) {
@@ -588,6 +594,16 @@ function formatBytes(b) {
   return `${(b / 1024 ** 3).toFixed(1)} GB`;
 }
 
+// A fuel gauge reports charge % as well as voltage; a power monitor reports
+// voltage and the current flowing, which is all it can say about a battery.
+function batteryReading(p) {
+  if (!p) return '–';
+  const v = `${(p.v ?? 0).toFixed(2)} V`;
+  if (p.soc != null) return `${p.soc.toFixed(0)}% · ${v}`;
+  if (p.ma != null) return `${v} · ${p.ma.toFixed(0)} mA`;
+  return v;
+}
+
 // The "Nodes" card: per node, when it last reported, its battery, and how
 // much logged data is waiting on it for the next sync.
 function renderNodesCard(byNode) {
@@ -597,12 +613,12 @@ function renderNodesCard(byNode) {
     const info = nodeInfo(n);
     const np = byNode[n] || [];
     const lastTs = getLastTs(np);
-    const batt = getLatest(np, 'batt');
+    const battery = info.battery || DEFAULT_BATTERY;
     const store = nodeStorage[String(n)];
 
     const metrics = [
       ['LAST PACKET', lastTs ? lastTs.replace('T', ' ') : 'none in 6h'],
-      ['BATTERY', batt ? `${(batt.soc ?? 0).toFixed(0)}% · ${(batt.v ?? 0).toFixed(2)} V` : '–'],
+      [battery.label, batteryReading(getLatest(np, battery.type))],
       ['WAITING TO SYNC', store ? formatBytes(store.ub) : '–'],
       ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
     ];
