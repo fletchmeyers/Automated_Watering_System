@@ -35,11 +35,11 @@ def check_for_command(radio, timeout=0.5):
     packet = radio.receive(timeout=timeout, with_header=True)
     if packet is None:
         return None
+    payload = packet[4:]
+    if payload[:1] == b"~":
+        return None   # a fragment of another node's oversized packet — never a command
     try:
-        payload = packet[4:].decode("utf-8")
-        parsed  = json.loads(payload)
-        print("[CMD] Received:", parsed)
-        return parsed
+        return json.loads(payload.decode("utf-8"))
     except Exception as e:
         print("[CMD] Could not parse packet:", e)
         return None
@@ -95,26 +95,21 @@ def handle_set_interval(command, sender):
     return v
 
 
-def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_sync_chunk_fn, node_id):
+def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_sync_chunk_fn, node_id,
+                     send_info_fn=None):
     '''
     Central dispatcher — call this from code.py whenever check_for_command()
     returns a packet. Routes to the appropriate handler based on packet type.
     Returns the new SENSE_INTERVAL if set_interval was received, else None.
 
-    node_id is this node's own NODE_ID. Every command the Pi sends is
-    addressed via an "n" field — with more than one radio node listening on
-    the same frequency/encryption key (e.g. once an Arduino node joins),
-    every node hears every command, so a command not addressed to this node
-    is silently ignored here rather than acted on. Commands missing "n"
-    entirely are still accepted, for backward compatibility with any
-    hand-crafted single-node testing.
+    node_id is this node's own NODE_ID. Every node on this frequency/key
+    hears every packet — the Pi's commands to other nodes, other nodes'
+    replies, and their sync lines (which carry no "n" at all) — so anything
+    not addressed to this node is ignored.
     '''
-    if command is None:
+    if command is None or command.get("n") != node_id:
         return None
-
-    target = command.get("n")
-    if target is not None and target != node_id:
-        return None
+    print("[CMD] Received:", command)
 
     t = command.get("t")
 
@@ -126,6 +121,9 @@ def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_
 
     elif t == "sync":
         handle_sync(command, sender, send_sync_chunk_fn)
+
+    elif t == "info" and send_info_fn is not None:
+        send_info_fn(sender)
 
     elif t == "set_interval":
         return handle_set_interval(command, sender)

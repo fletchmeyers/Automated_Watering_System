@@ -20,6 +20,7 @@
 #include <Adafruit_SHT4x.h>
 #include <Adafruit_SGP40.h>
 #include <Adafruit_INA238.h>
+#include <RTClib.h>
 
 // ── Node identity ────────────────────────────────────────────────────────
 // Must be unique across every radio node the Pi talks to (Pico node is 1).
@@ -27,8 +28,11 @@
 
 // ── Radio ────────────────────────────────────────────────────────────────
 // Feather M0 + RFM69 FeatherWing. These match this board's actual jumper
-// wiring (FeatherWing pad -> Feather pin): CS -> D10, IRQ -> D6, RST -> D11.
-#define RFM69_CS   10
+// wiring (FeatherWing pad -> Feather pin): CS -> D9, IRQ -> D6, RST -> D11.
+// CS moved off D10 to make room for the Adalogger's SD card. D9 is also the
+// battery divider pin (A7), so the vbat reading is dropped while CS is on
+// D9 — move CS to D5 or D12 to get it back.
+#define RFM69_CS   9
 #define RFM69_INT  6
 #define RFM69_RST  11
 
@@ -44,6 +48,26 @@ static const uint8_t RADIO_ENCRYPT_KEY[16] = {
 // Seconds between sense cycles. Mirrors SENSE_INTERVAL in hardware_setup_garden.py
 // — can be overwritten at runtime by a set_interval command.
 #define DEFAULT_SENSE_INTERVAL_MS 3000
+
+// ── Reading log (see node_log.h) ─────────────────────────────────────────
+// Adalogger FeatherWing (Adafruit 2922) microSD, CS on D10. FAT16/FAT32
+// cards only. Without the SD card, LOG_FLASH_SAMD + LOG_FLASH_BYTES
+// (128UL * 1024) keeps ~2000 readings in spare internal flash instead.
+#define LOG_BACKEND      LOG_SD
+#define SD_CS            10
+#ifndef LOG_INTERVAL_MS                      // overridable with -D for quick bench tests
+  #define LOG_INTERVAL_MS (5UL * 60 * 1000)  // one logged snapshot every 5 minutes
+#endif
+
+// ── Clock ────────────────────────────────────────────────────────────────
+// The SAMD21's built-in RTC, running from the Feather's 32 kHz crystal,
+// keeps time in standby sleep where millis() stops. The Adalogger's PCF8523
+// (I2C 0x68, coin-cell backed) carries the time across resets.
+#include <RTCZero.h>
+#define BOARD_HAS_RTC
+extern RTCZero rtc;
+#define BOARD_HAS_PCF8523
+extern RTC_PCF8523 ext_rtc;
 
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Each sensor is an {init_fn, read_fn, ok} entry. init_fn runs once in
@@ -64,7 +88,7 @@ extern Adafruit_SHT4x    sht40;
 extern Adafruit_SGP40    sgp40;
 extern Adafruit_INA238   ina_0, ina_1, ina_2, ina_3;
 
-#define VBAT_PIN A7
+#define VBAT_PIN 9   // A7 — a plain number so #if can compare it with RFM69_CS
 
 struct SensorEntry {
   const char *tag;                  // packet "t" value, e.g. "vbat"
