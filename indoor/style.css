@@ -84,6 +84,8 @@
   }
 
   .status-dot {
+    display: inline-block;
+    flex-shrink: 0;
     width: 8px; height: 8px;
     border-radius: 50%;
     background: var(--green);
@@ -98,10 +100,105 @@
     50% { opacity: 0.4; }
   }
 
-  #last-update {
+  /* ── Per-node identity ──────────────────────────────────────────────────
+     Every node-specific element sets --node-color (from NODES in
+     dashboard.js) and these rules tint it. */
+
+  .node-status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .node-status-loading,
+  .node-status-error {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--muted);
+  }
+  .node-status-error { color: var(--red); }
+
+  .node-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: color-mix(in srgb, var(--node-color) 10%, var(--bg2));
+    border: 1px solid color-mix(in srgb, var(--node-color) 45%, var(--border));
+    border-radius: 999px;
+    padding: 3px 10px;
+    white-space: nowrap;
+  }
+  .node-chip-name { color: var(--node-color); }
+
+  .node-card {
+    background: color-mix(in srgb, var(--node-color) 7%, var(--bg2));
+    border-color: color-mix(in srgb, var(--node-color) 35%, var(--border));
+  }
+  .node-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--node-color);
+  }
+
+  .card-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .node-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--node-color);
+  }
+
+  /* Nodes card: one row per node */
+  .node-row {
+    border-left: 3px solid var(--node-color);
+    padding: 2px 0 2px 12px;
+    margin-bottom: 16px;
+  }
+  .node-row:last-child { margin-bottom: 0; }
+
+  .node-row-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .node-row-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--node-color);
+  }
+  .node-row-ago {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .node-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px 16px;
+  }
+  .node-metric-value {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text);
+    margin-top: 3px;
+  }
+  .node-row-note {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 8px;
   }
 
   .unit-toggle {
@@ -736,6 +833,25 @@
   .field-chip.checked {
     color: var(--text);
     border-color: var(--field-color, var(--teal));
+  }
+
+  /* Analysis field picker: one row of checkboxes per node */
+  .field-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border-left: 3px solid var(--node-color);
+    background: color-mix(in srgb, var(--node-color) 6%, transparent);
+    border-radius: 0 8px 8px 0;
+  }
+  .field-group-name {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--node-color);
+    min-width: 120px;
   }
 
   .field-chip .swatch {
