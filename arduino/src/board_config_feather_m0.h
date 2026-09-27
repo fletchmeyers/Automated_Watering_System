@@ -45,6 +45,23 @@ static const uint8_t RADIO_ENCRYPT_KEY[16] = {
 // — can be overwritten at runtime by a set_interval command.
 #define DEFAULT_SENSE_INTERVAL_MS 3000
 
+// ── Reading log (see flash_log.h) ────────────────────────────────────────
+// The top of the M0's 256 KB flash holds a log the Pi pulls with "sync".
+// 128 KB = ~2000 records, one per sensor reading. Set LOG_BACKEND to
+// LOG_NONE on a board with no room to spare.
+#define LOG_BACKEND      LOG_FLASH_SAMD
+#define LOG_FLASH_BYTES  (128UL * 1024)
+#ifndef LOG_INTERVAL_MS                      // overridable with -D for quick bench tests
+  #define LOG_INTERVAL_MS (5UL * 60 * 1000)  // one logged snapshot every 5 minutes
+#endif
+
+// ── Clock ────────────────────────────────────────────────────────────────
+// The SAMD21's built-in RTC, running from the Feather's 32 kHz crystal. It
+// keeps time in standby sleep, where millis() stops.
+#include <RTCZero.h>
+#define BOARD_HAS_RTC
+extern RTCZero rtc;
+
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Each sensor is an {init_fn, read_fn, ok} entry. init_fn runs once in
 // setup() and sets `ok`; read_fn is only called if `ok` is true. This is

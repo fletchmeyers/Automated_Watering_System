@@ -13,7 +13,7 @@ import time
 from hardware_setup_garden import SENSE_INTERVAL, LOG_INTERVAL, get_timestamp, NODE_ID, rfm69, rtc
 from communication_garden import (
     SENSORS, PacketSender, store_latest_reading,
-    append_to_sd, send_latest, send_sync_chunk,
+    append_to_sd, send_latest, send_sync_chunk, send_storage_info,
 )
 from sync_garden import check_for_command, dispatch_command
 
@@ -50,7 +50,7 @@ while True:
         new_interval = dispatch_command(
             command, sender, rfm69, rtc,
             get_timestamp, send_latest, send_sync_chunk,
-            NODE_ID,
+            NODE_ID, send_storage_info,
         )
         if new_interval is not None:
             SENSE_INTERVAL = new_interval

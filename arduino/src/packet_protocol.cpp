@@ -11,6 +11,9 @@ Adafruit_LTR390   ltr;
 Adafruit_SHT4x    sht40;
 Adafruit_SGP40    sgp40;
 Adafruit_INA238 ina_0, ina_1, ina_2, ina_3;
+#ifdef BOARD_HAS_RTC
+RTCZero rtc;
+#endif
 
 SensorEntry SENSOR_LIST[] = {
   { "vbat", vbat_init,   vbat_read,   false },
@@ -75,6 +78,118 @@ void send_latest(PacketSender &sender, const char *timestamp) {
   sender.send_batch_end(latest_count, sent);
 }
 
+// ── Clock ────────────────────────────────────────────────────────────────
+// Set from the "ts" in every poll. Times are the Pi's local wall-clock time
+// counted as seconds since 1970, and only ever turned back into the same
+// "YYYY-MM-DDTHH:MM:SS" form — no time zones involved. Boards without an
+// RTC fall back to millis(), which is fine while the node never sleeps.
+
+static bool     have_time = false;
+#ifndef BOARD_HAS_RTC
+static uint32_t base_epoch = 0, base_ms = 0;
+#endif
+
+// Days since 1970-01-01 for a civil date, and back (Howard Hinnant's algorithms).
+static int32_t days_from_civil(int y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  const int era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned mm = m > 2 ? m - 3 : m + 9;
+  const unsigned doy = (153 * mm + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t)doe - 719468;
+}
+
+static void civil_from_days(int32_t z, int *y, unsigned *m, unsigned *d) {
+  z += 719468;
+  const int era = (z >= 0 ? z : z - 146096) / 146097;
+  const unsigned doe = (unsigned)(z - era * 146097);
+  const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const unsigned mp = (5 * doy + 2) / 153;
+  *d = doy - (153 * mp + 2) / 5 + 1;
+  *m = mp < 10 ? mp + 3 : mp - 9;
+  *y = (int)yoe + era * 400 + (*m <= 2);
+}
+
+static bool parse_iso(const char *ts, uint32_t *epoch) {
+  int y, mo, d, h, mi, s;
+  if (!ts || sscanf(ts, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6) return false;
+  if (y < 2020 || mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  *epoch = (uint32_t)days_from_civil(y, mo, d) * 86400UL + h * 3600UL + mi * 60UL + s;
+  return true;
+}
+
+static void format_iso(uint32_t epoch, char out[20]) {
+  int y; unsigned mo, d;
+  civil_from_days(epoch / 86400, &y, &mo, &d);
+  uint32_t t = epoch % 86400;
+  // The % bounds only tell the compiler each field fits its width.
+  snprintf(out, 20, "%04u-%02u-%02uT%02u:%02u:%02u", (unsigned)y % 10000u, mo % 100u, d % 100u,
+           (unsigned)(t / 3600) % 100u, (unsigned)(t / 60 % 60), (unsigned)(t % 60));
+}
+
+void clock_begin() {
+#ifdef BOARD_HAS_RTC
+  rtc.begin();
+#endif
+}
+
+static void clock_set(uint32_t epoch) {
+#ifdef BOARD_HAS_RTC
+  rtc.setEpoch(epoch);
+#else
+  base_epoch = epoch;
+  base_ms = millis();
+#endif
+  have_time = true;
+}
+
+bool clock_valid() { return have_time; }
+
+uint32_t clock_now() {
+#ifdef BOARD_HAS_RTC
+  return rtc.getEpoch();
+#else
+  return base_epoch + (millis() - base_ms) / 1000;
+#endif
+}
+
+// ── Reading log ──────────────────────────────────────────────────────────
+// One record per sensor per snapshot, stored as the reading's JSON (with
+// "t" first) and the snapshot time. The time is added back as "ts" when
+// the record is synced, so records look exactly like the Pico's SD lines.
+
+void log_latest_readings() {
+  if (!clock_valid() || latest_count == 0 || log_capacity() == 0) return;
+
+  uint32_t now = clock_now();
+  size_t logged = 0;
+  for (size_t i = 0; i < latest_count; i++) {
+    JsonDocument rec;
+    rec["t"] = latest_tags[i];
+    for (JsonPairConst kv : latest_readings[i].as<JsonObjectConst>()) {
+      rec[kv.key()] = kv.value();
+    }
+    if (measureJson(rec) > LOG_JSON_MAX) {
+      Serial.print(F("[LOG] Reading too long to log: "));
+      Serial.println(latest_tags[i]);
+      continue;
+    }
+    char buf[LOG_JSON_MAX + 1];
+    size_t len = serializeJson(rec, buf, sizeof(buf));
+    if (log_append(now, buf, len)) logged++;
+  }
+
+  Serial.print(F("[LOG] Logged "));
+  Serial.print(logged);
+  Serial.print(F(" readings ("));
+  Serial.print(log_head() - log_tail());
+  Serial.print(F("/"));
+  Serial.print(log_capacity());
+  Serial.println(F(" records waiting)."));
+}
+
 // ── Command receive/dispatch ─────────────────────────────────────────────
 bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
   if (!radio.waitAvailableTimeout(timeout_ms)) {
@@ -97,12 +212,13 @@ bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
 }
 
 static void handle_poll(JsonDocument &command, PacketSender &sender) {
-  // No RTC on this node — the Pi already stamps every poll with its own
-  // clock, and the Pico's RTC round-trip just returns that same value.
-  // We can use it directly instead.
+  // The Pi stamps every poll with its own clock — use it both as this
+  // batch's timestamp and to set the node's clock for the reading log.
   // Sends whatever the last timed sense cycle captured — matches the
   // Pico's send_latest(), which also doesn't force a fresh read on poll.
   const char *ts = command["ts"] | "unknown";
+  uint32_t epoch;
+  if (parse_iso(ts, &epoch)) clock_set(epoch);
   send_latest(sender, ts);
   Serial.print(F("[POLL] Latest reading sent (ts="));
   Serial.print(ts);
@@ -133,14 +249,56 @@ static long handle_set_interval(JsonDocument &command, PacketSender &sender) {
   return seconds * 1000L;
 }
 
-static void handle_sync_stub(PacketSender &sender) {
-  // No SD card on this node yet — reply immediately so the Pi's
-  // CommandManager doesn't sit waiting the full timeout for a node that
-  // can't do bulk sync. Swap this out once SD support is added.
+// Answer one Pi "sync" request — same protocol as send_sync_chunk() on the
+// Pico, with record numbers as offsets. Request {"t":"sync","g":..,"o":..,"k":..}:
+// g/o confirm the Pi has stored everything before record o. Reply: up to k
+// records as JSON lines, then {"t":"se","g":..,"o":<next>,"c":<sent>,"m":<more>}.
+// With no log (LOG_NONE) this always answers 0 records.
+static void handle_sync(JsonDocument &command, PacketSender &sender) {
+  uint16_t g = log_format_id();
+  if (command["g"].as<long>() == g && command["o"].is<uint32_t>()) {
+    log_confirm(command["o"].as<uint32_t>());
+  }
+  uint32_t k = command["k"] | 8;
+
+  uint32_t i = log_tail(), sent = 0, epoch;
+  char json[LOG_JSON_MAX + 1], ts[20], line[LOG_JSON_MAX + 32];
+  while (sent < k && i < log_head()) {
+    if (log_read(i, &epoch, json)) {
+      format_iso(epoch, ts);
+      int len = snprintf(line, sizeof(line), "%.*s,\"ts\":\"%s\"}",
+                         (int)strlen(json) - 1, json, ts);
+      sender.send_raw((const uint8_t *)line, len);
+      delay(SYNC_LINE_GAP_MS);
+      sent++;
+    }
+    i++;
+  }
+
   JsonDocument doc;
-  doc["chunks"] = 0;
-  sender.send(doc, "sync_complete");
-  Serial.println(F("[SYNC] sync_request received but no SD configured — replied with 0 chunks."));
+  doc["g"] = g;
+  doc["o"] = i;
+  doc["c"] = sent;
+  doc["m"] = i < log_head() ? 1 : 0;
+  sender.send(doc, "se");
+
+  Serial.print(F("[SYNC] Sent "));
+  Serial.print(sent);
+  Serial.print(F(" records ("));
+  Serial.print(log_head() - i);
+  Serial.println(F(" left)."));
+}
+
+// Report log usage so the Pi can show it: bytes used, free and total.
+static void handle_info(PacketSender &sender) {
+  uint32_t rb = log_record_bytes();
+  uint32_t used = (log_head() - log_tail()) * rb;
+  uint32_t total = log_capacity() * rb;
+  JsonDocument doc;
+  doc["ub"] = used;
+  doc["fb"] = total - used;
+  doc["tb"] = total;
+  sender.send(doc, "info");
 }
 
 long dispatch_command(JsonDocument &command, PacketSender &sender,
@@ -168,12 +326,14 @@ long dispatch_command(JsonDocument &command, PacketSender &sender,
     handle_poll(command, sender);
   } else if (strcmp(t, "ping") == 0) {
     handle_ping(command, sender);
-  } else if (strcmp(t, "sync_request") == 0) {
-    handle_sync_stub(sender);
+  } else if (strcmp(t, "sync") == 0) {
+    handle_sync(command, sender);
+  } else if (strcmp(t, "info") == 0) {
+    handle_info(sender);
   } else if (strcmp(t, "set_interval") == 0) {
     return handle_set_interval(command, sender);
   } else if (strcmp(t, "data_ack") == 0) {
-    // No-op here — this node doesn't do chunked bulk sync yet.
+    // The Pi's ack for a poll batch — nothing to do.
   } else {
     Serial.print(F("[CMD] Unknown packet type: "));
     Serial.println(t);
