@@ -95,7 +95,8 @@ def handle_set_interval(command, sender):
     return v
 
 
-def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_sync_chunk_fn, node_id):
+def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_fn, send_sync_chunk_fn, node_id,
+                     send_info_fn=None):
     '''
     Central dispatcher — call this from code.py whenever check_for_command()
     returns a packet. Routes to the appropriate handler based on packet type.
@@ -126,6 +127,9 @@ def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_
 
     elif t == "sync":
         handle_sync(command, sender, send_sync_chunk_fn)
+
+    elif t == "info" and send_info_fn is not None:
+        send_info_fn(sender)
 
     elif t == "set_interval":
         return handle_set_interval(command, sender)

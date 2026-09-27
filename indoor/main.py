@@ -13,7 +13,7 @@ from pathlib import Path
 
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import (
-    DATA_FILE, COMMAND_FILE, request_poll, request_sync_chunk,
+    DATA_FILE, COMMAND_FILE, request_poll, request_sync_chunk, request_info, save_node_info,
     POLL_RESULT_FILE, PING_REQUEST_FILE, PING_RESULT_FILE, SYNC_REQUEST_FILE,
 )
 
@@ -28,7 +28,9 @@ import db
 NODE_IDS      = [1, 2] # add node IDs here as you expand the network
 POLL_INTERVAL = 60     # seconds between polls per node
 
-SYNC_NODE_IDS       = [1]    # nodes with logged data to pull (the M0 has no storage yet)
+INFO_INTERVAL = 3600   # seconds between storage reports per node
+
+SYNC_NODE_IDS       = [1, 2] # nodes with logged data to pull
 SYNC_LINES_PER_HOUR = 2000   # cap per hourly session — a backlog drains over several hours
 SYNC_CHUNK_LINES    = 8      # lines per chunk — small, so one lost packet costs little on a weak link
 
@@ -55,6 +57,7 @@ sync  = SyncManager(SYNC_NODE_IDS, lines_per_session=SYNC_LINES_PER_HOUR,
 cmd   = CommandManager(on_send=sync.on_send)
 batch = BatchReceiver(DATA_FILE, db_conn=db_conn)
 timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL)
+info_timer = PollingTimer(NODE_IDS, poll_interval=INFO_INTERVAL)
 frags = FragmentReassembler()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -75,7 +78,7 @@ while True:
             print(f"[SYNC] Could not parse sync request: {e}")
         sync_req.unlink(missing_ok=True)
 
-    # ── Issue the next poll, or the next sync chunk if no poll is due ─────
+    # ── Issue the next poll, storage report or sync chunk, in that order ─
     # Only issue a new command if nothing is currently outstanding, and
     # nothing (e.g. a manual poll from the Flask API) is sitting in
     # COMMAND_FILE waiting to be forwarded. Without this guard,
@@ -95,9 +98,13 @@ while True:
     # Polls come first, so a long sync session never starves them.
     if cmd.pending is None and not Path(COMMAND_FILE).exists():
         due = timer.due_nodes()
+        info_due = info_timer.due_nodes()
         if due:
             request_poll(due[0])
             timer.mark_polled(due[0])
+        elif info_due:
+            request_info(info_due[0])
+            info_timer.mark_polled(info_due[0])
         else:
             chunk_request = sync.next_command()
             if chunk_request is not None:
@@ -179,6 +186,10 @@ while True:
 
         elif pkt_type == "se":
             sync.handle_end(data)
+            cmd.handle_ack(data)
+
+        elif pkt_type == "info":
+            save_node_info(data)
             cmd.handle_ack(data)
 
         elif cmd.handle_ack(data):

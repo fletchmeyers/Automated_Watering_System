@@ -150,6 +150,10 @@ class CommandManager:
             self._clear_pending()
             return True
 
+        if pkt_type == "info" and pending_t == "info":
+            self._clear_pending()
+            return True
+
         return False
 
     def _clear_pending(self):

@@ -48,6 +48,7 @@ from sync_indoor import (
     request_ping_test,
     wait_for_ping_result,
     get_ping_progress,
+    get_node_info,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -179,6 +180,13 @@ def api_ping_progress():
     if progress is None:
         return jsonify({"status": "idle"})
     return jsonify({"status": "running", **progress})
+
+
+@app.route("/api/node_info", methods=["GET"])
+def api_node_info():
+    # Each node's last storage report (bytes used/free/total and when it was
+    # reported) — just a file read, main.py refreshes it hourly.
+    return jsonify({"status": "ok", "nodes": get_node_info()})
 
 
 @app.route("/api/ping_test", methods=["POST"])
