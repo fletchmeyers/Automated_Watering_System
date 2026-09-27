@@ -22,7 +22,9 @@ import adafruit_ina23x
 # CONFIG
 NODE_ID = 1
 SENSE_INTERVAL = 3       # seconds between sensor reads; updated via set_interval command
-LOG_INTERVAL = 15        # seconds between SD log writes (a subset of sensor reads)
+LOG_INTERVAL = 60        # seconds between SD log writes (a subset of sensor reads) —
+                         # every logged line goes back over the radio, so keep this
+                         # well under SYNC_LINES_PER_HOUR in main.py
 RADIO_FREQ_MHZ = 915.0
 
 sequence = 0
