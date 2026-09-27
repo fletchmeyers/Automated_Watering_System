@@ -5,6 +5,32 @@ const REFRESH_MS = 10000;
 // Cloudflare Tunnel + domain — dashboard reads live from sensors.db via /api/data.
 const API_BASE = "https://api.fletchermeyers.com";
 
+// ── Nodes ─────────────────────────────────────────────────────────────────────
+// Display name, short name (used in plot labels) and color for each radio
+// node ID. Add a line here when a node joins — one that isn't listed still
+// shows up, as "Node N" in one of the fallback colors. Colors stay clear of
+// the green/amber/red used for status so a node never reads as a warning.
+// Shared with analysis.js (loaded after this file, same page scope).
+
+const NODES = {
+  1: { name: 'Pico (CircuitPython)', short: 'Pico', color: '#79c0ff' },
+  2: { name: 'M0 (Arduino)',         short: 'M0',   color: '#f778ba' },
+};
+const NODE_FALLBACK_COLORS = ['#d2a8ff', '#ffa657', '#a5d6ff', '#7ee787'];
+
+function nodeInfo(n) {
+  const known = NODES[n];
+  if (known) return known;
+  const color = NODE_FALLBACK_COLORS[(Number(n) || 0) % NODE_FALLBACK_COLORS.length];
+  return { name: `Node ${n}`, short: `N${n}`, color };
+}
+
+// Configured nodes plus any others that turn up in the data, in ID order.
+function knownNodeIds(extra = []) {
+  const ids = new Set([...Object.keys(NODES).map(Number), ...extra.map(Number)]);
+  return [...ids].filter(n => !Number.isNaN(n)).sort((a, b) => a - b);
+}
+
 // ── Unit preference (°C/°F) ─────────────────────────────────────────────────
 // Single global flag, shared with analysis.js (loaded right after this file,
 // same page scope — no module system here, so a plain global is simplest).
@@ -180,16 +206,26 @@ function donutArc(pct, color, bg) {
 }
 
 // ── Render functions ─────────────────────────────────────────────────────────
+// Each takes the card element it draws into (one card per sensor per node —
+// see ensureSensorCard below), so the same function renders every node's copy.
 
-function renderBattery(latest, history) {
+function cardBody(el)  { return el.querySelector('.card-body'); }
+function cardBadge(el) { return el.querySelector('.card-badge'); }
+function setBadge(el, cls, text) {
+  const b = cardBadge(el);
+  if (!b) return;
+  b.className = 'card-badge ' + cls;
+  b.textContent = text;
+}
+
+function renderBattery(el, latest, history) {
   const soc = latest.soc ?? 0;
   const v   = latest.v ?? 0;
   const color = battColor(soc);
-  const badge = soc > 50 ? 'badge-green' : soc > 20 ? 'badge-amber' : 'badge-red';
-  document.getElementById('batt-badge').className = 'card-badge ' + badge;
-  document.getElementById('batt-badge').textContent = soc > 50 ? 'good' : soc > 20 ? 'low' : 'critical';
+  setBadge(el, soc > 50 ? 'badge-green' : soc > 20 ? 'badge-amber' : 'badge-red',
+           soc > 50 ? 'good' : soc > 20 ? 'low' : 'critical');
 
-  document.getElementById('batt-body').innerHTML = `
+  cardBody(el).innerHTML = `
     <div class="big-value" style="color:${color}">${soc.toFixed(1)}<span class="big-unit">%</span></div>
     <div class="sub-value">${v.toFixed(2)} V</div>
     <div class="bar-track">
@@ -197,17 +233,17 @@ function renderBattery(latest, history) {
     </div>
     <div class="sparkline-row">
       <span class="sparkline-label">SoC history</span>
-      <div style="position:relative;height:30px;flex:1"><canvas id="spark-batt"></canvas></div>
+      <div style="position:relative;height:30px;flex:1"><canvas id="${el.id}-spark"></canvas></div>
     </div>`;
 
-  if (history.length > 1) renderSparkline('spark-batt', history, color);
+  if (history.length > 1) renderSparkline(`${el.id}-spark`, history, color);
 }
 
-function renderSHT(latest, tempHist, rhHist) {
+function renderSHT(el, latest, tempHist, rhHist) {
   const tmpC = latest.tmp ?? 0;   // always Celsius as read from the sensor
   const rh   = latest.rh ?? 0;
 
-  document.getElementById('sht-body').innerHTML = `
+  cardBody(el).innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>
         <div class="mini-label">TEMP</div>
@@ -220,11 +256,11 @@ function renderSHT(latest, tempHist, rhHist) {
     </div>
     <div class="sparkline-row" style="margin-top:12px">
       <span class="sparkline-label">Temp</span>
-      <div style="position:relative;height:28px;flex:1"><canvas id="spark-tmp"></canvas></div>
+      <div style="position:relative;height:28px;flex:1"><canvas id="${el.id}-spark-tmp"></canvas></div>
     </div>
     <div class="sparkline-row">
       <span class="sparkline-label">RH</span>
-      <div style="position:relative;height:28px;flex:1"><canvas id="spark-rh"></canvas></div>
+      <div style="position:relative;height:28px;flex:1"><canvas id="${el.id}-spark-rh"></canvas></div>
     </div>`;
 
   // tempColor is keyed off real thermal state, so it always takes the raw
@@ -232,43 +268,42 @@ function renderSHT(latest, tempHist, rhHist) {
   // which unit is currently shown. The sparkline is a shape-only visual (no
   // axis), so an affine unit conversion wouldn't change it; converting
   // anyway keeps the underlying values consistent with what's displayed.
-  if (tempHist.length > 1) renderSparkline('spark-tmp', tempHist.map(formatTemp), tempColor(tmpC));
-  if (rhHist.length > 1)   renderSparkline('spark-rh',  rhHist,  rhColor(rh));
+  if (tempHist.length > 1) renderSparkline(`${el.id}-spark-tmp`, tempHist.map(formatTemp), tempColor(tmpC));
+  if (rhHist.length > 1)   renderSparkline(`${el.id}-spark-rh`,  rhHist,  rhColor(rh));
 }
 
-function renderVOC(latest, history) {
+function renderVOC(el, latest, history) {
   const raw  = latest.voc ?? 0;
   const poll = vocPollution(raw);
   const info = vocLabel(poll);
-  document.getElementById('voc-badge').className = 'card-badge ' + info.cls;
-  document.getElementById('voc-badge').textContent = info.label;
+  setBadge(el, info.cls, info.label);
 
   const pct = (100 - poll); // pointer: 0% = poor (left), 100% = good (right)
 
-  document.getElementById('voc-body').innerHTML = `
+  cardBody(el).innerHTML = `
     <div class="big-value">${raw.toLocaleString()}<span class="big-unit" style="font-size:13px"> raw</span></div>
     <div class="sub-value">higher = cleaner air</div>
     <div class="voc-gauge">
       <div class="voc-labels"><span>poor</span><span>moderate</span><span>good</span></div>
       <div class="voc-gradient-bar">
-        <div class="voc-pointer" id="voc-ptr" style="left:${pct}%"></div>
+        <div class="voc-pointer" style="left:${pct}%"></div>
       </div>
     </div>
     <div class="sparkline-row" style="margin-top:8px">
       <span class="sparkline-label">VOC history</span>
-      <div style="position:relative;height:28px;flex:1"><canvas id="spark-voc"></canvas></div>
+      <div style="position:relative;height:28px;flex:1"><canvas id="${el.id}-spark"></canvas></div>
     </div>`;
 
-  if (history.length > 1) renderSparkline('spark-voc', history, '#39d0c4');
+  if (history.length > 1) renderSparkline(`${el.id}-spark`, history, '#39d0c4');
 }
 
-function renderUV(latest, luxHist) {
+function renderUV(el, latest, luxHist) {
   const lux    = latest.lux ?? 0;
   const uvi    = latest.uvi ?? 0;
   const uvRaw  = latest.uv ?? 0;
   const uvInfo = uviLabel(uvi);
 
-  document.getElementById('uv-body').innerHTML = `
+  cardBody(el).innerHTML = `
     <div class="big-value" style="color:#d29922">${lux.toFixed(0)}<span class="big-unit">lux</span></div>
     <div class="sub-value">${luxLabel(lux)}</div>
     <div class="row2" style="margin-top:12px">
@@ -283,31 +318,30 @@ function renderUV(latest, luxHist) {
     </div>
     <div class="sparkline-row" style="margin-top:12px">
       <span class="sparkline-label">Lux trend</span>
-      <div style="position:relative;height:28px;flex:1"><canvas id="spark-lux"></canvas></div>
+      <div style="position:relative;height:28px;flex:1"><canvas id="${el.id}-spark"></canvas></div>
     </div>`;
 
-  if (luxHist.length > 1) renderSparkline('spark-lux', luxHist, '#d29922');
+  if (luxHist.length > 1) renderSparkline(`${el.id}-spark`, luxHist, '#d29922');
 }
 
 // Toggles whether a card spans 2 outer-grid columns (`.card-wide`) or just
 // one — called from renderSoil/renderPower with the actual connected-sensor
 // count so a card that's only using 1 of its possible slots doesn't keep
 // reserving the same width it would need for a full set.
-function setCardWide(cardId, wide) {
-  const card = document.getElementById(cardId);
-  if (card) card.classList.toggle('card-wide', wide);
+function setCardWide(el, wide) {
+  el.classList.toggle('card-wide', wide);
 }
 
-function renderSoil(soilData) {
+function renderSoil(el, soilData) {
   const present = [0, 1, 2].filter(id => soilData[id]);
 
   // Wide only once all 3 slots are actually in use — 1 or 2 arcs fit
   // comfortably in a single-width card, matching how many columns the
   // inner grid is given below.
-  setCardWide('card-soil', present.length >= 3);
+  setCardWide(el, present.length >= 3);
 
   if (!present.length) {
-    document.getElementById('soil-body').innerHTML = '<div class="no-data">No soil sensor data</div>';
+    cardBody(el).innerHTML = '<div class="no-data">No soil sensor data</div>';
     return;
   }
 
@@ -327,7 +361,7 @@ function renderSoil(soilData) {
   }
   html += '</div>';
 
-  document.getElementById('soil-body').innerHTML = html;
+  cardBody(el).innerHTML = html;
 }
 
 // Power monitor node labels — edit these to match what each INA238 is actually measuring
@@ -338,25 +372,19 @@ const POWER_NODE_LABELS = {
   3: 'pw3 · monitor 3',
 };
 
-function renderPower(powerData) {
+function renderPower(el, powerData) {
   const present = [0, 1, 2, 3].filter(id => powerData[id]);
 
-  const badge = document.getElementById('power-badge');
-  if (!present.length) {
-    badge.className = 'card-badge badge-gray';
-    badge.textContent = 'no data';
-  } else {
-    badge.className = 'card-badge badge-blue';
-    badge.textContent = `${present.length} active`;
-  }
+  if (!present.length) setBadge(el, 'badge-gray', 'no data');
+  else setBadge(el, 'badge-blue', `${present.length} active`);
 
   // Wide as soon as there are 2+ nodes to show side by side — each node's
   // 3-metric row (V / mA / mW) needs more width than a single-column card
   // can spare once there's more than one of them.
-  setCardWide('card-power', present.length >= 2);
+  setCardWide(el, present.length >= 2);
 
   if (!present.length) {
-    document.getElementById('power-body').innerHTML = '<div class="no-data">No power monitor data</div>';
+    cardBody(el).innerHTML = '<div class="no-data">No power monitor data</div>';
     return;
   }
 
@@ -391,10 +419,10 @@ function renderPower(powerData) {
     </div>`;
   }
   html += '</div>';
-  document.getElementById('power-body').innerHTML = html;
+  cardBody(el).innerHTML = html;
 }
 
-function renderHealth(packets) {
+function renderHealth(el, packets) {
   const NON_SENSOR = new Set(['ts', 'sync_ack', 'sync']);
   const sensorPkts = packets.filter(p => !NON_SENSOR.has(p.t));
   const counts = {};
@@ -406,11 +434,11 @@ function renderHealth(packets) {
   const missing = all.filter(t => !recentTypes.has(t));
 
   const ok = missing.length === 0 && all.length > 0;
-  document.getElementById('health-badge').className = 'card-badge ' + (ok ? 'badge-green' : all.length === 0 ? 'badge-gray' : 'badge-amber');
-  document.getElementById('health-badge').textContent = ok ? 'all online' : all.length === 0 ? 'no data' : `${missing.length} absent`;
+  setBadge(el, ok ? 'badge-green' : all.length === 0 ? 'badge-gray' : 'badge-amber',
+           ok ? 'all online' : all.length === 0 ? 'no data' : `${missing.length} absent`);
 
   if (all.length === 0) {
-    document.getElementById('health-body').innerHTML = '<div class="no-data">No sensor packets found</div>';
+    cardBody(el).innerHTML = '<div class="no-data">No sensor packets found</div>';
     return;
   }
 
@@ -425,10 +453,10 @@ function renderHealth(packets) {
     </div>`;
   }).join('');
 
-  document.getElementById('health-body').innerHTML = rows;
+  cardBody(el).innerHTML = rows;
 }
 
-function renderSystem(rtLatest, lastTs, seqLatest) {
+function renderSystem(el, rtLatest, lastTs, seqLatest) {
   let html = '';
   if (rtLatest) {
     html += `<div class="mini-metric" style="margin-bottom:8px">
@@ -451,7 +479,7 @@ function renderSystem(rtLatest, lastTs, seqLatest) {
     </div>`;
   }
   if (!html) html = '<div class="no-data">No data</div>';
-  document.getElementById('system-body').innerHTML = html;
+  cardBody(el).innerHTML = html;
 }
 
 // ── Load + parse ──────────────────────────────────────────────────────────────
@@ -468,8 +496,25 @@ async function loadData() {
     if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
     return withKnownTs(data.packets).slice(-WINDOW);
   } catch (e) {
-    document.getElementById('last-update').textContent = 'error: cannot load data';
+    document.getElementById('node-status').innerHTML =
+      '<span class="node-status-error">error: cannot load data</span>';
     return null;
+  }
+}
+
+// Each node's last storage report from /api/node_info ({"<node>": {ub, fb,
+// tb, at}}) — main.py refreshes it hourly. Kept from the last successful
+// fetch if a later one fails, since it changes slowly anyway.
+let nodeStorage = {};
+
+async function loadNodeInfo() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/node_info`);
+    if (!resp.ok) throw new Error(resp.status);
+    const data = await resp.json();
+    if (data.status === 'ok') nodeStorage = data.nodes || {};
+  } catch (e) {
+    console.warn('[nodes] /api/node_info failed, keeping last storage report', e);
   }
 }
 
@@ -485,17 +530,176 @@ function getHistory(packets, type, key, n = 40) {
   return vals.slice(-n);
 }
 
-// ── Freshness check ───────────────────────────────────────────────────────────
+function getLastTs(packets) {
+  for (let i = packets.length - 1; i >= 0; i--) {
+    if (packets[i].ts) return packets[i].ts;
+  }
+  return null;
+}
 
-function updateStatusDot(lastTs) {
-  const dot = document.getElementById('status-dot');
-  if (!lastTs) { dot.className = 'status-dot offline'; return; }
-  try {
-    const diff = (Date.now() - new Date(lastTs.replace('T', ' ')).getTime()) / 1000;
-    if (diff < 60)    dot.className = 'status-dot';
-    else if (diff < 600) dot.className = 'status-dot stale';
-    else dot.className = 'status-dot offline';
-  } catch { dot.className = 'status-dot offline'; }
+// Every card below works on one node's packets at a time — the same sensor
+// type (batt, sht, s0...) exists on more than one node, so mixing them would
+// silently blend two different physical sensors into one reading.
+function groupByNode(packets) {
+  const byNode = {};
+  for (const p of packets) {
+    if (p.n == null) continue;
+    (byNode[p.n] ||= []).push(p);
+  }
+  return byNode;
+}
+
+// ── Freshness ─────────────────────────────────────────────────────────────────
+// Nodes are polled about once a minute, so a couple of minutes without a
+// packet is still normal; ten minutes means something's wrong.
+
+function freshness(lastTs) {
+  if (!lastTs) return 'offline';
+  const diff = (Date.now() - new Date(lastTs.replace('T', ' ')).getTime()) / 1000;
+  if (Number.isNaN(diff)) return 'offline';
+  if (diff < 150) return 'fresh';
+  if (diff < 600) return 'stale';
+  return 'offline';
+}
+
+function statusDot(state) {
+  return `<span class="status-dot ${state === 'fresh' ? '' : state}"></span>`;
+}
+
+// One chip per node in the header: its own status dot and time since its
+// last packet.
+function renderNodeStatus(byNode) {
+  document.getElementById('node-status').innerHTML = knownNodeIds(Object.keys(byNode)).map(n => {
+    const info = nodeInfo(n);
+    const lastTs = getLastTs(byNode[n] || []);
+    const ago = lastTs ? (minutesAgo(lastTs) || lastTs) : 'no data';
+    return `<span class="node-chip" style="--node-color:${info.color}"
+                  title="${info.name} — last packet ${lastTs || 'none in the last 6 hours'}">
+      ${statusDot(freshness(lastTs))}<span class="node-chip-name">${info.short}</span>${ago}
+    </span>`;
+  }).join('');
+}
+
+function formatBytes(b) {
+  if (b == null) return '–';
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 ** 2) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(1)} GB`;
+}
+
+// The "Nodes" card: per node, when it last reported, its battery, and how
+// much logged data is waiting on it for the next sync.
+function renderNodesCard(byNode) {
+  const card = document.getElementById('card-nodes');
+  if (!card) return;
+  cardBody(card).innerHTML = knownNodeIds(Object.keys(byNode)).map(n => {
+    const info = nodeInfo(n);
+    const np = byNode[n] || [];
+    const lastTs = getLastTs(np);
+    const batt = getLatest(np, 'batt');
+    const store = nodeStorage[String(n)];
+
+    const metrics = [
+      ['LAST PACKET', lastTs ? lastTs.replace('T', ' ') : 'none in 6h'],
+      ['BATTERY', batt ? `${(batt.soc ?? 0).toFixed(0)}% · ${(batt.v ?? 0).toFixed(2)} V` : '–'],
+      ['WAITING TO SYNC', store ? formatBytes(store.ub) : '–'],
+      ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
+    ];
+    const reported = store?.at ? `storage reported ${minutesAgo(store.at) || store.at}` : 'no storage report yet';
+
+    return `<div class="node-row" style="--node-color:${info.color}">
+      <div class="node-row-head">
+        ${statusDot(freshness(lastTs))}
+        <span class="node-row-name">${info.name}</span>
+        <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : ''}</span>
+      </div>
+      <div class="node-metrics">
+        ${metrics.map(([label, value]) => `<div>
+          <div class="mini-label">${label}</div>
+          <div class="node-metric-value">${value}</div>
+        </div>`).join('')}
+      </div>
+      <div class="node-row-note">${reported}</div>
+    </div>`;
+  }).join('') || '<div class="no-data">No nodes yet</div>';
+}
+
+// ── Sensor cards ──────────────────────────────────────────────────────────────
+// One card per sensor per node, created the first time that node reports it.
+// `types` are the packet types the card covers (null = every node gets one);
+// `badge` cards show a status badge, the rest a fixed chip label.
+
+const SENSOR_CARDS = [
+  { kind: 'batt',   title: 'Lipo',                   types: ['batt'],                     badge: true },
+  { kind: 'sht',    title: 'Temperature & Humidity', types: ['sht'],                      label: 'SHT40' },
+  { kind: 'voc',    title: 'Air Quality (VOC)',      types: ['voc'],                      badge: true },
+  { kind: 'uv',     title: 'UV & Light',             types: ['uv'],                       label: 'LTR390' },
+  { kind: 'soil',   title: 'Soil Sensors',           types: ['s0', 's1', 's2'],           label: 'Seesaw' },
+  { kind: 'power',  title: 'Battery',                types: ['pw0', 'pw1', 'pw2', 'pw3'], badge: true },
+  { kind: 'health', title: 'Sensor Health',          types: null,                         badge: true },
+  { kind: 'system', title: 'Radio & System',         types: null,                         label: 'RFM69' },
+];
+
+function sensorCardId(kind, node) { return `card-${kind}-n${node}`; }
+
+function ensureSensorCard(spec, node) {
+  const id = sensorCardId(spec.kind, node);
+  const existing = document.getElementById(id);
+  if (existing) return existing;
+
+  const info = nodeInfo(node);
+  const el = document.createElement('div');
+  el.className = 'card node-card';
+  el.id = id;
+  el.style.setProperty('--node-color', info.color);
+  el.innerHTML = `
+    <div class="card-header">
+      <div class="card-heading">
+        <span class="card-title">${spec.title}</span>
+        <span class="node-tag">${info.name}</span>
+      </div>
+      ${spec.badge ? '<span class="card-badge badge-gray">–</span>' : `<span class="node-badge">${spec.label}</span>`}
+    </div>
+    <div class="card-body"><div class="no-data">No data</div></div>`;
+  addCardToLayout(el);
+  return el;
+}
+
+function renderSensorCard(el, kind, np) {
+  switch (kind) {
+    case 'batt':
+      return renderBattery(el, getLatest(np, 'batt'), getHistory(np, 'batt', 'soc'));
+    case 'sht':
+      return renderSHT(el, getLatest(np, 'sht'), getHistory(np, 'sht', 'tmp'), getHistory(np, 'sht', 'rh'));
+    case 'voc':
+      return renderVOC(el, getLatest(np, 'voc'), getHistory(np, 'voc', 'voc'));
+    case 'uv':
+      return renderUV(el, getLatest(np, 'uv'), getHistory(np, 'uv', 'lux'));
+    case 'soil': {
+      const soilData = {};
+      for (const id of [0, 1, 2]) {
+        const s = getLatest(np, `s${id}`);
+        if (s) soilData[id] = s;
+      }
+      return renderSoil(el, soilData);
+    }
+    case 'power': {
+      const powerData = {};
+      for (const id of [0, 1, 2, 3]) {
+        const p = getLatest(np, `pw${id}`);
+        if (p) powerData[id] = p;
+      }
+      return renderPower(el, powerData);
+    }
+    case 'health':
+      return renderHealth(el, np);
+    case 'system': {
+      let seq = null;
+      for (let i = np.length - 1; i >= 0; i--) if ('q' in np[i]) { seq = np[i].q; break; }
+      return renderSystem(el, getLatest(np, 'rt'), getLastTs(np), seq);
+    }
+  }
 }
 
 // ── Main refresh ─────────────────────────────────────────────────────────────
@@ -505,65 +709,24 @@ function updateStatusDot(lastTs) {
 // without waiting on a full re-fetch of the static file.
 let currentPackets = [];
 
-function getLastTs(packets) {
-  for (let i = packets.length - 1; i >= 0; i--) {
-    if (packets[i].ts) return packets[i].ts;
-  }
-  return null;
-}
-
 function renderAll(packets) {
   document.getElementById('packets-count').textContent = packets.length;
 
-  // Pull latest timestamp from any packet that has one
-  let lastTs = getLastTs(packets);
+  const byNode = groupByNode(packets);
+  renderNodeStatus(byNode);
+  renderNodesCard(byNode);
 
-  updateStatusDot(lastTs);
-  document.getElementById('last-update').textContent = lastTs ? (minutesAgo(lastTs) || lastTs) : 'unknown';
-
-  // Battery
-  const batt = getLatest(packets, 'batt');
-  if (batt) renderBattery(batt, getHistory(packets, 'batt', 'soc'));
-
-  // SHT40
-  const sht = getLatest(packets, 'sht');
-  if (sht) renderSHT(sht, getHistory(packets, 'sht', 'tmp'), getHistory(packets, 'sht', 'rh'));
-
-  // SGP40 VOC
-  const voc = getLatest(packets, 'voc');
-  if (voc) renderVOC(voc, getHistory(packets, 'voc', 'voc'));
-
-  // UV
-  const uv = getLatest(packets, 'uv');
-  if (uv) renderUV(uv, getHistory(packets, 'uv', 'lux'));
-
-  // Soil sensors
-  const soilData = {};
-  for (const id of [0, 1, 2]) {
-    const s = getLatest(packets, `s${id}`);
-    if (s) soilData[id] = s;
+  for (const node of Object.keys(byNode).map(Number).sort((a, b) => a - b)) {
+    const np = byNode[node];
+    for (const spec of SENSOR_CARDS) {
+      if (spec.types && !np.some(p => spec.types.includes(p.t))) continue;
+      renderSensorCard(ensureSensorCard(spec, node), spec.kind, np);
+    }
   }
-  renderSoil(soilData);
-
-  // Power monitors
-  const powerData = {};
-  for (const id of [0, 1, 2, 3]) {
-    const p = getLatest(packets, `pw${id}`);
-    if (p) powerData[id] = p;
-  }
-  renderPower(powerData);
-
-  // Health
-  renderHealth(packets);
-
-  // System / radio temp
-  const rt  = getLatest(packets, 'rt');
-  const anySeq = (() => { for (let i = packets.length - 1; i >= 0; i--) if ('q' in packets[i]) return packets[i].q; return null; })();
-  renderSystem(rt, lastTs, anySeq);
 }
 
 async function refresh() {
-  const packets = await loadData();
+  const [packets] = await Promise.all([loadData(), loadNodeInfo()]);
   if (!packets) return;
 
   // /api/data reads sensors.db directly, so unlike the old static-file
@@ -710,33 +873,41 @@ async function runPingTest() {
 // a way back without needing a mode toggle. Separate from the analysis
 // panel's Phase 2 "drag-and-drop multi-card" idea; this is only about the
 // live sensor-reading cards at the top of the dashboard.
+//
+// Sensor cards are created as their node's data arrives (see
+// ensureSensorCard), so the layout works from whatever cards are in the grid
+// right now rather than a fixed list. A saved order can name cards that
+// aren't on the page yet (a node that hasn't reported this session); they
+// slot into place when they appear.
 
-const CARD_IDS = ['card-batt', 'card-sht', 'card-voc', 'card-uv', 'card-soil', 'card-power', 'card-health', 'card-system', 'card-weather'];
-const CARD_LABELS = {
-  'card-batt':    'Lipo',
-  'card-sht':     'Temperature & Humidity',
-  'card-voc':     'Air Quality (VOC)',
-  'card-uv':      'UV & Light',
-  'card-soil':    'Soil Sensors',
-  'card-power':   'Battery',
-  'card-health':  'Sensor Health',
-  'card-system':  'Radio & System',
-  'card-weather': 'Weather Forecast',
-};
-const CARD_PREFS_KEY = 'gardenDashboardCardPrefs';
+const STATIC_CARD_LABELS = { 'card-nodes': 'Nodes', 'card-weather': 'Weather Forecast' };
+// v2: cards became per-node, so a layout saved under the old single-card IDs
+// doesn't carry over.
+const CARD_PREFS_KEY = 'gardenDashboardCardPrefs.v2';
+
+function cardLabel(id) {
+  if (STATIC_CARD_LABELS[id]) return STATIC_CARD_LABELS[id];
+  const m = /^card-(\w+)-n(\d+)$/.exec(id);
+  const spec = m && SENSOR_CARDS.find(s => s.kind === m[1]);
+  return spec ? `${spec.title} · ${nodeInfo(m[2]).short}` : id;
+}
+
+function gridCards() {
+  return Array.from(document.getElementById('grid').querySelectorAll(':scope > .card'));
+}
 
 function loadCardPrefs() {
   try {
     const raw = localStorage.getItem(CARD_PREFS_KEY);
-    if (!raw) return { order: CARD_IDS.slice(), hidden: [] };
+    if (!raw) return { order: [], hidden: [] };
     const parsed = JSON.parse(raw);
-    const savedOrder = Array.isArray(parsed.order) ? parsed.order.filter(id => CARD_IDS.includes(id)) : [];
-    // Any card not in the saved order (e.g. added after prefs were saved) gets appended.
-    CARD_IDS.forEach(id => { if (!savedOrder.includes(id)) savedOrder.push(id); });
-    return { order: savedOrder, hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [] };
+    return {
+      order:  Array.isArray(parsed.order)  ? parsed.order  : [],
+      hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [],
+    };
   } catch (e) {
     console.warn('[cards] failed to load saved layout, using default', e);
-    return { order: CARD_IDS.slice(), hidden: [] };
+    return { order: [], hidden: [] };
   }
 }
 
@@ -750,18 +921,20 @@ function saveCardPrefs() {
 
 let cardPrefs = loadCardPrefs();
 
+// Cards in the saved order first; any the saved order doesn't mention keep
+// their current relative position after those.
 function applyCardOrder() {
   const grid = document.getElementById('grid');
-  cardPrefs.order.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) grid.appendChild(el); // moves to end in this order, so final DOM order == cardPrefs.order
-  });
+  const rank = id => { const i = cardPrefs.order.indexOf(id); return i < 0 ? Infinity : i; };
+  gridCards()
+    .map((el, pos) => ({ el, pos }))
+    .sort((a, b) => (rank(a.el.id) - rank(b.el.id)) || (a.pos - b.pos))
+    .forEach(({ el }) => grid.appendChild(el));
 }
 
 function applyCardVisibility() {
-  CARD_IDS.forEach(id => {
-    const card = document.getElementById(id);
-    if (card) card.style.display = cardPrefs.hidden.includes(id) ? 'none' : '';
+  gridCards().forEach(card => {
+    card.style.display = cardPrefs.hidden.includes(card.id) ? 'none' : '';
   });
   renderHiddenCardsBar();
 }
@@ -775,7 +948,7 @@ function renderHiddenCardsBar() {
   }
   bar.style.display = 'flex';
   bar.innerHTML = '<span>hidden:</span>' + cardPrefs.hidden.map(id => `
-    <span class="hidden-card-chip">${CARD_LABELS[id] || id}
+    <span class="hidden-card-chip">${cardLabel(id)}
       <button type="button" data-restore="${id}">show</button>
     </span>`).join('');
   bar.querySelectorAll('[data-restore]').forEach(btn => {
@@ -790,32 +963,40 @@ function toggleCardHidden(id) {
   applyCardVisibility();
 }
 
-function buildCardControls() {
-  CARD_IDS.forEach(id => {
-    const card = document.getElementById(id);
-    if (!card || card.querySelector('.card-controls')) return; // built once, reused
+function buildCardControls(card) {
+  if (card.querySelector('.card-controls')) return; // built once, reused
 
-    const handle = document.createElement('div');
-    handle.className = 'card-drag-handle';
-    handle.textContent = '⠿';
-    handle.title = 'Drag to reorder';
-    // Native drag-and-drop drags the whole element it's set on; arming
-    // `draggable` only while the handle is actively pressed keeps the rest
-    // of the card (text, values) normally selectable the rest of the time.
-    handle.addEventListener('mousedown', () => { card.draggable = true; });
-    card.appendChild(handle);
+  const handle = document.createElement('div');
+  handle.className = 'card-drag-handle';
+  handle.textContent = '⠿';
+  handle.title = 'Drag to reorder';
+  // Native drag-and-drop drags the whole element it's set on; arming
+  // `draggable` only while the handle is actively pressed keeps the rest
+  // of the card (text, values) normally selectable the rest of the time.
+  handle.addEventListener('mousedown', () => { card.draggable = true; });
+  card.appendChild(handle);
 
-    const ctrl = document.createElement('div');
-    ctrl.className = 'card-controls';
-    ctrl.innerHTML = `<button type="button" class="card-hide-btn" title="Hide this card">hide</button>`;
-    ctrl.querySelector('button').addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleCardHidden(id);
-    });
-    card.appendChild(ctrl);
-
-    card.draggable = false;
+  const ctrl = document.createElement('div');
+  ctrl.className = 'card-controls';
+  ctrl.innerHTML = `<button type="button" class="card-hide-btn" title="Hide this card">hide</button>`;
+  ctrl.querySelector('button').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleCardHidden(card.id);
   });
+  card.appendChild(ctrl);
+
+  card.draggable = false;
+}
+
+// A newly created sensor card goes in just ahead of the weather card by
+// default, then picks up its saved position and hidden state, if any.
+function addCardToLayout(card) {
+  const grid = document.getElementById('grid');
+  const weather = document.getElementById('card-weather');
+  grid.insertBefore(card, weather && weather.parentNode === grid ? weather : null);
+  buildCardControls(card);
+  applyCardOrder();
+  applyCardVisibility();
 }
 
 // Native HTML5 drag-and-drop, scoped to #grid, always active (arming happens
@@ -849,7 +1030,10 @@ function initCardDragAndDrop() {
     const card = e.target.closest('.card');
     if (card) { card.classList.remove('dragging'); card.draggable = false; }
     if (dragSrcId) {
-      cardPrefs.order = Array.from(grid.querySelectorAll('.card')).map(el => el.id).filter(id => CARD_IDS.includes(id));
+      // Keep saved positions of cards that aren't on the page right now,
+      // after the ones that are.
+      const onPage = gridCards().map(el => el.id);
+      cardPrefs.order = onPage.concat(cardPrefs.order.filter(id => !onPage.includes(id)));
       saveCardPrefs();
     }
     dragSrcId = null;
@@ -859,16 +1043,20 @@ function initCardDragAndDrop() {
   // starting (a click, essentially), un-arm draggable so it doesn't linger.
   document.addEventListener('mouseup', () => {
     if (dragSrcId) return; // an actual drag is in progress; dragend will handle it
-    CARD_IDS.forEach(id => {
-      const card = document.getElementById(id);
-      if (card) card.draggable = false;
-    });
+    gridCards().forEach(card => { card.draggable = false; });
   });
 }
 
 function initCardCustomization() {
+  gridCards().forEach(buildCardControls);
   applyCardOrder();
-  buildCardControls();
   applyCardVisibility();
   initCardDragAndDrop();
+}
+
+// The ping test's node picker, built from NODES so a new node shows up there too.
+function buildPingNodeSelect() {
+  const sel = document.getElementById('ping-node-select');
+  if (!sel) return;
+  sel.innerHTML = knownNodeIds().map(n => `<option value="${n}">${nodeInfo(n).name}</option>`).join('');
 }

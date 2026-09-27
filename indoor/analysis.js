@@ -1,47 +1,60 @@
 // ── Analysis panel ───────────────────────────────────────────────────────────
 // Separate from the live cards above: no auto-refresh loop, queries /api/data
-// directly with sensor_type + start/end (already supported since the DB
-// migration's step 4 — no backend changes needed for this). Two modes:
+// directly with node_id + sensor_type + start/end. Two modes:
 // time-series (one or more sensor+field lines) and scatter (two sensors
 // matched by nearest timestamp, same idea as explore.py's hourly resample
 // join, just finer-grained and done client-side).
 
-const ANALYSIS_FIELDS = [
-  { id: 's0.m',     type: 's0',   key: 'm',   label: 'Soil 0 · Moisture' },
-  { id: 's0.tmp',   type: 's0',   key: 'tmp', label: 'Soil 0 · Temp' },
-  { id: 's1.m',     type: 's1',   key: 'm',   label: 'Soil 1 · Moisture' },
-  { id: 's1.tmp',   type: 's1',   key: 'tmp', label: 'Soil 1 · Temp' },
-  { id: 's2.m',     type: 's2',   key: 'm',   label: 'Soil 2 · Moisture' },
-  { id: 's2.tmp',   type: 's2',   key: 'tmp', label: 'Soil 2 · Temp' },
-  { id: 'sht.tmp',  type: 'sht',  key: 'tmp', label: 'Ambient Temp' },
-  { id: 'sht.rh',   type: 'sht',  key: 'rh',  label: 'Ambient Humidity' },
-  { id: 'uv.lux',   type: 'uv',   key: 'lux', label: 'Light (lux)' },
-  { id: 'uv.uvi',   type: 'uv',   key: 'uvi', label: 'UV Index' },
-  { id: 'voc.voc',  type: 'voc',  key: 'voc', label: 'VOC (raw)' },
-  { id: 'batt.soc', type: 'batt', key: 'soc', label: 'Lipo %' },
-  { id: 'batt.v',   type: 'batt', key: 'v',   label: 'Lipo Voltage' },
-  { id: 'rt.tmp',   type: 'rt',   key: 'tmp', label: 'Radio Temp' },
-  { id: 'pw0.ma',   type: 'pw0',  key: 'ma',  label: 'Battery 0 · Current' },
-  { id: 'pw0.v',    type: 'pw0',  key: 'v',   label: 'Battery 0 · Voltage' },
-  { id: 'pw0.mw',   type: 'pw0',  key: 'mw',  label: 'Battery 0 · Wattage' },
-  { id: 'pw1.ma',   type: 'pw1',  key: 'ma',  label: 'Battery 1 · Current' },
-  { id: 'pw1.v',    type: 'pw1',  key: 'v',   label: 'Battery 1 · Voltage' },
-  { id: 'pw1.mw',   type: 'pw1',  key: 'mw',  label: 'Battery 1 · Wattage' },
-  { id: 'pw2.ma',   type: 'pw2',  key: 'ma',  label: 'Battery 2 · Current' },
-  { id: 'pw2.v',    type: 'pw2',  key: 'v',   label: 'Battery 2 · Voltage' },
-  { id: 'pw2.mw',   type: 'pw2',  key: 'mw',  label: 'Battery 2 · Wattage' },
-  { id: 'pw3.ma',   type: 'pw3',  key: 'ma',  label: 'Battery 3 · Current' },
-  { id: 'pw3.v',    type: 'pw3',  key: 'v',   label: 'Battery 3 · Voltage' },
-  { id: 'pw3.mw',   type: 'pw3',  key: 'mw',  label: 'Battery 3 · Wattage' },
+// What each sensor field is called. A plottable field is one of these on a
+// specific node — the same sensor type exists on more than one node, and
+// plotting "batt.soc" without a node would blend two different batteries.
+const FIELD_DEFS = [
+  { type: 's0',   key: 'm',   label: 'Soil 0 · Moisture' },
+  { type: 's0',   key: 'tmp', label: 'Soil 0 · Temp' },
+  { type: 's1',   key: 'm',   label: 'Soil 1 · Moisture' },
+  { type: 's1',   key: 'tmp', label: 'Soil 1 · Temp' },
+  { type: 's2',   key: 'm',   label: 'Soil 2 · Moisture' },
+  { type: 's2',   key: 'tmp', label: 'Soil 2 · Temp' },
+  { type: 'sht',  key: 'tmp', label: 'Ambient Temp' },
+  { type: 'sht',  key: 'rh',  label: 'Ambient Humidity' },
+  { type: 'uv',   key: 'lux', label: 'Light (lux)' },
+  { type: 'uv',   key: 'uvi', label: 'UV Index' },
+  { type: 'voc',  key: 'voc', label: 'VOC (raw)' },
+  { type: 'batt', key: 'soc', label: 'Lipo %' },
+  { type: 'batt', key: 'v',   label: 'Lipo Voltage' },
+  { type: 'vbat', key: 'v',   label: 'Board Voltage (vbat)' },
+  { type: 'rt',   key: 'tmp', label: 'Radio Temp' },
+  { type: 'pw0',  key: 'ma',  label: 'Battery 0 · Current' },
+  { type: 'pw0',  key: 'v',   label: 'Battery 0 · Voltage' },
+  { type: 'pw0',  key: 'mw',  label: 'Battery 0 · Wattage' },
+  { type: 'pw1',  key: 'ma',  label: 'Battery 1 · Current' },
+  { type: 'pw1',  key: 'v',   label: 'Battery 1 · Voltage' },
+  { type: 'pw1',  key: 'mw',  label: 'Battery 1 · Wattage' },
+  { type: 'pw2',  key: 'ma',  label: 'Battery 2 · Current' },
+  { type: 'pw2',  key: 'v',   label: 'Battery 2 · Voltage' },
+  { type: 'pw2',  key: 'mw',  label: 'Battery 2 · Wattage' },
+  { type: 'pw3',  key: 'ma',  label: 'Battery 3 · Current' },
+  { type: 'pw3',  key: 'v',   label: 'Battery 3 · Voltage' },
+  { type: 'pw3',  key: 'mw',  label: 'Battery 3 · Wattage' },
 ];
 
 const FIELD_COLORS = ['#39d0c4', '#58a6ff', '#bc8cff', '#d29922', '#3fb950', '#f85149', '#8b949e', '#56d364'];
 
-function fieldById(id) { return ANALYSIS_FIELDS.find(f => f.id === id); }
-function fieldColor(f) { return FIELD_COLORS[ANALYSIS_FIELDS.indexOf(f) % FIELD_COLORS.length]; }
-// Color is keyed off position in the *full* ANALYSIS_FIELDS list (not the
-// filtered/available one) so a field's color stays stable regardless of
-// which other fields currently have data.
+// Field ids are "<node>.<sensor_type>.<key>", e.g. "2.batt.soc".
+function makeField(node, def) {
+  return { ...def, node: Number(node), def: FIELD_DEFS.indexOf(def), id: `${node}.${def.type}.${def.key}` };
+}
+
+// The fields currently offered in the pickers — rebuilt by buildFieldPicker().
+let analysisFields = [];
+
+function fieldById(id) { return analysisFields.find(f => f.id === id); }
+
+// Line color per field, keyed off its sensor definition plus its node (not
+// its position in the currently-available list) so a field's color stays
+// stable regardless of which other fields have data. Node identity is shown
+// by the checkbox grouping and the "· Pico"/"· M0" in every label instead.
+function fieldColor(f) { return FIELD_COLORS[(f.def + f.node * 3) % FIELD_COLORS.length]; }
 
 // Every field whose raw key is "tmp" is a temperature reading (soil ×3,
 // ambient, radio module) and is affected by the °C/°F toggle. `useFahrenheit`,
@@ -52,8 +65,14 @@ function isTempField(f) { return f.key === 'tmp'; }
 // Chip/dropdown/axis/legend label for a field, with the current unit made
 // explicit for temperature fields so a plot never shows a bare number that
 // could be either °C or °F depending on what was clicked when it was drawn.
-function fieldLabel(f) {
+function chipLabel(f) {
   return isTempField(f) ? `${f.label} (${useFahrenheit ? '°F' : '°C'})` : f.label;
+}
+
+// Everywhere outside the per-node checkbox rows (dropdowns, axes, legends)
+// the node has to be in the label itself.
+function fieldLabel(f) {
+  return `${chipLabel(f)} · ${nodeInfo(f.node).short}`;
 }
 
 // Converts a temperature field's extracted y-values to the active display
@@ -66,10 +85,11 @@ function convertForField(f, ys) {
   return isTempField(f) && useFahrenheit ? ys.map(celsiusToFahrenheit) : ys;
 }
 
-// Which (sensor_type, key) pairs have ever actually logged a row — used to
-// hide checkboxes/dropdown options for sensors that were never wired up
-// (e.g. pw3). null = not yet fetched, or the fetch failed; in that case we
-// fail open and show every field rather than hiding things incorrectly.
+// Which (node, sensor_type, key) combinations have ever actually logged a
+// row — used to offer only fields each node really has (the M0 has no soil
+// sensors, pw3 was never wired up, ...). null = not yet fetched, or the
+// fetch failed; in that case we fail open and offer every field on every
+// configured node rather than hiding things incorrectly.
 let availableFieldKeys = null;
 
 async function fetchAvailableFields() {
@@ -78,7 +98,9 @@ async function fetchAvailableFields() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
-    availableFieldKeys = new Set(data.fields.map(f => `${f.sensor_type}.${f.key}`));
+    // An API from before node_id was added can't say which node has what.
+    if (data.fields.some(f => f.node_id == null)) throw new Error('response has no node_id');
+    availableFieldKeys = new Set(data.fields.map(f => `${f.node_id}.${f.sensor_type}.${f.key}`));
   } catch (e) {
     console.warn('[analysis] /api/available_fields failed, showing all fields', e);
     availableFieldKeys = null;
@@ -86,8 +108,17 @@ async function fetchAvailableFields() {
 }
 
 function visibleAnalysisFields() {
-  if (!availableFieldKeys) return ANALYSIS_FIELDS; // fail open
-  return ANALYSIS_FIELDS.filter(f => availableFieldKeys.has(`${f.type}.${f.key}`));
+  const nodes = availableFieldKeys
+    ? knownNodeIds([...availableFieldKeys].map(k => k.split('.')[0]))
+    : knownNodeIds();
+  const fields = [];
+  for (const node of nodes) {
+    for (const def of FIELD_DEFS) {
+      const f = makeField(node, def);
+      if (!availableFieldKeys || availableFieldKeys.has(f.id)) fields.push(f);
+    }
+  }
+  return fields;
 }
 
 // One entry per mode: what it shows, why it's useful, a concrete example
@@ -145,7 +176,7 @@ function renderModeInfo(mode) {
 
 let analysisMode = 'timeseries';
 // Default selection chosen for the exact soil s0/s2 gap this panel exists to help chase.
-const tsSelectedFields = new Set(['s0.m', 's2.m']);
+const tsSelectedFields = new Set(['1.s0.m', '1.s2.m']);
 
 // Smoothing is a simple centered moving average over N *points*, not N
 // minutes — readings aren't on a fixed time grid, so an index-based window
@@ -225,17 +256,26 @@ function toggleField(id, checked) {
 
 function buildFieldPicker() {
   const fields = visibleAnalysisFields();
+  analysisFields = fields;
   // A field that was checked (e.g. from a saved default) but turns out to have
   // no data shouldn't silently stay "selected" with no checkbox to uncheck it.
   [...tsSelectedFields].forEach(id => { if (!fields.some(f => f.id === id)) tsSelectedFields.delete(id); });
 
+  // One row per node, tinted in that node's color.
   const wrap = document.getElementById('ts-field-picker');
-  wrap.innerHTML = fields.map(f => {
-    const checked = tsSelectedFields.has(f.id);
-    return `<label class="field-chip${checked ? ' checked' : ''}" style="--field-color:${fieldColor(f)}" data-field="${f.id}">
-      <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleField('${f.id}', this.checked)">
-      <span class="swatch"></span>${fieldLabel(f)}
-    </label>`;
+  const nodes = [...new Set(fields.map(f => f.node))];
+  wrap.innerHTML = nodes.map(node => {
+    const info = nodeInfo(node);
+    const chips = fields.filter(f => f.node === node).map(f => {
+      const checked = tsSelectedFields.has(f.id);
+      return `<label class="field-chip${checked ? ' checked' : ''}" style="--field-color:${fieldColor(f)}" data-field="${f.id}">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleField('${f.id}', this.checked)">
+        <span class="swatch"></span>${chipLabel(f)}
+      </label>`;
+    }).join('');
+    return `<div class="field-group" style="--node-color:${info.color}">
+      <span class="field-group-name">${info.name}</span>${chips}
+    </div>`;
   }).join('');
 
   const opts = fields.map(f => `<option value="${f.id}">${fieldLabel(f)}</option>`).join('');
@@ -246,14 +286,14 @@ function buildFieldPicker() {
   // Defaults toward the "soil moisture vs UV" comparison that motivated
   // scatter mode in the first place — fall back to whatever's first/second
   // available if either of those specific fields has no data.
-  xSel.value = fields.some(f => f.id === 's2.m') ? 's2.m' : (fields[0]?.id ?? '');
-  ySel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[1]?.id ?? fields[0]?.id ?? '');
+  xSel.value = fields.some(f => f.id === '1.s2.m') ? '1.s2.m' : (fields[0]?.id ?? '');
+  ySel.value = fields.some(f => f.id === '1.uv.lux') ? '1.uv.lux' : (fields[1]?.id ?? fields[0]?.id ?? '');
 
   // Day-over-day defaults to lux — a diurnal cycle is exactly the pattern
   // this view exists to show off, and it makes a good first impression.
   const dayoverSel = document.getElementById('dayover-field-select');
   dayoverSel.innerHTML = opts;
-  dayoverSel.value = fields.some(f => f.id === 'uv.lux') ? 'uv.lux' : (fields[0]?.id ?? '');
+  dayoverSel.value = fields.some(f => f.id === '1.uv.lux') ? '1.uv.lux' : (fields[0]?.id ?? '');
 }
 
 // ── Time range: presets + custom, same fetch either way ───────────────────────
@@ -301,8 +341,8 @@ function inputToIso(value) {
 
 // ── Data fetching ─────────────────────────────────────────────────────────────
 
-async function fetchSeries(sensorType, start, end) {
-  const params = new URLSearchParams({ sensor_type: sensorType });
+async function fetchSeries(sensorType, start, end, nodeId) {
+  const params = new URLSearchParams({ sensor_type: sensorType, node_id: nodeId });
   if (start) params.set('start', start);
   if (end) params.set('end', end);
   const resp = await fetch(`${API_BASE}/api/data?${params.toString()}`);
@@ -310,6 +350,19 @@ async function fetchSeries(sensorType, start, end) {
   const data = await resp.json();
   if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
   return withKnownTs(data.packets); // same "unknown"-ts filter as the live cards
+}
+
+// One fetch per distinct (node, sensor_type), shared by every field that
+// needs it (e.g. s0.m and s0.tmp on the same node come from one request).
+function seriesKey(f) { return `${f.node}.${f.type}`; }
+
+async function fetchForFields(fields, start, end) {
+  const packets = {};
+  const needed = [...new Map(fields.map(f => [seriesKey(f), f])).values()];
+  await Promise.all(needed.map(async f => {
+    packets[seriesKey(f)] = await fetchSeries(f.type, start, end, f.node);
+  }));
+  return packets;
 }
 
 function extractPoints(packets, key) {
@@ -475,11 +528,7 @@ async function plotTimeSeries(start, end) {
     return;
   }
 
-  // One fetch per distinct sensor_type, reused across fields that share it
-  // (e.g. s0.m and s0.tmp both come from a single sensor_type=s0 call).
-  const typesNeeded = [...new Set(fields.map(f => f.type))];
-  const packetsByType = {};
-  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+  const packetsBySeries = await fetchForFields(fields, start, end);
 
   // Up to two traces per field (raw + smoothed), sharing that field's axis.
   // When both are on, the raw trace is faded so the smoothed line reads as
@@ -491,7 +540,7 @@ async function plotTimeSeries(start, end) {
   let anyPoints = false;
 
   fields.forEach((f, i) => {
-    const { xs, ys: rawYs } = extractPoints(packetsByType[f.type], f.key);
+    const { xs, ys: rawYs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const ys = convertForField(f, rawYs);
     if (xs.length) anyPoints = true;
     const yaxis = i === 0 ? 'y' : `y${i + 1}`;
@@ -534,8 +583,8 @@ async function plotScatter(start, end) {
   const yField = fieldById(document.getElementById('scatter-y-select').value);
 
   const [xPackets, yPackets] = await Promise.all([
-    fetchSeries(xField.type, start, end),
-    fetchSeries(yField.type, start, end),
+    fetchSeries(xField.type, start, end, xField.node),
+    fetchSeries(yField.type, start, end, yField.node),
   ]);
 
   const { xs: xTs, ys: xValsRaw } = extractPoints(xPackets, xField.key);
@@ -602,7 +651,7 @@ async function plotDayOverDay(start, end) {
     return;
   }
 
-  const packets = await fetchSeries(field.type, start, end);
+  const packets = await fetchSeries(field.type, start, end, field.node);
   const { xs, ys: rawYs } = extractPoints(packets, field.key);
   const ys = convertForField(field, rawYs);
   const dayGroups = groupByCalendarDay(xs, ys);
@@ -731,15 +780,13 @@ async function plotTrend(start, end) {
     return;
   }
 
-  const typesNeeded = [...new Set(fields.map(f => f.type))];
-  const packetsByType = {};
-  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+  const packetsBySeries = await fetchForFields(fields, start, end);
 
   const traces = [];
   let anyFit = false;
 
   fields.forEach((f, i) => {
-    const { xs, ys: rawYs } = extractPoints(packetsByType[f.type], f.key);
+    const { xs, ys: rawYs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const ys = convertForField(f, rawYs);
     const yaxis = i === 0 ? 'y' : `y${i + 1}`;
     const color = fieldColor(f);
@@ -806,15 +853,13 @@ async function plotRateOfChange(start, end) {
     return;
   }
 
-  const typesNeeded = [...new Set(fields.map(f => f.type))];
-  const packetsByType = {};
-  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+  const packetsBySeries = await fetchForFields(fields, start, end);
 
   const traces = [];
   let anyPoints = false;
 
   fields.forEach((f, i) => {
-    const { xs, ys: rawYs } = extractPoints(packetsByType[f.type], f.key);
+    const { xs, ys: rawYs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const ys = convertForField(f, rawYs);
     const { xs: rxs, ys: rys } = computeRateOfChange(xs, ys);
     if (rxs.length) anyPoints = true;
@@ -864,11 +909,9 @@ async function plotCorrelation(start, end) {
     return;
   }
 
-  const typesNeeded = [...new Set(fields.map(f => f.type))];
-  const packetsByType = {};
-  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+  const packetsBySeries = await fetchForFields(fields, start, end);
 
-  const series = fields.map(f => extractPoints(packetsByType[f.type], f.key));
+  const series = fields.map(f => extractPoints(packetsBySeries[seriesKey(f)], f.key));
 
   // nearestJoin walks from series i's timestamps toward series j's, so the
   // pairing (and therefore the coefficient) can differ very slightly
@@ -926,9 +969,7 @@ async function plotDataGaps(start, end) {
     return;
   }
 
-  const typesNeeded = [...new Set(fields.map(f => f.type))];
-  const packetsByType = {};
-  await Promise.all(typesNeeded.map(async t => { packetsByType[t] = await fetchSeries(t, start, end); }));
+  const packetsBySeries = await fetchForFields(fields, start, end);
 
   // start/end come from inputToIso as "YYYY-MM-DDTHH:MM:SS"; normalize to
   // the same space-separated form extractPoints() already uses everywhere
@@ -944,7 +985,7 @@ async function plotDataGaps(start, end) {
   let anyData = false;
 
   fields.forEach(f => {
-    const { xs } = extractPoints(packetsByType[f.type], f.key);
+    const { xs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const counts = new Array(bucketCount).fill(0);
     for (const x of xs) {
       const t = new Date(x).getTime();
