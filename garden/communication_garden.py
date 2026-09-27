@@ -275,6 +275,22 @@ def send_sync_chunk(sender, command, max_lines=20):
     print(f"[SYNC] Sent {sent} lines (gen {gen}, offset {offset}/{size}).")
 
 
+def send_storage_info(sender):
+    '''
+    Report SD usage so the Pi can show it: bytes of log waiting to sync (ub),
+    free space on the card (fb) and card size (tb). Same packet as the
+    Arduino nodes' handle_info().
+    '''
+    import os
+    used = sum(_file_size(p) or 0 for p in (SD_DATA_FILE, SD_SENDING_FILE))
+    try:
+        st = os.statvfs("/sd")
+        total, free = st[0] * st[2], st[0] * st[3]
+    except OSError:
+        total = free = 0
+    sender.send({"t": "info", "ub": used, "fb": free, "tb": total})
+
+
 # ---------------------------------------------------------------------------
 # Sensor read functions
 # ---------------------------------------------------------------------------

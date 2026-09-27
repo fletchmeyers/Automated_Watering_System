@@ -7,6 +7,7 @@ Also provides sensor_health_report() for diagnostics.
 Usage (while main.py is running):
     python3 sync_indoor.py            — request a poll, wait for new data, run health report
     python3 sync_indoor.py sync [N]   — start an SD sync session for node N (default 1) now
+    python3 sync_indoor.py info       — show each node's last reported log storage
     python3 sync_indoor.py health     — run health report only
     python3 sync_indoor.py interval N — set sense interval to N seconds
 
@@ -40,6 +41,11 @@ PING_PROGRESS_FILE = "/tmp/pico_ping_progress.json"
 # Manual "sync now" request — main.py's SyncManager picks it up and starts a
 # session right away instead of waiting for the next hour.
 SYNC_REQUEST_FILE = "/tmp/pico_sync_request.json"
+
+# Latest storage report from each node ({"<node>": {"ub", "fb", "tb", "at"}}),
+# written by main.py whenever an "info" reply arrives. Kept next to the code
+# rather than in /tmp so it survives a reboot.
+NODE_INFO_FILE = Path(__file__).parent / "node_info.json"
 
 WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
@@ -77,6 +83,35 @@ def request_bulk_sync(node_id=1):
 def request_sync_chunk(command):
     '''Write one SyncManager chunk request to the command file.'''
     Path(COMMAND_FILE).write_text(json.dumps(command))
+
+
+def request_info(node_id):
+    '''Ask a node how much of its log storage is in use.'''
+    command = {"t": "info", "n": node_id}
+    Path(COMMAND_FILE).write_text(json.dumps(command))
+    print(f"[INFO] Command written: {command}")
+
+
+def save_node_info(packet):
+    '''Record a node's "info" reply in NODE_INFO_FILE.'''
+    info = get_node_info()
+    info[str(packet.get("n"))] = {
+        "ub": packet.get("ub"),
+        "fb": packet.get("fb"),
+        "tb": packet.get("tb"),
+        "at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    NODE_INFO_FILE.write_text(json.dumps(info, indent=2))
+    print(f"[INFO] Node {packet.get('n')}: {packet.get('ub')} bytes waiting, "
+          f"{packet.get('fb')} free of {packet.get('tb')}.")
+
+
+def get_node_info():
+    '''Every node's last storage report, or {} if none yet.'''
+    try:
+        return json.loads(NODE_INFO_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 def request_set_interval(seconds, node_id=1):
@@ -288,6 +323,10 @@ if __name__ == "__main__":
     elif args[0] == "health":
         sensor_health_report()
 
+    elif args[0] == "info":
+        info = get_node_info()
+        print(json.dumps(info, indent=2) if info else "No storage reports yet.")
+
     elif args[0] == "ping":
         request_ping_test()
         result = wait_for_ping_result()
@@ -308,5 +347,5 @@ if __name__ == "__main__":
         wait_for_interval_ack()
 
     else:
-        print("Usage: python3 sync_indoor.py [poll|sync [node]|health|ping|interval <seconds>]")
+        print("Usage: python3 sync_indoor.py [poll|sync [node]|health|info|ping|interval <seconds>]")
         sys.exit(1)
