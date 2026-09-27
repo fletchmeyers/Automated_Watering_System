@@ -98,3 +98,41 @@ def test_poll_is_stamped_when_sent_not_when_queued(tmp_path, monkeypatch):
     sent = json.loads(radio.sent[0])
     assert sent["ts"] != "2000-01-01T00:00:00"
     assert sent["ts"][:4] >= "2026"
+
+
+# ── Node health ──────────────────────────────────────────────────────────────
+
+def test_node_goes_unreachable_after_misses_and_back_when_heard(monkeypatch):
+    from communication_indoor import NodeHealth
+    clock = [1000.0]
+    monkeypatch.setattr(communication_indoor.time, "monotonic", lambda: clock[0])
+    health = NodeHealth([1, 2], max_misses=3, probe_interval=300)
+
+    health.missed(2); health.missed(2)
+    assert health.reachable(2)
+    health.heard(2)                      # a reply resets the count
+    health.missed(2); health.missed(2); health.missed(2)
+    assert not health.reachable(2)
+    assert health.reachable(1)
+
+    assert health.probe_due() == []      # just went unreachable — wait a full interval
+    clock[0] += 300
+    assert health.probe_due() == [2]
+    health.mark_probed(2)
+    assert health.probe_due() == []
+
+    health.heard(2)
+    assert health.reachable(2)
+    health.missed(None)                  # commands without a node ID are ignored
+    health.heard(99)                     # unknown nodes too
+
+
+def test_sync_skips_unreachable_nodes():
+    from communication_indoor import SyncManager
+    sync = SyncManager([1, 2])
+    sync.request_now(2)
+    command = sync.next_command(reachable=lambda n: n != 2)
+    assert command["n"] == 1             # node 2 was asked for but isn't answering
+    sync.abort()
+    assert sync.next_command(reachable=lambda n: n != 2) is None
+    assert sync.next_command()["n"] == 2 # still queued for when it's back
