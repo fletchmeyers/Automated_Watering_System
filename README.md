@@ -36,13 +36,16 @@ script, and path reference below assumes this exact location.
   `data_from_pico.txt` to every 5 minutes via cron, and where the Pi's
   clone should be checked out. **Clone with
   `git clone -b update_dashboard_data <repo-url>`.**
-- **`main`** is version-control history only — it does not run anywhere
-  and is not what the Pi should be cloned from. New feature branches are
-  cut from `update_dashboard_data`, not from `main`.
-- **Workflow for new features**: branch off `update_dashboard_data` →
-  develop → open a PR back into `update_dashboard_data` → once merged and
-  confirmed working live, merge `update_dashboard_data` into `main` (to
-  keep history current) → delete the feature branch.
+- **`main`** is the readable code history — it does not run anywhere and
+  is not what the Pi should be cloned from. It never gets the 5-minute
+  `data update` commits; those only exist on `update_dashboard_data`.
+- **Workflow for new features**: branch off **`main`** → develop → open a
+  PR into `update_dashboard_data` → once merged and confirmed working
+  live, open a PR from the same feature branch into `main` → delete the
+  feature branch.
+- **Never merge `update_dashboard_data` into `main`**, and never cut a
+  feature branch from it: either one pulls thousands of data commits into
+  `main`'s history. A branch cut from `main` merges cleanly into both.
 - If GitHub Pages' configured source branch (Settings → Pages) ever
   changes, update this section to match — that setting is the actual
   source of truth, this doc is just documentation of it.
