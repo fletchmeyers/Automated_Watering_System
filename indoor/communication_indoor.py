@@ -4,6 +4,7 @@ Python 3 running on Raspberry Pi 3B
 CommandManager:      forward commands from the Pi to the Pico and verify acknowledgement.
 BatchReceiver:       collect incoming sensor packets, detect batch completion, send acks.
 PollingTimer:        decide when to poll each node on a regular schedule.
+NodeHealth:          stop spending radio time on nodes that aren't answering.
 FragmentReassembler: stitch oversized packets back together from radio fragments.
 SyncManager:         pull logged SD data from nodes, one chunk per request.
 '''
@@ -168,7 +169,7 @@ class CommandManager:
         self._last_sent  = 0
 
 
-def run_ping_test(radio, node_id=1, count=10, timeout=1.5):
+def run_ping_test(radio, node_id=1, count=10, timeout=1.5, report_progress=True):
     '''
     Fire `count` bare ping packets at the Pico back-to-back, each waiting up
     to `timeout` seconds for a matching pong, and return hit/miss + round-trip
@@ -209,6 +210,8 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5):
 
         results.append({"q": q, "ok": rtt_ms is not None, "rtt_ms": rtt_ms})
 
+        if not report_progress:
+            continue
         hits_so_far = sum(1 for r in results if r["ok"])
         try:
             Path(PING_PROGRESS_FILE).write_text(json.dumps({
@@ -232,6 +235,55 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5):
         "avg_rtt_ms": avg_rtt,
         "results":    results,
     }
+
+
+class NodeHealth:
+    '''
+    Tracks which nodes are answering, so one that isn't — powered off, out of
+    range, or asleep — stops tying up the radio. Every command waits up to
+    CMD_TIMEOUT for a reply, and only one command can be outstanding, so a
+    silent node polled every minute would otherwise cost ~45s of every
+    minute for everyone else.
+
+    After max_misses timed-out commands in a row a node is unreachable: it
+    gets no polls, storage requests or sync chunks, just a quick ping every
+    probe_interval seconds. Any packet heard from it makes it reachable again.
+    '''
+    def __init__(self, node_ids, max_misses=3, probe_interval=300):
+        self.max_misses     = max_misses
+        self.probe_interval = probe_interval
+        self._misses        = {nid: 0 for nid in node_ids}
+        self._last_probe    = {nid: 0.0 for nid in node_ids}
+
+    def reachable(self, node_id):
+        return self._misses.get(node_id, 0) < self.max_misses
+
+    def missed(self, node_id):
+        '''A command to node_id timed out.'''
+        if node_id not in self._misses:
+            return
+        self._misses[node_id] += 1
+        if self._misses[node_id] == self.max_misses:
+            print(f"[HEALTH] Node {node_id} missed {self.max_misses} commands in a row — "
+                  f"marking unreachable, checking every {self.probe_interval}s.")
+            self._last_probe[node_id] = time.monotonic()
+
+    def heard(self, node_id):
+        '''Any packet from node_id arrived.'''
+        if node_id not in self._misses:
+            return
+        if not self.reachable(node_id):
+            print(f"[HEALTH] Node {node_id} is answering again.")
+        self._misses[node_id] = 0
+
+    def probe_due(self):
+        '''Unreachable nodes due for a check.'''
+        now = time.monotonic()
+        return [nid for nid in self._misses
+                if not self.reachable(nid) and now - self._last_probe[nid] >= self.probe_interval]
+
+    def mark_probed(self, node_id):
+        self._last_probe[node_id] = time.monotonic()
 
 
 class BatchReceiver:
@@ -432,21 +484,25 @@ class SyncManager:
         if node_id not in self._requested:
             self._requested.append(node_id)
 
-    def next_command(self):
-        '''Return the next "sync" command to send, or None if there's nothing to do.'''
-        if self.active is None and not self._start_session():
+    def next_command(self, reachable=lambda node_id: True):
+        '''Return the next "sync" command to send, or None if there's nothing to do.
+        Sessions only start for nodes reachable() says are answering.'''
+        if self.active is None and not self._start_session(reachable):
             return None
         command = {"t": "sync", "n": self.active, "k": self.chunk_lines}
         command.update(self._cursors.get(self.active, {}))
         self.awaiting = True
         return command
 
-    def _start_session(self):
+    def _start_session(self, reachable):
         hour = datetime.now().strftime("%Y-%m-%dT%H")
-        if self._requested:
-            node_id = self._requested.pop(0)
+        requested = [nid for nid in self._requested if reachable(nid)]
+        if requested:
+            node_id = requested[0]
+            self._requested.remove(node_id)
         else:
-            due = [nid for nid in self.node_ids if self._last_hour.get(nid) != hour]
+            due = [nid for nid in self.node_ids
+                   if self._last_hour.get(nid) != hour and reachable(nid)]
             if not due:
                 return False
             node_id = due[0]

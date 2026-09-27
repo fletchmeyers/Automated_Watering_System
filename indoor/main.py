@@ -19,7 +19,7 @@ from sync_indoor import (
 
 from communication_indoor import (
     CommandManager, BatchReceiver, PollingTimer, FragmentReassembler, SyncManager,
-    run_ping_test,
+    NodeHealth, run_ping_test,
 )
 
 import db
@@ -58,16 +58,27 @@ cmd   = CommandManager(on_send=sync.on_send)
 batch = BatchReceiver(DATA_FILE, db_conn=db_conn)
 timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL)
 info_timer = PollingTimer(NODE_IDS, poll_interval=INFO_INTERVAL)
+health = NodeHealth(NODE_IDS)
 frags = FragmentReassembler()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 while True:
 
-    # ── A sync chunk that timed out ends that node's session for the hour ──
+    # ── A timed-out command counts against its node; a timed-out sync ────
+    # ── chunk also ends that node's session for the hour ──────────────────
     if cmd.timed_out is not None:
+        health.missed(cmd.timed_out.get("n"))
         if cmd.timed_out.get("t") == "sync":
             sync.abort()
         cmd.timed_out = None
+
+    # ── Quick check on nodes that stopped answering ───────────────────────
+    if cmd.pending is None and not Path(COMMAND_FILE).exists():
+        for node_id in health.probe_due():
+            health.mark_probed(node_id)
+            result = run_ping_test(rfm69, node_id=node_id, count=3, report_progress=False)
+            if result["hits"]:
+                health.heard(node_id)
 
     # ── Manual "sync now" request (sync_indoor.py sync / API) ─────────────
     sync_req = Path(SYNC_REQUEST_FILE)
@@ -97,8 +108,8 @@ while True:
     # same reason — a second request_poll() would overwrite the first.
     # Polls come first, so a long sync session never starves them.
     if cmd.pending is None and not Path(COMMAND_FILE).exists():
-        due = timer.due_nodes()
-        info_due = info_timer.due_nodes()
+        due = [n for n in timer.due_nodes() if health.reachable(n)]
+        info_due = [n for n in info_timer.due_nodes() if health.reachable(n)]
         if due:
             request_poll(due[0])
             timer.mark_polled(due[0])
@@ -106,7 +117,7 @@ while True:
             request_info(info_due[0])
             info_timer.mark_polled(info_due[0])
         else:
-            chunk_request = sync.next_command()
+            chunk_request = sync.next_command(health.reachable)
             if chunk_request is not None:
                 request_sync_chunk(chunk_request)
 
@@ -158,6 +169,9 @@ while True:
 
         data     = json.loads(payload.decode("utf-8"))
         pkt_type = data.get("t")
+        # Anything a node sends shows it's reachable. Sync lines carry no
+        # "n" — they come from whichever node is being synced.
+        health.heard(data.get("n", sync.active))
 
         if pkt_type == "ts":
             batch.open_batch(data.get("v"))
