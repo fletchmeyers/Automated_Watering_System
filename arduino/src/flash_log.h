@@ -1,28 +1,19 @@
 /*
  * flash_log.h
  *
- * On-node reading log for sync — the Arduino equivalent of the Pico's
- * data.txt on SD. Readings are stored as records numbered 0, 1, 2, ...;
- * the Pi pulls them with the same "sync" requests it sends the Pico, using
- * the record number as the sync offset.
+ * The LOG_FLASH_SAMD backend for node_log: readings stored as numbered
+ * records in the SAMD21's spare internal flash, for boards without an SD
+ * card. The Pi pulls them with the same "sync" requests it sends the Pico,
+ * using the record number as the sync offset.
  *
- * Which backend (if any) a board uses is chosen in its board_config_*.h:
- *   #define LOG_BACKEND LOG_FLASH_SAMD   // internal flash, SAMD21 boards
- *   #define LOG_BACKEND LOG_NONE         // no storage — sync always reports 0 records
- * Boards that don't define LOG_BACKEND get LOG_NONE.
+ * Note: a firmware upload (bossac --erase) wipes the whole flash, log
+ * included. Resets and power loss don't.
  */
 
 #ifndef FLASH_LOG_H
 #define FLASH_LOG_H
 
 #include <Arduino.h>
-
-#define LOG_NONE       0
-#define LOG_FLASH_SAMD 1
-
-#ifndef LOG_BACKEND
-  #define LOG_BACKEND LOG_NONE
-#endif
 
 // Longest reading JSON a record can hold (the record's timestamp is kept
 // separately and added back when the record is sent).

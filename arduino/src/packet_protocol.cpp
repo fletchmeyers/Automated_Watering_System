@@ -14,9 +14,15 @@ Adafruit_INA238 ina_0, ina_1, ina_2, ina_3;
 #ifdef BOARD_HAS_RTC
 RTCZero rtc;
 #endif
+#ifdef BOARD_HAS_PCF8523
+RTC_PCF8523 ext_rtc;
+static bool ext_rtc_ok = false;
+#endif
 
 SensorEntry SENSOR_LIST[] = {
+#if RFM69_CS != VBAT_PIN   // the battery divider pin can't double as the radio's CS
   { "vbat", vbat_init,   vbat_read,   false },
+#endif
   { "s0",   soil_0_init, soil_0_read, false },
   { "s1",   soil_1_init, soil_1_read, false },
   { "s2",   soil_2_init, soil_2_read, false },
@@ -81,8 +87,12 @@ void send_latest(PacketSender &sender, const char *timestamp) {
 // ── Clock ────────────────────────────────────────────────────────────────
 // Set from the "ts" in every poll. Times are the Pi's local wall-clock time
 // counted as seconds since 1970, and only ever turned back into the same
-// "YYYY-MM-DDTHH:MM:SS" form — no time zones involved. Boards without an
-// RTC fall back to millis(), which is fine while the node never sleeps.
+// "YYYY-MM-DDTHH:MM:SS" form — no time zones involved.
+//
+// clock_now() reads the SAMD21's internal RTC (keeps running in sleep), or
+// millis() on boards without one. A battery-backed PCF8523, if the board
+// has one, carries the time across resets and power loss: it sets the
+// internal clock at boot and is corrected whenever a poll shows it drifting.
 
 static bool     have_time = false;
 #ifndef BOARD_HAS_RTC
@@ -120,7 +130,7 @@ static bool parse_iso(const char *ts, uint32_t *epoch) {
   return true;
 }
 
-static void format_iso(uint32_t epoch, char out[20]) {
+void format_iso(uint32_t epoch, char out[20]) {
   int y; unsigned mo, d;
   civil_from_days(epoch / 86400, &y, &mo, &d);
   uint32_t t = epoch % 86400;
@@ -129,13 +139,7 @@ static void format_iso(uint32_t epoch, char out[20]) {
            (unsigned)(t / 3600) % 100u, (unsigned)(t / 60 % 60), (unsigned)(t % 60));
 }
 
-void clock_begin() {
-#ifdef BOARD_HAS_RTC
-  rtc.begin();
-#endif
-}
-
-static void clock_set(uint32_t epoch) {
+static void clock_set_internal(uint32_t epoch) {
 #ifdef BOARD_HAS_RTC
   rtc.setEpoch(epoch);
 #else
@@ -143,6 +147,42 @@ static void clock_set(uint32_t epoch) {
   base_ms = millis();
 #endif
   have_time = true;
+}
+
+void clock_begin() {
+#ifdef BOARD_HAS_RTC
+  rtc.begin();
+#endif
+#ifdef BOARD_HAS_PCF8523
+  ext_rtc_ok = ext_rtc.begin();
+  if (!ext_rtc_ok) {
+    Serial.println(F("[CLOCK] RTC chip not found — waiting for the first poll."));
+  } else if (ext_rtc.lostPower() || !ext_rtc.initialized()) {
+    Serial.println(F("[CLOCK] RTC chip not set yet — waiting for the first poll."));
+  } else {
+    clock_set_internal(ext_rtc.now().unixtime());
+    char ts[20];
+    format_iso(clock_now(), ts);
+    Serial.print(F("[CLOCK] Time from RTC chip: "));
+    Serial.println(ts);
+  }
+#endif
+}
+
+static void clock_set(uint32_t epoch) {
+  clock_set_internal(epoch);
+#ifdef BOARD_HAS_PCF8523
+  if (ext_rtc_ok) {
+    bool unset = ext_rtc.lostPower() || !ext_rtc.initialized();
+    int32_t drift = (int32_t)(ext_rtc.now().unixtime() - epoch);
+    if (unset || drift > 2 || drift < -2) {
+      // adjust() also turns on coin-cell backup (off at the chip's power-on default).
+      ext_rtc.adjust(DateTime(epoch));
+      ext_rtc.start();
+      Serial.println(F("[CLOCK] RTC chip set from poll."));
+    }
+  }
+#endif
 }
 
 bool clock_valid() { return have_time; }
@@ -153,41 +193,6 @@ uint32_t clock_now() {
 #else
   return base_epoch + (millis() - base_ms) / 1000;
 #endif
-}
-
-// ── Reading log ──────────────────────────────────────────────────────────
-// One record per sensor per snapshot, stored as the reading's JSON (with
-// "t" first) and the snapshot time. The time is added back as "ts" when
-// the record is synced, so records look exactly like the Pico's SD lines.
-
-void log_latest_readings() {
-  if (!clock_valid() || latest_count == 0 || log_capacity() == 0) return;
-
-  uint32_t now = clock_now();
-  size_t logged = 0;
-  for (size_t i = 0; i < latest_count; i++) {
-    JsonDocument rec;
-    rec["t"] = latest_tags[i];
-    for (JsonPairConst kv : latest_readings[i].as<JsonObjectConst>()) {
-      rec[kv.key()] = kv.value();
-    }
-    if (measureJson(rec) > LOG_JSON_MAX) {
-      Serial.print(F("[LOG] Reading too long to log: "));
-      Serial.println(latest_tags[i]);
-      continue;
-    }
-    char buf[LOG_JSON_MAX + 1];
-    size_t len = serializeJson(rec, buf, sizeof(buf));
-    if (log_append(now, buf, len)) logged++;
-  }
-
-  Serial.print(F("[LOG] Logged "));
-  Serial.print(logged);
-  Serial.print(F(" readings ("));
-  Serial.print(log_head() - log_tail());
-  Serial.print(F("/"));
-  Serial.print(log_capacity());
-  Serial.println(F(" records waiting)."));
 }
 
 // ── Command receive/dispatch ─────────────────────────────────────────────
@@ -201,6 +206,9 @@ bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
   if (!radio.recv(buf, &len)) {
     return false;
   }
+
+  // Fragments of another node's oversized packet — never addressed to us.
+  if (len > 0 && buf[0] == '~') return false;
 
   DeserializationError err = deserializeJson(out, (const char *)buf, len);
   if (err) {
@@ -249,67 +257,15 @@ static long handle_set_interval(JsonDocument &command, PacketSender &sender) {
   return seconds * 1000L;
 }
 
-// Answer one Pi "sync" request — same protocol as send_sync_chunk() on the
-// Pico, with record numbers as offsets. Request {"t":"sync","g":..,"o":..,"k":..}:
-// g/o confirm the Pi has stored everything before record o. Reply: up to k
-// records as JSON lines, then {"t":"se","g":..,"o":<next>,"c":<sent>,"m":<more>}.
-// With no log (LOG_NONE) this always answers 0 records.
-static void handle_sync(JsonDocument &command, PacketSender &sender) {
-  uint16_t g = log_format_id();
-  if (command["g"].as<long>() == g && command["o"].is<uint32_t>()) {
-    log_confirm(command["o"].as<uint32_t>());
-  }
-  uint32_t k = command["k"] | 8;
-
-  uint32_t i = log_tail(), sent = 0, epoch;
-  char json[LOG_JSON_MAX + 1], ts[20], line[LOG_JSON_MAX + 32];
-  while (sent < k && i < log_head()) {
-    if (log_read(i, &epoch, json)) {
-      format_iso(epoch, ts);
-      int len = snprintf(line, sizeof(line), "%.*s,\"ts\":\"%s\"}",
-                         (int)strlen(json) - 1, json, ts);
-      sender.send_raw((const uint8_t *)line, len);
-      delay(SYNC_LINE_GAP_MS);
-      sent++;
-    }
-    i++;
-  }
-
-  JsonDocument doc;
-  doc["g"] = g;
-  doc["o"] = i;
-  doc["c"] = sent;
-  doc["m"] = i < log_head() ? 1 : 0;
-  sender.send(doc, "se");
-
-  Serial.print(F("[SYNC] Sent "));
-  Serial.print(sent);
-  Serial.print(F(" records ("));
-  Serial.print(log_head() - i);
-  Serial.println(F(" left)."));
-}
-
-// Report log usage so the Pi can show it: bytes used, free and total.
-static void handle_info(PacketSender &sender) {
-  uint32_t rb = log_record_bytes();
-  uint32_t used = (log_head() - log_tail()) * rb;
-  uint32_t total = log_capacity() * rb;
-  JsonDocument doc;
-  doc["ub"] = used;
-  doc["fb"] = total - used;
-  doc["tb"] = total;
-  sender.send(doc, "info");
-}
-
 long dispatch_command(JsonDocument &command, PacketSender &sender,
                        RH_RF69 &radio, uint8_t node_id) {
   if (command.isNull()) return -1;
 
-  // Commands are addressed via "n". With more than one radio node sharing
-  // this frequency/encryption key, every node hears every command — ignore
-  // anything not addressed to us. Missing "n" is accepted for backward
-  // compatibility with hand-crafted single-node testing.
-  if (!command["n"].isNull() && command["n"].as<int>() != node_id) {
+  // Commands are addressed via "n". Every node on this frequency/key hears
+  // every packet — the Pi's commands to other nodes, other nodes' replies,
+  // and their sync lines (which carry no "n" at all) — so anything not
+  // addressed to us is ignored.
+  if (command["n"].isNull() || command["n"].as<int>() != node_id) {
     return -1;
   }
 
@@ -327,9 +283,9 @@ long dispatch_command(JsonDocument &command, PacketSender &sender,
   } else if (strcmp(t, "ping") == 0) {
     handle_ping(command, sender);
   } else if (strcmp(t, "sync") == 0) {
-    handle_sync(command, sender);
+    node_log_sync(command, sender);
   } else if (strcmp(t, "info") == 0) {
-    handle_info(sender);
+    node_log_info(sender);
   } else if (strcmp(t, "set_interval") == 0) {
     return handle_set_interval(command, sender);
   } else if (strcmp(t, "data_ack") == 0) {
