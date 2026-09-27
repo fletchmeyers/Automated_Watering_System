@@ -1,4 +1,5 @@
 #include "board_config.h"
+#include "node_log.h"
 #include "flash_log.h"
 
 #if LOG_BACKEND == LOG_FLASH_SAMD
@@ -6,8 +7,8 @@
 /*
  * SAMD21 internal flash backend.
  *
- * The log area is the top LOG_FLASH_BYTES of flash. Firmware uploads only
- * write as far as the firmware image, so the log survives reflashing.
+ * The log area is the top LOG_FLASH_BYTES of flash. It survives resets and
+ * power loss, but a firmware upload erases it along with everything else.
  *
  * Flash is erased a 256-byte row at a time and written a 64-byte page at a
  * time, so each record is exactly one page and a page is only ever written
@@ -173,17 +174,5 @@ uint32_t log_head()         { return head; }
 uint32_t log_capacity()     { return ready ? SLOT_COUNT : 0; }
 uint32_t log_record_bytes() { return PAGE_BYTES; }
 uint16_t log_format_id()    { return format_id; }
-
-#else  // LOG_NONE
-
-bool log_init()                                   { return false; }
-bool log_append(uint32_t, const char *, uint8_t)  { return false; }
-bool log_read(uint32_t, uint32_t *, char *)       { return false; }
-void log_confirm(uint32_t)                        {}
-uint32_t log_tail()                               { return 0; }
-uint32_t log_head()                               { return 0; }
-uint32_t log_capacity()                           { return 0; }
-uint32_t log_record_bytes()                       { return 0; }
-uint16_t log_format_id()                          { return 0; }
 
 #endif

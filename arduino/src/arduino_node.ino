@@ -4,7 +4,7 @@
  * Feather M0 + RFM69HCW FeatherWing sensor node.
  * Mirrors code.py's structure: read sensors on a timer, keep the latest
  * reading in memory, log a snapshot every LOG_INTERVAL_MS for the Pi to
- * pull with "sync" (see flash_log.h), and listen for Pi commands
+ * pull with "sync" (see node_log.h), and listen for Pi commands
  * (poll/ping/sync/info/set_interval) at all times.
  *
  * Requires libraries: RadioHead (RH_RF69), ArduinoJson (v6.x).
@@ -30,6 +30,12 @@ void setup() {
     delay(10);
     }
 
+#ifdef SD_CS
+  // Deselect the SD card before the radio touches the shared SPI bus.
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+#endif
+
   pinMode(RFM69_RST, OUTPUT);
   digitalWrite(RFM69_RST, LOW);
   digitalWrite(RFM69_RST, HIGH);
@@ -49,10 +55,10 @@ void setup() {
 
   init_sensors();
   clock_begin();
-  log_init();
+  node_log_init();
 
   last_sense_at = millis() - sense_interval_ms; // sense immediately on first loop
-  last_log_at = millis() - LOG_INTERVAL_MS;      // log as soon as the first poll sets the clock
+  last_log_at = millis() - LOG_INTERVAL_MS;      // log as soon as the clock is valid
   Serial.println(F("[BOOT] Node ready."));
 }
 
@@ -65,10 +71,10 @@ void loop() {
     run_sense_cycle();
   }
 
-  // ── Log cycle (waits for the first poll to set the clock) ────────────
+  // ── Log cycle (waits until the clock is valid) ───────────────────────
   if (clock_valid() && now - last_log_at >= LOG_INTERVAL_MS) {
     last_log_at = now;
-    log_latest_readings();
+    node_log_snapshot(clock_now());
   }
 
   // ── Radio listen (short timeout so the sense loop stays on schedule) ──

@@ -23,7 +23,7 @@
 #include <ArduinoJson.h>
 #include <RH_RF69.h>
 #include "board_config.h"
-#include "flash_log.h"
+#include "node_log.h"
 
 #ifndef LOG_INTERVAL_MS
   #define LOG_INTERVAL_MS (5UL * 60 * 1000)
@@ -121,13 +121,14 @@ void init_sensors();
 void run_sense_cycle();
 void send_latest(PacketSender &sender, const char *timestamp);
 
-// ── Clock + reading log ──────────────────────────────────────────────────
-// The node has no clock of its own until the Pi's first poll, which carries
-// the Pi's time. Nothing is logged before that.
+// ── Clock ────────────────────────────────────────────────────────────────
+// Kept in the Pi's local wall-clock time. Set from every poll; a board with
+// a battery-backed RTC chip (BOARD_HAS_PCF8523) also has it at boot.
+// Nothing is logged until the clock is valid.
 void clock_begin();
 bool clock_valid();
-uint32_t clock_now();             // seconds since 1970, Pi's local wall-clock time
-void log_latest_readings();       // add the current latest_readings to the log
+uint32_t clock_now();                        // seconds since 1970
+void format_iso(uint32_t epoch, char out[20]);  // "YYYY-MM-DDTHH:MM:SS"
 
 // ── Command handling ─────────────────────────────────────────────────────
 // Returns a parsed JsonDocument if a valid command packet was received,
