@@ -67,3 +67,34 @@ def test_info_reply_clears_pending_info_command(tmp_path, monkeypatch):
     assert cmd.handle_ack({"t": "info", "n": 2, "ub": 0, "fb": 1, "tb": 1})
     assert cmd.pending is None
     assert not command_file.exists()
+
+
+# ── Addressing ───────────────────────────────────────────────────────────────
+
+def test_pico_ignores_packets_not_addressed_to_it():
+    from sync_garden import dispatch_command
+    sender = PacketSender(1, Radio())
+    calls = []
+    def send_latest(s, ts):
+        calls.append(ts)
+    for packet in ({"t": "poll", "ts": "2026-09-27T09:00:00", "n": 2},          # another node's command
+                   {"t": "vbat", "q": 5, "n": 2, "v": 4.1},                      # another node's reply
+                   {"t": "poll", "ts": "2026-09-27T09:00:00"}):                  # no address at all
+        dispatch_command(packet, sender, None, None, lambda: "ts", send_latest, None, 1)
+    assert calls == []
+    dispatch_command({"t": "poll", "ts": "2026-09-27T09:00:00", "n": 1},
+                     sender, None, None, lambda: "ts", send_latest, None, 1)
+    assert calls == ["ts"]
+
+
+def test_poll_is_stamped_when_sent_not_when_queued(tmp_path, monkeypatch):
+    command_file = tmp_path / "cmd.json"
+    monkeypatch.setattr(communication_indoor, "COMMAND_FILE", str(command_file))
+    monkeypatch.setattr(communication_indoor.time, "sleep", lambda s: None)
+    command_file.write_text(json.dumps({"t": "poll", "ts": "2000-01-01T00:00:00", "n": 1}))
+
+    radio = Radio()
+    CommandManager().check_and_forward(radio)
+    sent = json.loads(radio.sent[0])
+    assert sent["ts"] != "2000-01-01T00:00:00"
+    assert sent["ts"][:4] >= "2026"

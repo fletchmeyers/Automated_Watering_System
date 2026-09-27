@@ -105,6 +105,11 @@ class CommandManager:
 
         try:
             command = json.loads(cmd_path.read_text())
+            if command.get("t") == "poll":
+                # Stamp the time as it goes out, not when it was queued — a
+                # poll retried for up to CMD_TIMEOUT would otherwise set the
+                # node's clock that far behind.
+                command["ts"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
             packet  = json.dumps(command, separators=(",", ":"))
             time.sleep(0.5)  # let Pico finish any in-progress work before listening
             radio.send(bytes(packet, "utf-8"))
