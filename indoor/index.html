@@ -14,93 +14,29 @@
     <h1>garden<span>/</span>dashboard</h1>
   </div>
   <div class="header-right">
-    <div id="status-dot" class="status-dot stale"></div>
-    <span id="last-update">loading...</span>
+    <!-- One chip per node: status dot + time since its last packet (dashboard.js) -->
+    <div id="node-status" class="node-status"><span class="node-status-loading">loading...</span></div>
     <div class="unit-toggle" id="unit-toggle">
       <button id="unit-c-btn" class="unit-btn active" onclick="setUnitPref('C')" type="button">°C</button>
       <button id="unit-f-btn" class="unit-btn" onclick="setUnitPref('F')" type="button">°F</button>
     </div>
     <button id="refresh-btn" onclick="triggerRefresh()">↺ refresh</button>
-    <select id="ping-node-select">
-      <option value="1">Pico (CircuitPython)</option>
-      <option value="2">M0 (Arduino)</option>
-    </select>
+    <!-- Filled from NODES in dashboard.js -->
+    <select id="ping-node-select"></select>
     <button id="ping-btn" onclick="runPingTest()">⇄ ping test</button>
     <span id="ping-result"></span>
   </div>
 </header>
 <div class="grid" id="grid">
 
-  <!-- Battery -->
-  <div class="card" id="card-batt">
+  <!-- Every node at a glance. The sensor cards (one per sensor per node) are
+       created by dashboard.js as each node's data arrives, ahead of the
+       weather card. -->
+  <div class="card card-wide" id="card-nodes">
     <div class="card-header">
-      <span class="card-title">Lipo</span>
-      <span id="batt-badge" class="card-badge badge-gray">–</span>
+      <span class="card-title">Nodes</span>
     </div>
-    <div id="batt-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Air: SHT40 -->
-  <div class="card" id="card-sht">
-    <div class="card-header">
-      <span class="card-title">Temperature & Humidity</span>
-      <span class="node-badge">SHT40</span>
-    </div>
-    <div id="sht-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Air Quality: SGP40 -->
-  <div class="card" id="card-voc">
-    <div class="card-header">
-      <span class="card-title">Air Quality (VOC)</span>
-      <span id="voc-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="voc-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- UV & Light -->
-  <div class="card" id="card-uv">
-    <div class="card-header">
-      <span class="card-title">UV & Light</span>
-      <span class="node-badge">LTR390</span>
-    </div>
-    <div id="uv-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Soil Sensors -->
-  <div class="card card-wide" id="card-soil">
-    <div class="card-header">
-      <span class="card-title">Soil Sensors</span>
-      <span class="node-badge">Seesaw</span>
-    </div>
-    <div id="soil-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- Power Monitors -->
-  <div class="card card-wide" id="card-power">
-    <div class="card-header">
-      <span class="card-title">Battery</span>
-      <span id="power-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="power-body"><div class="no-data">No data</div></div>
-  </div>
-
-  <!-- System Health -->
-  <div class="card" id="card-health">
-    <div class="card-header">
-      <span class="card-title">Sensor Health</span>
-      <span id="health-badge" class="card-badge badge-gray">–</span>
-    </div>
-    <div id="health-body"><div class="no-data">Loading...</div></div>
-  </div>
-
-  <!-- Radio / System -->
-  <div class="card" id="card-system">
-    <div class="card-header">
-      <span class="card-title">Radio & System</span>
-      <span class="node-badge">RFM69</span>
-    </div>
-    <div id="system-body"><div class="no-data">No data</div></div>
+    <div class="card-body"><div class="no-data">Loading...</div></div>
   </div>
 
   <!-- Weather Forecast -->
@@ -189,6 +125,7 @@
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
 initUnitToggle();
+buildPingNodeSelect();
 refresh();
 setInterval(refresh, REFRESH_MS);
 initCardCustomization();

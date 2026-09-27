@@ -134,14 +134,15 @@ def query_readings(conn, minutes=None, start=None, end=None,
 
 def get_available_fields(conn):
     '''
-    Return every (sensor_type, key) pair that has ever logged at least one
-    row, as a list of {"sensor_type": ..., "key": ...} dicts. A cheap
-    presence check — used to hide dashboard analysis-panel checkboxes for
-    sensors that were never wired up (e.g. pw3), without pulling any actual
-    reading data to figure that out.
+    Return every (node_id, sensor_type, key) combination that has ever
+    logged at least one row, as a list of {"node_id": ..., "sensor_type":
+    ..., "key": ...} dicts. A cheap presence check — used so the dashboard's
+    analysis panel only offers each node the fields it actually has (the
+    same sensor type can exist on several nodes; pw3 was never wired up),
+    without pulling any actual reading data to figure that out.
     '''
-    cursor = conn.execute("SELECT DISTINCT sensor_type, key FROM readings")
-    return [{"sensor_type": t, "key": k} for t, k in cursor.fetchall()]
+    cursor = conn.execute("SELECT DISTINCT node_id, sensor_type, key FROM readings")
+    return [{"node_id": n, "sensor_type": t, "key": k} for n, t, k in cursor.fetchall()]
 
 
 def pivot_to_packets(rows):
