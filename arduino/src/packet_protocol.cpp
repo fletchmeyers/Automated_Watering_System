@@ -1,4 +1,5 @@
 #include "packet_protocol.h"
+#include "node_sleep.h"
 
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Board-specific entries live here (not in the header) since this is where
@@ -122,7 +123,7 @@ static void civil_from_days(int32_t z, int *y, unsigned *m, unsigned *d) {
   *y = (int)yoe + era * 400 + (*m <= 2);
 }
 
-static bool parse_iso(const char *ts, uint32_t *epoch) {
+bool parse_iso(const char *ts, uint32_t *epoch) {
   int y, mo, d, h, mi, s;
   if (!ts || sscanf(ts, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6) return false;
   if (y < 2020 || mo < 1 || mo > 12 || d < 1 || d > 31) return false;
@@ -288,6 +289,8 @@ long dispatch_command(JsonDocument &command, PacketSender &sender,
     node_log_info(sender);
   } else if (strcmp(t, "set_interval") == 0) {
     return handle_set_interval(command, sender);
+  } else if (strcmp(t, "sleep") == 0) {
+    handle_sleep(command, sender);
   } else if (strcmp(t, "data_ack") == 0) {
     // The Pi's ack for a poll batch — nothing to do.
   } else {

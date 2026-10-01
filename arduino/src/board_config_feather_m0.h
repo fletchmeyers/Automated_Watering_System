@@ -69,6 +69,13 @@ extern RTCZero rtc;
 #define BOARD_HAS_PCF8523
 extern RTC_PCF8523 ext_rtc;
 
+// Sleep (see node_sleep.h) uses the SAMD21's standby mode. Build with
+// -D SLEEP_USE_STANDBY=0 for bench tests: it stays awake on a timer
+// instead, so the USB serial console keeps working through a "sleep".
+#ifndef SLEEP_USE_STANDBY
+  #define SLEEP_USE_STANDBY 1
+#endif
+
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Each sensor is an {init_fn, read_fn, ok} entry. init_fn runs once in
 // setup() and sets `ok`; read_fn is only called if `ok` is true. This is

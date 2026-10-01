@@ -94,6 +94,7 @@
   }
   .status-dot.stale { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: none; }
   .status-dot.offline { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+  .status-dot.asleep { background: var(--purple); box-shadow: none; animation: none; }
 
   @keyframes pulse {
     0%, 100% { opacity: 1; }

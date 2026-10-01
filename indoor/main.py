@@ -14,12 +14,13 @@ from pathlib import Path
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import (
     DATA_FILE, COMMAND_FILE, request_poll, request_sync_chunk, request_info, save_node_info,
+    request_command, update_node_info, SLEEP_REQUEST_FILE,
     POLL_RESULT_FILE, PING_REQUEST_FILE, PING_RESULT_FILE, SYNC_REQUEST_FILE,
 )
 
 from communication_indoor import (
     CommandManager, BatchReceiver, PollingTimer, FragmentReassembler, SyncManager,
-    NodeHealth, run_ping_test,
+    NodeHealth, SleepScheduler, run_ping_test,
 )
 
 import db
@@ -29,6 +30,11 @@ NODE_IDS      = [1, 2] # add node IDs here as you expand the network
 POLL_INTERVAL = 60     # seconds between polls per node
 
 INFO_INTERVAL = 3600   # seconds between storage reports per node
+
+# Battery nodes sleep through the night: node ID -> ("start", "end") in the
+# Pi's local time. The node logs a reading every 5 minutes while asleep,
+# and the next day's sync collects them.
+SLEEP_WINDOWS = {2: ("19:00", "07:00")}
 
 SYNC_NODE_IDS       = [1, 2] # nodes with logged data to pull
 SYNC_LINES_PER_HOUR = 2000   # cap per hourly session — a backlog drains over several hours
@@ -59,6 +65,17 @@ batch = BatchReceiver(DATA_FILE, db_conn=db_conn)
 timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL)
 info_timer = PollingTimer(NODE_IDS, poll_interval=INFO_INTERVAL)
 health = NodeHealth(NODE_IDS)
+sleeper = SleepScheduler(SLEEP_WINDOWS)
+
+
+def available(node_id):
+    '''Awake and answering — safe to send commands to.'''
+    return health.reachable(node_id) and not sleeper.asleep(node_id)
+
+
+def record_sleep(node_id):
+    until = sleeper.asleep_until(node_id)
+    update_node_info(node_id, sleep_until=until.strftime("%Y-%m-%dT%H:%M:%S") if until else None)
 frags = FragmentReassembler()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -66,15 +83,32 @@ while True:
 
     # ── A timed-out command counts against its node; a timed-out sync ────
     # ── chunk also ends that node's session for the hour ──────────────────
+    # A sleep command is different: no answer usually means it worked.
     if cmd.timed_out is not None:
-        health.missed(cmd.timed_out.get("n"))
-        if cmd.timed_out.get("t") == "sync":
-            sync.abort()
+        if cmd.timed_out.get("t") == "sleep":
+            sleeper.timed_out(cmd.timed_out)
+            record_sleep(cmd.timed_out.get("n"))
+        else:
+            health.missed(cmd.timed_out.get("n"))
+            if cmd.timed_out.get("t") == "sync":
+                sync.abort()
         cmd.timed_out = None
+
+    # ── Manual "sleep now" request (sync_indoor.py sleep) ─────────────────
+    sleep_req = Path(SLEEP_REQUEST_FILE)
+    if sleep_req.exists():
+        try:
+            req = json.loads(sleep_req.read_text())
+            sleeper.request_now(req["n"], req["minutes"])
+        except Exception as e:
+            print(f"[SLEEP] Could not parse sleep request: {e}")
+        sleep_req.unlink(missing_ok=True)
 
     # ── Quick check on nodes that stopped answering ───────────────────────
     if cmd.pending is None and not Path(COMMAND_FILE).exists():
         for node_id in health.probe_due():
+            if sleeper.asleep(node_id):
+                continue
             health.mark_probed(node_id)
             result = run_ping_test(rfm69, node_id=node_id, count=3, report_progress=False)
             if result["hits"]:
@@ -89,7 +123,8 @@ while True:
             print(f"[SYNC] Could not parse sync request: {e}")
         sync_req.unlink(missing_ok=True)
 
-    # ── Issue the next poll, storage report or sync chunk, in that order ─
+    # ── Issue the next poll, sleep, storage report or sync chunk, in ─────
+    # ── that order, only to nodes that are awake and answering ────────────
     # Only issue a new command if nothing is currently outstanding, and
     # nothing (e.g. a manual poll from the Flask API) is sitting in
     # COMMAND_FILE waiting to be forwarded. Without this guard,
@@ -108,16 +143,19 @@ while True:
     # same reason — a second request_poll() would overwrite the first.
     # Polls come first, so a long sync session never starves them.
     if cmd.pending is None and not Path(COMMAND_FILE).exists():
-        due = [n for n in timer.due_nodes() if health.reachable(n)]
-        info_due = [n for n in info_timer.due_nodes() if health.reachable(n)]
+        due = [n for n in timer.due_nodes() if available(n)]
+        info_due = [n for n in info_timer.due_nodes() if available(n)]
+        sleep_cmd = sleeper.next_command(available)
         if due:
             request_poll(due[0])
             timer.mark_polled(due[0])
+        elif sleep_cmd is not None:
+            request_command(sleep_cmd)
         elif info_due:
             request_info(info_due[0])
             info_timer.mark_polled(info_due[0])
         else:
-            chunk_request = sync.next_command(health.reachable)
+            chunk_request = sync.next_command(available)
             if chunk_request is not None:
                 request_sync_chunk(chunk_request)
 
@@ -204,6 +242,11 @@ while True:
 
         elif pkt_type == "info":
             save_node_info(data)
+            cmd.handle_ack(data)
+
+        elif pkt_type == "sleep_ack":
+            sleeper.handle_ack(data)
+            record_sleep(data.get("n"))
             cmd.handle_ack(data)
 
         elif cmd.handle_ack(data):
