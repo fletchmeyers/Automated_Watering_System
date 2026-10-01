@@ -135,8 +135,12 @@ def send_latest(sender, timestamp):
     Uses the same burst format as before (ts header → sensor packets → batch_end)
     so the Pi's existing BatchReceiver can handle it unchanged.
     '''
+    # Always answer, even with nothing to report: an empty batch_end tells
+    # the Pi the node heard the poll, where silence makes it time out and
+    # eventually mark the node unreachable.
     if not latest_reading:
-        print("[POLL] No reading available yet, skipping.")
+        print("[POLL] Nothing to report, sending an empty batch.")
+        sender.send_batch_end(expected=0, sent=0)
         return
 
     sender.send({"t": "ts", "v": timestamp})

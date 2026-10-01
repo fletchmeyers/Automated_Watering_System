@@ -65,8 +65,12 @@ void run_sense_cycle() {
 }
 
 void send_latest(PacketSender &sender, const char *timestamp) {
+  // Always answer a poll, even with nothing to report (no sensors attached,
+  // or before the first sense cycle). An empty batch_end tells the Pi the
+  // node heard it; staying silent makes the Pi time out and, after a few
+  // polls, decide the node is unreachable.
   if (latest_count == 0) {
-    Serial.println(F("[POLL] No reading available yet, skipping."));
+    sender.send_batch_end(0, 0);
     return;
   }
 
@@ -229,7 +233,7 @@ static void handle_poll(JsonDocument &command, PacketSender &sender) {
   uint32_t epoch;
   if (parse_iso(ts, &epoch)) clock_set(epoch);
   send_latest(sender, ts);
-  Serial.print(F("[POLL] Latest reading sent (ts="));
+  Serial.print(latest_count ? F("[POLL] Latest reading sent (ts=") : F("[POLL] Nothing to report, sent an empty batch (ts="));
   Serial.print(ts);
   Serial.println(F(")."));
 }
