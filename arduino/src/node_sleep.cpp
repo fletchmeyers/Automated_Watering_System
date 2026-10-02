@@ -66,6 +66,13 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
 #endif
     rtc.disableAlarm();
 
+    format_iso(clock_now(), ts);
+    Serial.print(F("[SLEEP] Woke at "));
+    Serial.print(ts);
+    format_iso(next, ts);
+    Serial.print(F(", alarm was set for "));
+    Serial.println(ts);
+
     // Anything other than the alarm (there shouldn't be anything) just
     // goes back to sleep; only a real alarm takes a reading.
     if (clock_now() >= next) {
