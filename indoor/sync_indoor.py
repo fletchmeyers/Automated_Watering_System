@@ -8,6 +8,7 @@ Usage (while main.py is running):
     python3 sync_indoor.py            — request a poll, wait for new data, run health report
     python3 sync_indoor.py sync [N]   — start an SD sync session for node N (default 1) now
     python3 sync_indoor.py info       — show each node's last reported log storage
+    python3 sync_indoor.py sleep N M  — put node N to sleep for M minutes now
     python3 sync_indoor.py health     — run health report only
     python3 sync_indoor.py interval N — set sense interval to N seconds
 
@@ -42,9 +43,14 @@ PING_PROGRESS_FILE = "/tmp/pico_ping_progress.json"
 # session right away instead of waiting for the next hour.
 SYNC_REQUEST_FILE = "/tmp/pico_sync_request.json"
 
-# Latest storage report from each node ({"<node>": {"ub", "fb", "tb", "at"}}),
-# written by main.py whenever an "info" reply arrives. Kept next to the code
-# rather than in /tmp so it survives a reboot.
+# Manual "sleep now" request — main.py's SleepScheduler sends the node a
+# sleep command as soon as the radio is free.
+SLEEP_REQUEST_FILE = "/tmp/pico_sleep_request.json"
+
+# Latest state reported by each node, for the dashboard: {"<node>": {"ub",
+# "fb", "tb", "at", "sleep_until"}}. Storage fields are written when an
+# "info" reply arrives, sleep_until when a node goes to sleep. Kept next to
+# the code rather than in /tmp so it survives a reboot.
 NODE_INFO_FILE = Path(__file__).parent / "node_info.json"
 
 WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
@@ -85,6 +91,18 @@ def request_sync_chunk(command):
     Path(COMMAND_FILE).write_text(json.dumps(command))
 
 
+def request_sleep(node_id, minutes):
+    '''Ask main.py to put node_id to sleep for `minutes`, starting now.'''
+    Path(SLEEP_REQUEST_FILE).write_text(json.dumps({"n": node_id, "minutes": minutes}))
+    print(f"[SLEEP] Sleep requested for node {node_id} ({minutes} min).")
+
+
+def request_command(command):
+    '''Write any prepared command (e.g. SleepScheduler's) to the command file.'''
+    Path(COMMAND_FILE).write_text(json.dumps(command))
+    print(f"[CMD] Command written: {command}")
+
+
 def request_info(node_id):
     '''Ask a node how much of its log storage is in use.'''
     command = {"t": "info", "n": node_id}
@@ -92,16 +110,22 @@ def request_info(node_id):
     print(f"[INFO] Command written: {command}")
 
 
+def update_node_info(node_id, **fields):
+    '''Merge fields into node_id's entry in NODE_INFO_FILE.'''
+    info = get_node_info()
+    info.setdefault(str(node_id), {}).update(fields)
+    NODE_INFO_FILE.write_text(json.dumps(info, indent=2))
+
+
 def save_node_info(packet):
     '''Record a node's "info" reply in NODE_INFO_FILE.'''
-    info = get_node_info()
-    info[str(packet.get("n"))] = {
-        "ub": packet.get("ub"),
-        "fb": packet.get("fb"),
-        "tb": packet.get("tb"),
-        "at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-    }
-    NODE_INFO_FILE.write_text(json.dumps(info, indent=2))
+    update_node_info(
+        packet.get("n"),
+        ub=packet.get("ub"),
+        fb=packet.get("fb"),
+        tb=packet.get("tb"),
+        at=datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    )
     print(f"[INFO] Node {packet.get('n')}: {packet.get('ub')} bytes waiting, "
           f"{packet.get('fb')} free of {packet.get('tb')}.")
 
@@ -323,6 +347,13 @@ if __name__ == "__main__":
     elif args[0] == "health":
         sensor_health_report()
 
+    elif args[0] == "sleep":
+        if len(args) < 3:
+            print("Usage: python3 sync_indoor.py sleep <node> <minutes>")
+            sys.exit(1)
+        request_sleep(int(args[1]), int(args[2]))
+        print("[SLEEP] Progress is logged by main.py — journalctl -u garden-sensor -f")
+
     elif args[0] == "info":
         info = get_node_info()
         print(json.dumps(info, indent=2) if info else "No storage reports yet.")
@@ -347,5 +378,5 @@ if __name__ == "__main__":
         wait_for_interval_ack()
 
     else:
-        print("Usage: python3 sync_indoor.py [poll|sync [node]|health|info|ping|interval <seconds>]")
+        print("Usage: python3 sync_indoor.py [poll|sync [node]|health|info|sleep <node> <minutes>|ping|interval <seconds>]")
         sys.exit(1)

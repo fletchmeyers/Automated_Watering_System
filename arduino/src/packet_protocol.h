@@ -14,6 +14,7 @@
  *   pq  = ping's q, echoed back in pong
  *   g/o/c/m/k = sync fields (log format ID / record offset / count / more / max)
  *   ub/fb/tb  = info fields (log bytes used / free / total)
+ *   w/ok/why  = sleep fields (wake time / accepted / reason refused)
  */
 
 #ifndef PACKET_PROTOCOL_H
@@ -129,6 +130,7 @@ void clock_begin();
 bool clock_valid();
 uint32_t clock_now();                        // seconds since 1970
 void format_iso(uint32_t epoch, char out[20]);  // "YYYY-MM-DDTHH:MM:SS"
+bool parse_iso(const char *ts, uint32_t *epoch);  // false if ts isn't that form
 
 // ── Command handling ─────────────────────────────────────────────────────
 // Returns a parsed JsonDocument if a valid command packet was received,

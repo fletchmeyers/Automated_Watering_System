@@ -5,13 +5,14 @@ CommandManager:      forward commands from the Pi to the Pico and verify acknowl
 BatchReceiver:       collect incoming sensor packets, detect batch completion, send acks.
 PollingTimer:        decide when to poll each node on a regular schedule.
 NodeHealth:          stop spending radio time on nodes that aren't answering.
+SleepScheduler:      put battery nodes to sleep overnight and leave them alone until they wake.
 FragmentReassembler: stitch oversized packets back together from radio fragments.
 SyncManager:         pull logged SD data from nodes, one chunk per request.
 '''
 
 import time
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE
 
@@ -160,6 +161,10 @@ class CommandManager:
             self._clear_pending()
             return True
 
+        if pkt_type == "sleep_ack" and pending_t == "sleep":
+            self._clear_pending()
+            return True
+
         return False
 
     def _clear_pending(self):
@@ -284,6 +289,105 @@ class NodeHealth:
 
     def mark_probed(self, node_id):
         self._last_probe[node_id] = time.monotonic()
+
+
+ISO_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+
+class SleepScheduler:
+    '''
+    Puts battery nodes into deep sleep for a nightly window and keeps track
+    of which are asleep, so nothing is sent to them until they wake.
+
+    windows: {node_id: ("HH:MM", "HH:MM")} in the Pi's local time; a window
+    may cross midnight (e.g. 19:00-07:00). A node that's inside its window,
+    awake and answering gets {"t":"sleep","n":..,"w":"<wake time>"}. The wake
+    time is absolute, so a retried command can't push it later.
+
+    A sleep_ack with ok=1 marks the node asleep until w. ok=0 means it
+    refused (e.g. its clock isn't set yet); it's asked again after
+    retry_after seconds. A sleep command that times out counts as accepted:
+    the node answers before switching its radio off, so a lost ack and a
+    sleeping node look exactly the same from here.
+    '''
+    def __init__(self, windows, wake_grace=90, retry_after=600, now_fn=datetime.now):
+        self.windows     = dict(windows)
+        self.wake_grace  = wake_grace    # seconds after wake before commands resume
+        self.retry_after = retry_after
+        self._now        = now_fn
+        self._asleep_until = {}          # node ID -> datetime it wakes
+        self._not_before   = {}          # node ID -> no sleep command before this
+        self._requested    = {}          # node ID -> wake datetime for a manual sleep
+
+    @staticmethod
+    def _at(day, hhmm):
+        hour, minute = (int(x) for x in hhmm.split(":"))
+        return day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    def window_wake(self, node_id, now):
+        '''If now is inside node_id's window, when that window ends; else None.'''
+        if node_id not in self.windows:
+            return None
+        start_s, end_s = self.windows[node_id]
+        start, end = self._at(now, start_s), self._at(now, end_s)
+        if start <= end:                      # e.g. 01:00-05:00
+            return end if start <= now < end else None
+        if now >= start:                      # crosses midnight, evening side
+            return end + timedelta(days=1)
+        if now < end:                         # crosses midnight, morning side
+            return end
+        return None
+
+    def asleep(self, node_id):
+        until = self._asleep_until.get(node_id)
+        return until is not None and self._now() < until + timedelta(seconds=self.wake_grace)
+
+    def asleep_until(self, node_id):
+        '''When node_id wakes, if it's asleep; else None.'''
+        return self._asleep_until[node_id] if self.asleep(node_id) else None
+
+    def request_now(self, node_id, minutes):
+        '''Sleep node_id for `minutes` from now, regardless of its window.'''
+        self._requested[node_id] = self._now() + timedelta(minutes=minutes)
+        self._not_before.pop(node_id, None)
+
+    def next_command(self, available=lambda node_id: True):
+        '''Return a "sleep" command for the first node that's due one, or None.'''
+        now = self._now()
+        for node_id in sorted(set(self.windows) | set(self._requested)):
+            if self.asleep(node_id) or not available(node_id):
+                continue
+            if node_id in self._not_before and now < self._not_before[node_id]:
+                continue
+            wake = self._requested.get(node_id) or self.window_wake(node_id, now)
+            if wake is None or wake <= now:
+                self._requested.pop(node_id, None)
+                continue
+            return {"t": "sleep", "n": node_id, "w": wake.strftime(ISO_FORMAT)}
+        return None
+
+    def handle_ack(self, ack):
+        node_id = ack.get("n")
+        if ack.get("ok"):
+            self._went_to_sleep(node_id, ack.get("w"))
+        else:
+            self._not_before[node_id] = self._now() + timedelta(seconds=self.retry_after)
+            print(f"[SLEEP] Node {node_id} refused to sleep ({ack.get('why', 'no reason given')}) "
+                  f"— asking again in {self.retry_after}s.")
+
+    def timed_out(self, command):
+        print(f"[SLEEP] No ack from node {command.get('n')} — assuming it's asleep.")
+        self._went_to_sleep(command.get("n"), command.get("w"))
+
+    def _went_to_sleep(self, node_id, wake_str):
+        try:
+            wake = datetime.strptime(wake_str, ISO_FORMAT)
+        except (TypeError, ValueError):
+            print(f"[SLEEP] Node {node_id} sent an unreadable wake time: {wake_str!r}")
+            return
+        self._asleep_until[node_id] = wake
+        self._requested.pop(node_id, None)
+        print(f"[SLEEP] Node {node_id} asleep until {wake_str}.")
 
 
 class BatchReceiver:

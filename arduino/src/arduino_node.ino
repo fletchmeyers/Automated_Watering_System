@@ -5,7 +5,8 @@
  * Mirrors code.py's structure: read sensors on a timer, keep the latest
  * reading in memory, log a snapshot every LOG_INTERVAL_MS for the Pi to
  * pull with "sync" (see node_log.h), and listen for Pi commands
- * (poll/ping/sync/info/set_interval) at all times.
+ * (poll/ping/sync/info/set_interval/sleep) at all times. A "sleep" command
+ * switches the radio off until a wake time (see node_sleep.h).
  *
  * Requires libraries: RadioHead (RH_RF69), ArduinoJson (v6.x).
  */
@@ -15,6 +16,7 @@
 #include <ArduinoJson.h>
 #include "board_config.h"
 #include "packet_protocol.h"
+#include "node_sleep.h"
 
 RH_RF69 rf69(RFM69_CS, RFM69_INT);
 PacketSender sender(NODE_ID, &rf69);
@@ -84,5 +86,12 @@ void loop() {
     if (new_interval_ms > 0) {
       sense_interval_ms = new_interval_ms;
     }
+  }
+
+  // ── Sleep, if the Pi asked for it (the ack has already gone out) ──────
+  if (requested_wake) {
+    uint32_t wake = requested_wake;
+    requested_wake = 0;
+    sleep_until(wake, rf69);
   }
 }

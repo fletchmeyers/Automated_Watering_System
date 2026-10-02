@@ -136,3 +136,22 @@ def test_sync_skips_unreachable_nodes():
     sync.abort()
     assert sync.next_command(reachable=lambda n: n != 2) is None
     assert sync.next_command()["n"] == 2 # still queued for when it's back
+
+
+# ── Polls with nothing to report ─────────────────────────────────────────────
+
+def test_poll_with_no_readings_still_answers(monkeypatch):
+    import communication_garden as garden
+    from communication_indoor import BatchReceiver
+    monkeypatch.setattr(garden, "latest_reading", [])
+    radio = Radio()
+    garden.send_latest(PacketSender(1, radio), "2026-10-01T12:00:00")
+
+    assert len(radio.sent) == 1
+    end = json.loads(radio.sent[0])
+    assert end["t"] == "batch_end" and end["exp"] == 0 and end["snt"] == 0
+
+    # The Pi side accepts it as a completed (empty) poll without writing anything.
+    batch = BatchReceiver(data_file="unused.txt")
+    batch.close_batch(end)
+    assert batch.flush(radio=None) is None

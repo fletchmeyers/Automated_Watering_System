@@ -1,4 +1,5 @@
 #include "packet_protocol.h"
+#include "node_sleep.h"
 
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Board-specific entries live here (not in the header) since this is where
@@ -64,8 +65,12 @@ void run_sense_cycle() {
 }
 
 void send_latest(PacketSender &sender, const char *timestamp) {
+  // Always answer a poll, even with nothing to report (no sensors attached,
+  // or before the first sense cycle). An empty batch_end tells the Pi the
+  // node heard it; staying silent makes the Pi time out and, after a few
+  // polls, decide the node is unreachable.
   if (latest_count == 0) {
-    Serial.println(F("[POLL] No reading available yet, skipping."));
+    sender.send_batch_end(0, 0);
     return;
   }
 
@@ -122,7 +127,7 @@ static void civil_from_days(int32_t z, int *y, unsigned *m, unsigned *d) {
   *y = (int)yoe + era * 400 + (*m <= 2);
 }
 
-static bool parse_iso(const char *ts, uint32_t *epoch) {
+bool parse_iso(const char *ts, uint32_t *epoch) {
   int y, mo, d, h, mi, s;
   if (!ts || sscanf(ts, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6) return false;
   if (y < 2020 || mo < 1 || mo > 12 || d < 1 || d > 31) return false;
@@ -228,7 +233,7 @@ static void handle_poll(JsonDocument &command, PacketSender &sender) {
   uint32_t epoch;
   if (parse_iso(ts, &epoch)) clock_set(epoch);
   send_latest(sender, ts);
-  Serial.print(F("[POLL] Latest reading sent (ts="));
+  Serial.print(latest_count ? F("[POLL] Latest reading sent (ts=") : F("[POLL] Nothing to report, sent an empty batch (ts="));
   Serial.print(ts);
   Serial.println(F(")."));
 }
@@ -288,6 +293,8 @@ long dispatch_command(JsonDocument &command, PacketSender &sender,
     node_log_info(sender);
   } else if (strcmp(t, "set_interval") == 0) {
     return handle_set_interval(command, sender);
+  } else if (strcmp(t, "sleep") == 0) {
+    handle_sleep(command, sender);
   } else if (strcmp(t, "data_ack") == 0) {
     // The Pi's ack for a poll batch — nothing to do.
   } else {

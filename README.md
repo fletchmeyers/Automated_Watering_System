@@ -46,6 +46,14 @@ script, and path reference below assumes this exact location.
 - **Never merge `update_dashboard_data` into `main`**, and never cut a
   feature branch from it: either one pulls thousands of data commits into
   `main`'s history. A branch cut from `main` merges cleanly into both.
+- **Merge PRs with "Create a merge commit"** (the default), into both
+  branches — not "Squash and merge" or "Rebase and merge". Those put a
+  rewritten copy of the commits on `main`, so `main` and
+  `update_dashboard_data` end up with the same code but different history,
+  and the next branch that touches the same lines conflicts. If that
+  happens anyway, open a PR from `main` into `update_dashboard_data` (safe
+  in that direction — `main` has no data commits) to bring them back in
+  step.
 - If GitHub Pages' configured source branch (Settings → Pages) ever
   changes, update this section to match — that setting is the actual
   source of truth, this doc is just documentation of it.

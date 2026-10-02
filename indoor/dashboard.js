@@ -568,6 +568,14 @@ function freshness(lastTs) {
   return 'offline';
 }
 
+// If a node is asleep (see SleepScheduler on the Pi), the time it wakes;
+// otherwise null. A sleeping node has its radio off, so going quiet is
+// expected rather than a fault.
+function sleepUntil(n) {
+  const s = nodeStorage[String(n)]?.sleep_until;
+  return s && new Date(s.replace('T', ' ')).getTime() > Date.now() ? s : null;
+}
+
 function statusDot(state) {
   return `<span class="status-dot ${state === 'fresh' ? '' : state}"></span>`;
 }
@@ -578,10 +586,12 @@ function renderNodeStatus(byNode) {
   document.getElementById('node-status').innerHTML = knownNodeIds(Object.keys(byNode)).map(n => {
     const info = nodeInfo(n);
     const lastTs = getLastTs(byNode[n] || []);
+    const asleep = sleepUntil(n);
     const ago = lastTs ? (minutesAgo(lastTs) || lastTs) : 'no data';
+    const text = asleep ? `asleep · wakes ${asleep.slice(11, 16)}` : ago;
     return `<span class="node-chip" style="--node-color:${info.color}"
                   title="${info.name} — last packet ${lastTs || 'none in the last 6 hours'}">
-      ${statusDot(freshness(lastTs))}<span class="node-chip-name">${info.short}</span>${ago}
+      ${statusDot(asleep ? 'asleep' : freshness(lastTs))}<span class="node-chip-name">${info.short}</span>${text}
     </span>`;
   }).join('');
 }
@@ -623,10 +633,14 @@ function renderNodesCard(byNode) {
       ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
     ];
     const reported = store?.at ? `storage reported ${minutesAgo(store.at) || store.at}` : 'no storage report yet';
+    const asleep = sleepUntil(n);
+    const note = asleep
+      ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)} — logging to storage, radio off · ${reported}`
+      : reported;
 
     return `<div class="node-row" style="--node-color:${info.color}">
       <div class="node-row-head">
-        ${statusDot(freshness(lastTs))}
+        ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
         <span class="node-row-name">${info.name}</span>
         <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : ''}</span>
       </div>
@@ -636,7 +650,7 @@ function renderNodesCard(byNode) {
           <div class="node-metric-value">${value}</div>
         </div>`).join('')}
       </div>
-      <div class="node-row-note">${reported}</div>
+      <div class="node-row-note">${note}</div>
     </div>`;
   }).join('') || '<div class="no-data">No nodes yet</div>';
 }
