@@ -8,11 +8,11 @@ from pathlib import Path
 # .parent.parent       = Automated_Watering_System/tests
 # .parent.parent.parent = Automated_Watering_System
 project_root = Path(__file__).parent.parent.parent
-# Appended rather than inserted at the front: garden/code.py would otherwise
+# Appended rather than inserted at the front: circuitpython/code.py would otherwise
 # shadow the standard library's "code" module, which pytest's debugger
 # imports — running the Pico's main loop and crashing pytest on startup.
-sys.path.append(str(project_root / "indoor"))
-sys.path.append(str(project_root / "garden"))
+sys.path.append(str(project_root / "raspberrypi"))
+sys.path.append(str(project_root / "circuitpython"))
 
 sys.modules['board'] = MagicMock()
 sys.modules['busio'] = MagicMock()

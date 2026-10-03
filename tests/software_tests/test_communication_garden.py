@@ -5,7 +5,7 @@ from tests.software_tests.mock_hardware import (
     MockMAX17048, MockLTR390, MockSeesaw, MockRFM69, MockRTC,
     MockSHT40, MockSGP40, MockINA238,
 )
-from garden.communication_garden import (
+from communication_garden import (
     package_battery_data,
     package_uv_data,
     package_radio_temp,

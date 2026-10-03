@@ -5,11 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=<username>
-WorkingDirectory=/home/<username>/Automated_Watering_System/indoor
+WorkingDirectory=/home/<username>/Automated_Watering_System/raspberrypi
 # Write each print() to the journal immediately, so journalctl shows when it
 # actually happened rather than when Python's output buffer next filled.
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/<username>/env/bin/python3 /home/<username>/Automated_Watering_System/indoor/main.py
+ExecStart=/home/<username>/env/bin/python3 /home/<username>/Automated_Watering_System/raspberrypi/main.py
 Restart=on-failure
 RestartSec=10
 
