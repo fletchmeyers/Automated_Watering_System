@@ -22,8 +22,7 @@ Automated_Watering_System/
   garden/          — CircuitPython code for the garden Pico (node 1)
   arduino/         — PlatformIO project for Arduino-based nodes (node 2+)
   deploy/          — systemd unit file templates
-  push_data.sh
-  index.html, dashboard.js, analysis.js, weather.js, style.css   — dashboard
+  index.html       — redirects GitHub Pages visitors to indoor/index.html (the dashboard)
 ```
 
 Clone into `~/Automated_Watering_System` on the Pi — every systemd unit,
@@ -31,29 +30,23 @@ script, and path reference below assumes this exact location.
 
 ## Branches
 
-- **`update_dashboard_data`** is the live branch — this is what GitHub
-  Pages actually deploys from, what `push_data.sh` commits
-  `data_from_pico.txt` to every 5 minutes via cron, and where the Pi's
-  clone should be checked out. **Clone with
-  `git clone -b update_dashboard_data <repo-url>`.**
-- **`main`** is the readable code history — it does not run anywhere and
-  is not what the Pi should be cloned from. It never gets the 5-minute
-  `data update` commits; those only exist on `update_dashboard_data`.
-- **Workflow for new features**: branch off **`main`** → develop → open a
-  PR into `update_dashboard_data` → once merged and confirmed working
-  live, open a PR from the same feature branch into `main` → delete the
-  feature branch.
-- **Never merge `update_dashboard_data` into `main`**, and never cut a
-  feature branch from it: either one pulls thousands of data commits into
-  `main`'s history. A branch cut from `main` merges cleanly into both.
-- **Merge PRs with "Create a merge commit"** (the default), into both
-  branches — not "Squash and merge" or "Rebase and merge". Those put a
-  rewritten copy of the commits on `main`, so `main` and
-  `update_dashboard_data` end up with the same code but different history,
-  and the next branch that touches the same lines conflicts. If that
-  happens anyway, open a PR from `main` into `update_dashboard_data` (safe
-  in that direction — `main` has no data commits) to bring them back in
-  step.
+- **`main`** is the only long-lived branch. GitHub Pages serves the
+  dashboard from it, and the Pi's clone tracks it (`git clone <repo-url>`).
+- **Sensor data never goes into git.** It lives on the Pi — `indoor/sensors.db`,
+  plus the `indoor/data_from_pico.txt` and `indoor/archive/` text logs, all
+  gitignored — and reaches the dashboard live through the Flask API.
+  (Until October 2026 a cron job pushed `data_from_pico.txt` to a separate
+  `update_dashboard_data` branch every 5 minutes; that branch and
+  `push_data.sh` are retired.)
+- **Workflow for new features**: branch off `main` → develop → open a PR
+  into `main` → on the Pi, `git pull` and restart whichever service changed
+  (`garden-sensor` and/or `garden-api`) → confirm it works → delete the
+  feature branch. To try a branch on the Pi before merging it, check it out
+  there (`git fetch && git checkout <branch>`), then switch back to `main`
+  once it's merged.
+- **Before deleting a branch on GitHub**, switch your local repo off it
+  (`git checkout main && git pull`), then delete the local copy too
+  (`git branch -d <branch>`).
 - If GitHub Pages' configured source branch (Settings → Pages) ever
   changes, update this section to match — that setting is the actual
   source of truth, this doc is just documentation of it.
@@ -202,30 +195,13 @@ Verify end to end:
 curl https://api.fletchermeyers.com/api/health
 ```
 
-## Part 5: git push access (for `push_data.sh` / cron)
+## Part 5: (no cron job or GitHub token needed)
 
-```bash
-git remote set-url origin https://<your-token>@github.com/fletchmeyers/Automated_Watering_System.git
-```
-
-Generate a token: GitHub → Settings → Developer settings → Personal
-access tokens (classic) → `repo` scope. Never commit this URL/token
-anywhere.
-
-## Part 6: cron
-
-```bash
-crontab -e
-```
-
-```
-*/5 * * * * /home/<username>/Automated_Watering_System/push_data.sh
-```
-
-Retype rather than paste — some editors introduce hidden characters cron
-chokes on. Double-check `push_data.sh`'s own internal username/paths match
-the current Pi user before relying on it (this has silently gone stale
-across at least one migration already).
+Earlier versions of this guide set up a GitHub push token and a cron job
+running `push_data.sh` every 5 minutes. Both are retired: the dashboard
+reads data live from the API, and nothing on the Pi pushes to GitHub. The
+Pi only needs read access to `git pull`, which a public repo doesn't
+require credentials for.
 
 ---
 
@@ -236,7 +212,7 @@ Do these **now**, while a card is known-good — not after the next failure.
 1. **Full SD card image** (`Win32DiskImager` or `dd`) of a fully-configured,
    working card. This is the single highest-leverage backup: it captures
    every apt package, both Python environments, the SPI toggle, systemd
-   units, cloudflared config, and crontab in one shot. Restoring an image
+   units, and cloudflared config in one shot. Restoring an image
    is minutes; rebuilding by hand (what this doc replaces) took days.
 2. **`sensors.db` backups**, off-box:
    ```bash

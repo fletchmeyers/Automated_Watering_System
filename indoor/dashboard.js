@@ -736,7 +736,7 @@ function renderSensorCard(el, kind, np) {
 
 // currentPackets holds the last-loaded window in memory so a fresh poll
 // result (from triggerRefresh) can be merged straight in and re-rendered
-// without waiting on a full re-fetch of the static file.
+// without waiting for the next /api/data refresh.
 let currentPackets = [];
 
 function renderAll(packets) {
@@ -773,7 +773,7 @@ async function triggerRefresh() {
   const original = btn.textContent;
   btn.disabled = true;
 
-  // If API_BASE hasn't been set up yet, just re-fetch the static file like before.
+  // If API_BASE hasn't been set up, there's nothing to poll — just reload.
   if (!API_BASE || API_BASE.includes('YOURDOMAIN')) {
     btn.textContent = '↺ refreshing...';
     await refresh();
@@ -795,11 +795,7 @@ async function triggerRefresh() {
     }
 
     if (data.status === 'ok' && Array.isArray(data.packets) && data.packets.length) {
-      // Real sensor values are already here — render immediately rather than
-      // waiting on push_data.sh -> GitHub -> Pages to publish the static file.
-      // push_data.sh still runs (server-side, in the background) so the
-      // static file and archive stay current for passive viewers, but this
-      // click doesn't wait on any of that.
+      // Real sensor values are already here — render them immediately.
       currentPackets = withKnownTs(currentPackets.concat(data.packets)).slice(-WINDOW);
       renderAll(currentPackets);
       btn.textContent = original;
@@ -807,9 +803,9 @@ async function triggerRefresh() {
       return;
     }
 
-    // Fallback: poll reported timeout or came back with no packets — fall
-    // back to the old path of re-fetching the static file after a short
-    // delay, in case the result just didn't make it back in time.
+    // Fallback: poll reported timeout or came back with no packets — reload
+    // from /api/data after a short delay, in case the result just didn't
+    // make it back in time.
     btn.textContent = '↺ syncing...';
     setTimeout(async () => {
       await refresh();
@@ -826,7 +822,7 @@ async function triggerRefresh() {
 }
 
 // ── Radio ping test (independent of refresh — result comes straight back in
-//    the HTTP response, so it doesn't wait on push_data.sh/GitHub Pages at all) ──
+//    the HTTP response) ──
 
 async function runPingTest() {
   const btn = document.getElementById('ping-btn');
