@@ -155,3 +155,28 @@ def test_poll_with_no_readings_still_answers(monkeypatch):
     batch = BatchReceiver(data_file="unused.txt")
     batch.close_batch(end)
     assert batch.flush(radio=None) is None
+
+
+# ── Batches whose timestamp packet went missing ──────────────────────────────
+
+def test_lost_ts_packet_uses_the_pis_clock_not_unknown(tmp_path, monkeypatch):
+    import re
+    from communication_indoor import BatchReceiver
+    monkeypatch.setattr(communication_indoor, "ARCHIVE_DIR", tmp_path)
+    iso = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
+    batch = BatchReceiver(data_file=str(tmp_path / "data.txt"))
+
+    batch.collect({"t": "rt", "n": 1, "tmp": 30.0})      # the ts packet never arrived
+    batch.close_batch({"t": "batch_end", "exp": 1, "snt": 1, "q": 5})
+    [written] = batch.flush(radio=None)
+    assert iso.match(written["ts"])
+
+    for bad in ("unknown", None):                         # a ts packet with no usable time
+        batch.open_batch(bad)
+        batch.collect({"t": "rt", "n": 1, "tmp": 30.0})
+        batch.close_batch({"t": "batch_end", "exp": 1, "snt": 1, "q": 6})
+        assert iso.match(batch.flush(radio=None)[0]["ts"])
+
+    batch.open_batch("2026-10-03T17:00:00")               # a normal batch keeps its own time
+    batch.collect({"t": "rt", "n": 1, "tmp": 30.0})
+    assert batch.flush(radio=None)[0]["ts"] == "2026-10-03T17:00:00"
