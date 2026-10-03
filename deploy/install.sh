@@ -11,8 +11,8 @@
 #      if it is still there
 #   3. creates /etc/garden-api.env for the weather API keys if it doesn't
 #      exist, copying any keys already in the installed garden-api.service
-#   4. fills <username> into the deploy/*.service templates, installs them,
-#      and starts both services
+#   4. fills <username> into the deploy/ unit templates, installs them,
+#      starts both services, and enables the nightly USB backup timer
 set -e
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -23,6 +23,8 @@ fi
 USER_NAME=$(id -un)
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 SERVICES="garden-sensor garden-api"
+# Installed and enabled, but not started: the timer starts the service.
+BACKUP_UNITS="garden-backup.service garden-backup.timer"
 ENV_FILE=/etc/garden-api.env
 OLD_API_UNIT=/etc/systemd/system/garden-api.service
 
@@ -76,19 +78,24 @@ else
 fi
 
 echo "== Installing services"
-for svc in $SERVICES; do
-    sed "s/<username>/$USER_NAME/g" "$REPO/deploy/$svc.service" > /tmp/$svc.service
-    sudo install -m 644 /tmp/$svc.service /etc/systemd/system/$svc.service
-    rm -f /tmp/$svc.service
-    echo "   /etc/systemd/system/$svc.service"
+for unit in $(for s in $SERVICES; do echo $s.service; done) $BACKUP_UNITS; do
+    sed "s/<username>/$USER_NAME/g" "$REPO/deploy/$unit" > /tmp/$unit
+    sudo install -m 644 /tmp/$unit /etc/systemd/system/$unit
+    rm -f /tmp/$unit
+    echo "   /etc/systemd/system/$unit"
 done
 sudo systemctl daemon-reload
 sudo systemctl enable $SERVICES >/dev/null 2>&1
 sudo systemctl restart $SERVICES
+sudo systemctl enable --now garden-backup.timer >/dev/null 2>&1
 
 sleep 3
 echo "== Status"
 for svc in $SERVICES; do
     echo "   $svc: $(systemctl is-active $svc)"
 done
+echo "   nightly USB backup: $(systemctl is-active garden-backup.timer)"
+if [ ! -e /dev/disk/by-label/GARDENBAK ]; then
+    echo "   (no USB stick labelled GARDENBAK plugged in yet, so backups will fail until one is)"
+fi
 echo "Follow the logs with: sudo journalctl -u garden-sensor -f"

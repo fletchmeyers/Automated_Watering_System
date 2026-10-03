@@ -274,13 +274,25 @@ Do these **now**, while a card is known-good — not after the next failure.
    every apt package, both Python environments, the SPI toggle, systemd
    units, `/etc/garden-api.env`, and cloudflared config in one shot. Restoring an image
    is minutes; rebuilding by hand (what this doc replaces) took days.
-2. **`sensors.db` backups**, off-box:
+2. **Nightly `sensors.db` backups to a USB stick.** Format a stick as
+   exFAT with the volume label `GARDENBAK` (on Windows: right-click the
+   drive → Format) and leave it plugged into the Pi. `install.sh` sets up
+   `garden-backup.timer`, which at 03:30 each night mounts the stick,
+   writes a checked, compressed snapshot to `garden_db/sensors_<date>.db.gz`
+   and unmounts it again. It keeps 14 nightly copies plus the 1st of each
+   month for a year. Run one now, or check the last run:
    ```bash
-   sqlite3 ~/Automated_Watering_System/raspberrypi/sensors.db ".backup /path/sensors_backup.db"
+   sudo systemctl start garden-backup
+   sudo journalctl -u garden-backup -n 20 --no-pager
+   systemctl list-timers garden-backup     # when the next run is due
    ```
-   Never copy `sensors.db` directly while `garden-sensor` is running — it's
-   a live WAL-mode database; `.backup` gives a consistent snapshot, a raw
-   copy can grab an inconsistent one.
+   To restore one: stop `garden-sensor`, then
+   `gunzip -c sensors_<date>.db.gz > ~/Automated_Watering_System/raspberrypi/sensors.db`,
+   delete any `sensors.db-wal`/`-shm` next to it, and start the service.
+   (For a one-off copy by hand, use
+   `sqlite3 sensors.db ".backup /path/copy.db"`. Never copy `sensors.db`
+   directly while `garden-sensor` is running: it's a live WAL-mode
+   database, and a raw copy can catch it half-written.)
 3. **Cloudflare Tunnel credentials** (`/etc/cloudflared/*.json`,
    `cert.pem`, `config.yml`) — back these up somewhere off the Pi. There's
    no way to regenerate the same tunnel identity if lost; only a new one.

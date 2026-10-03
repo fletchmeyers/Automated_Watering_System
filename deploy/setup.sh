@@ -64,7 +64,7 @@ fi
 # ── 2. System packages, SPI and I2C ──────────────────────────────────────────
 step "System packages"
 sudo apt-get update -q
-sudo apt-get install -y -q git sqlite3 swig liblgpio-dev python3-dev python3-venv python3-pip i2c-tools
+sudo apt-get install -y -q git sqlite3 swig liblgpio-dev python3-dev python3-venv python3-pip i2c-tools exfatprogs
 
 step "Interfaces"
 # 0 means "enable" for raspi-config's non-interactive mode. SPI is for the

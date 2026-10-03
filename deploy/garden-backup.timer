@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly sensors.db backup to USB
+
+[Timer]
+OnCalendar=*-*-* 03:30
+# If the Pi was off at 03:30, run once at the next boot instead.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
