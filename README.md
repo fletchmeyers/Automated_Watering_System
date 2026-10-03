@@ -18,12 +18,19 @@ inline as you find gaps, the same way this rewrite happened.
 
 ```
 Automated_Watering_System/
-  indoor/          — Pi-side code: main.py, flask_api.py, dashboard, db.py
-  garden/          — CircuitPython code for the garden Pico (node 1)
+  raspberrypi/     — Pi-side code: main.py, flask_api.py, db.py; the Pi's
+                     sensors.db and logs also live here (gitignored)
+  dashboard/       — the web dashboard (index.html, JS, CSS) served by GitHub Pages
+  circuitpython/   — the garden Pico (node 1), laid out like its CIRCUITPY
+                     drive: code.py and modules at the top, libraries in lib/
   arduino/         — PlatformIO project for Arduino-based nodes (node 2+)
-  deploy/          — systemd unit file templates
-  index.html       — redirects GitHub Pages visitors to indoor/index.html (the dashboard)
+  deploy/          — systemd unit templates and install.sh
+  tests/           — software_tests (pytest) and hardware_tests per board
+  index.html       — redirects GitHub Pages visitors to dashboard/index.html
 ```
+
+To update the Pico, copy the contents of `circuitpython/` onto its
+CIRCUITPY drive (only the files that changed, usually not `lib/`).
 
 Clone into `~/Automated_Watering_System` on the Pi — every systemd unit,
 script, and path reference below assumes this exact location.
@@ -32,15 +39,16 @@ script, and path reference below assumes this exact location.
 
 - **`main`** is the only long-lived branch. GitHub Pages serves the
   dashboard from it, and the Pi's clone tracks it (`git clone <repo-url>`).
-- **Sensor data never goes into git.** It lives on the Pi — `indoor/sensors.db`,
-  plus the `indoor/data_from_pico.txt` and `indoor/archive/` text logs, all
+- **Sensor data never goes into git.** It lives on the Pi — `raspberrypi/sensors.db`,
+  plus the `raspberrypi/data_from_pico.txt` and `raspberrypi/archive/` text logs, all
   gitignored — and reaches the dashboard live through the Flask API.
   (Until October 2026 a cron job pushed `data_from_pico.txt` to a separate
   `update_dashboard_data` branch every 5 minutes; that branch and
   `push_data.sh` are retired.)
 - **Workflow for new features**: branch off `main` → develop → open a PR
   into `main` → on the Pi, `git pull` and restart whichever service changed
-  (`garden-sensor` and/or `garden-api`) → confirm it works → delete the
+  (`garden-sensor` and/or `garden-api`; if `deploy/` changed, run
+  `deploy/install.sh` instead) → confirm it works → delete the
   feature branch. To try a branch on the Pi before merging it, check it out
   there (`git fetch && git checkout <branch>`), then switch back to `main`
   once it's merged.
@@ -121,19 +129,18 @@ systemd units below reference full paths rather than bare commands.
 
 ## Part 3: systemd services
 
-Two services. Templates live in `deploy/` in this repo — copy them in,
-then edit the placeholders (`<username>`) for your actual Pi username.
+Two services, `garden-sensor` (`main.py`, the radio loop) and `garden-api`
+(the Flask API under gunicorn). Templates live in `deploy/`; `install.sh`
+fills in your username, installs and enables them, and (re)starts both.
+Run it as your normal user — it calls `sudo` itself:
 
 ```bash
-sudo cp deploy/garden-sensor.service /etc/systemd/system/
-sudo cp deploy/garden-api.service /etc/systemd/system/
-sudo nano /etc/systemd/system/garden-sensor.service   # fix <username>
-sudo nano /etc/systemd/system/garden-api.service       # fix <username> + weather keys
-sudo systemctl daemon-reload
-sudo systemctl enable garden-sensor garden-api
-sudo systemctl start garden-sensor garden-api
-sudo systemctl status garden-sensor garden-api
+~/Automated_Watering_System/deploy/install.sh
 ```
+
+It's safe to re-run after any `git pull` that touches `deploy/`. It also
+moves the Pi's data out of the old `indoor/` folder into `raspberrypi/`
+if it finds any there (the October 2026 folder rename).
 
 Watch live output:
 
@@ -146,9 +153,17 @@ sudo journalctl -u garden-api -f
 
 `flask_api.py` reads `WEATHERAPI_KEY`, `OPENWEATHERMAP_KEY`,
 `TOMORROWIO_KEY` via `os.environ`. Since `garden-api.service` runs under
-systemd (not your shell), these **must** be set as `Environment=` lines
-inside the unit file itself — see `deploy/garden-api.service`'s
-placeholders. A source with no key configured returns a graceful
+systemd (not your shell), they live in `/etc/garden-api.env` (readable
+only by root, never in git), which the unit loads with `EnvironmentFile=`.
+`install.sh` creates it the first time, copying any keys from an older
+unit file that had them inline. To edit keys:
+
+```bash
+sudo nano /etc/garden-api.env       # one KEY=value per line
+sudo systemctl restart garden-api
+```
+
+A source with no key configured returns a graceful
 "not configured" response rather than erroring, so only set the ones you
 actually have keys for.
 
@@ -212,11 +227,11 @@ Do these **now**, while a card is known-good — not after the next failure.
 1. **Full SD card image** (`Win32DiskImager` or `dd`) of a fully-configured,
    working card. This is the single highest-leverage backup: it captures
    every apt package, both Python environments, the SPI toggle, systemd
-   units, and cloudflared config in one shot. Restoring an image
+   units, `/etc/garden-api.env`, and cloudflared config in one shot. Restoring an image
    is minutes; rebuilding by hand (what this doc replaces) took days.
 2. **`sensors.db` backups**, off-box:
    ```bash
-   sqlite3 ~/Automated_Watering_System/indoor/sensors.db ".backup /path/sensors_backup.db"
+   sqlite3 ~/Automated_Watering_System/raspberrypi/sensors.db ".backup /path/sensors_backup.db"
    ```
    Never copy `sensors.db` directly while `garden-sensor` is running — it's
    a live WAL-mode database; `.backup` gives a consistent snapshot, a raw

@@ -70,8 +70,8 @@ GARDEN_LON = -79.9959
 # Weather API keys — kept server-side and never shipped to the browser.
 # This is the whole reason this proxy exists: the dashboard is a static
 # site with no backend of its own, so any key baked into its JS would be
-# public. Set these as real environment variables on the Pi (e.g. in the
-# systemd unit or a .env loaded before gunicorn starts) — do not hardcode
+# public. On the Pi they come from /etc/garden-api.env, which
+# garden-api.service loads (deploy/install.sh creates it) — do not hardcode
 # a key here. A source with no key set returns 501 rather than crashing,
 # so the dashboard can show "not configured yet" instead of a raw error.
 WEATHER_API_KEYS = {
