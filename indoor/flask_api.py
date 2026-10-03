@@ -29,10 +29,8 @@ sharded across separate worker processes.)
 '''
 
 import os
-import subprocess
 import threading
 import time
-from pathlib import Path
 import db
 import requests
 
@@ -90,10 +88,6 @@ WEATHER_CACHE_TTL = 600  # 10 minutes
 _weather_lock  = threading.Lock()
 _weather_cache = {}  # source -> {"ts": monotonic, "result": dict}
 
-# Path to push_data.sh so a manual poll can publish immediately instead of
-# waiting for the next 5-minute cron tick.
-PUSH_SCRIPT = Path(__file__).parent.parent / "push_data.sh"
-
 app = Flask(__name__)
 CORS(app, origins=[ALLOWED_ORIGIN])
 
@@ -141,30 +135,6 @@ def api_poll():
             "status":  "ok" if packets else "timeout",
             "packets": packets or [],
         }
-
-        # Publish to GitHub in the background — this benefits anyone loading
-        # the dashboard passively and feeds the archive, but the response to
-        # this click no longer waits on git/GitHub/the Pages CDN at all, since
-        # the actual sensor values are already in `result` above.
-        if packets and PUSH_SCRIPT.exists():
-            def _publish():
-                try:
-                    result = subprocess.run(
-                        ["bash", str(PUSH_SCRIPT)],
-                        timeout=30, check=False,
-                        capture_output=True, text=True,
-                    )
-                    # check=False means a non-zero exit doesn't raise, so it
-                    # has to be checked explicitly — previously a failing
-                    # push_data.sh (bad git state, network hiccup, etc.) just
-                    # went silent since only a failure to *spawn* the process
-                    # hit the except block below.
-                    if result.returncode != 0:
-                        detail = (result.stderr or result.stdout).strip()
-                        print(f"[API] push_data.sh exited {result.returncode}: {detail}")
-                except Exception as e:
-                    print(f"[API] push_data.sh failed to run: {e}")
-            threading.Thread(target=_publish, daemon=True).start()
 
         _last_poll["ts"]     = time.monotonic()
         _last_poll["result"] = result

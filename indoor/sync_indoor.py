@@ -26,8 +26,7 @@ DATA_FILE    = Path(__file__).parent / "data_from_pico.txt"
 COMMAND_FILE = "/tmp/pico_command.json"
 
 # Fresh poll results, written by main.py the instant a poll's batch completes,
-# so /api/poll can return real sensor values immediately instead of waiting
-# on push_data.sh -> GitHub -> Pages CDN to publish the static file.
+# so /api/poll can return real sensor values to the browser straight away.
 POLL_RESULT_FILE = "/tmp/pico_poll_result.json"
 
 # Ping test request/result handoff — deliberately separate from COMMAND_FILE
@@ -166,8 +165,7 @@ def wait_for_poll_result(timeout=WAIT_TIMEOUT):
     '''
     Block until POLL_RESULT_FILE appears, then return its parsed packet list.
     Used by /api/poll to hand back real sensor values the moment main.py has
-    them, instead of the old approach of watching DATA_FILE's mtime and then
-    making the browser wait on push_data.sh -> GitHub -> Pages to publish it.
+    them.
     '''
     print(f"[POLL] Waiting up to {timeout}s for poll result...")
     deadline = time.monotonic() + timeout

@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 indoor/node_info.json
+
+# Sensor data lives only on the Pi (sensors.db, served live by the Flask
+# API) — never committed. main.py appends to data_from_pico.txt constantly,
+# so tracking it would leave the Pi's working tree permanently "dirty".
+data_from_pico.txt
+indoor/data_from_pico.txt
+indoor/archive/
+indoor/sensors.db*
