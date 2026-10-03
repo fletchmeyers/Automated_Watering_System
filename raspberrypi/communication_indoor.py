@@ -566,19 +566,21 @@ class SyncManager:
 
     Each node gets one session per clock hour, capped at lines_per_session
     lines, so a large backlog is worked through over many hours rather than
-    tying up the radio. main.py only asks for the next chunk when nothing
-    else is pending, so scheduled polls slot in between chunks.
+    tying up the radio. Sessions for different nodes run side by side, taking
+    turns chunk by chunk, so one node's backlog doesn't hold up another's.
+    main.py only asks for the next chunk when nothing else is pending, so
+    scheduled polls slot in between chunks.
 
     A chunk's lines are buffered and only stored once its "se" (sync end)
     packet arrives. If fewer lines arrived than the node says it sent, the
-    same chunk is requested again (up to max_retries) — the node only moves
-    its cursor forward once the next request confirms the previous offset.
-    The confirmed cursor is kept per node across sessions, so the next
-    session carries on without resending the last chunk (only a Pi restart
-    loses it, which costs at most one duplicated chunk).
+    same chunk is requested again on that node's next turn (up to
+    max_retries) — the node only moves its cursor forward once the next
+    request confirms the previous offset. The confirmed cursor is kept per
+    node across sessions, so the next session carries on without resending
+    the last chunk (only a Pi restart loses it, which costs at most one
+    duplicated chunk).
 
-    Synced lines go to sensors.db and a sync archive file, never DATA_FILE —
-    that file is pushed to git every 5 minutes and isn't meant for backlog.
+    Synced lines go to sensors.db and a sync archive file, never DATA_FILE.
     '''
     def __init__(self, node_ids, lines_per_session=2000, chunk_lines=20,
                  max_retries=3, db_conn=None):
@@ -588,14 +590,13 @@ class SyncManager:
         self.max_retries       = max_retries
         self.db_conn           = db_conn
 
-        self.active   = None    # node ID with a session in progress
+        self.active   = None    # node ID of the chunk in flight (or last sent); None once its session ends
         self.awaiting = False   # a chunk has been requested and its "se" hasn't arrived
-        self._last_hour     = {}      # node ID -> "YYYY-MM-DDTHH" of its last session
-        self._requested     = []      # node IDs with a manual "sync now" request
-        self._cursors       = {}      # node ID -> {"g": gen, "o": offset} last stored
-        self._buffer        = []
-        self._retries       = 0
-        self._session_lines = 0
+        self.sessions = {}      # node ID -> {"lines", "retries"} for each open session, in start order
+        self._last_hour = {}    # node ID -> "YYYY-MM-DDTHH" of its last session
+        self._requested = []    # node IDs with a manual "sync now" request
+        self._cursors   = {}    # node ID -> {"g": gen, "o": offset} last stored
+        self._buffer    = []
 
     def request_now(self, node_id):
         '''Start a session for node_id as soon as the radio is free, regardless of the hour.'''
@@ -604,33 +605,45 @@ class SyncManager:
 
     def next_command(self, reachable=lambda node_id: True):
         '''Return the next "sync" command to send, or None if there's nothing to do.
-        Sessions only start for nodes reachable() says are answering.'''
-        if self.active is None and not self._start_session(reachable):
+        Sessions only start or continue for nodes reachable() says are answering.'''
+        self._start_sessions(reachable)
+        node_id = self._next_turn(reachable)
+        if node_id is None:
             return None
-        command = {"t": "sync", "n": self.active, "k": self.chunk_lines}
-        command.update(self._cursors.get(self.active, {}))
+        self.active = node_id
+        command = {"t": "sync", "n": node_id, "k": self.chunk_lines}
+        command.update(self._cursors.get(node_id, {}))
         self.awaiting = True
         return command
 
-    def _start_session(self, reachable):
+    def _start_sessions(self, reachable):
         hour = datetime.now().strftime("%Y-%m-%dT%H")
-        requested = [nid for nid in self._requested if reachable(nid)]
-        if requested:
-            node_id = requested[0]
-            self._requested.remove(node_id)
-        else:
-            due = [nid for nid in self.node_ids
-                   if self._last_hour.get(nid) != hour and reachable(nid)]
-            if not due:
-                return False
-            node_id = due[0]
+        for node_id in list(self._requested):
+            if node_id not in self.sessions and reachable(node_id):
+                self._requested.remove(node_id)
+                self._begin(node_id, hour)
+        for node_id in self.node_ids:
+            if (node_id not in self.sessions and self._last_hour.get(node_id) != hour
+                    and reachable(node_id)):
+                self._begin(node_id, hour)
+
+    def _begin(self, node_id, hour):
         self._last_hour[node_id] = hour
-        self.active         = node_id
-        self._buffer        = []
-        self._retries       = 0
-        self._session_lines = 0
+        self.sessions[node_id] = {"lines": 0, "retries": 0}
         print(f"[SYNC] Session started for node {node_id} (up to {self.lines_per_session} lines).")
-        return True
+
+    def _next_turn(self, reachable):
+        '''The open session after the one served last, skipping (and ending)
+        sessions for nodes that have stopped being available.'''
+        order = list(self.sessions)
+        if self.active in order:
+            i = order.index(self.active) + 1
+            order = order[i:] + order[:i]
+        for node_id in order:
+            if reachable(node_id):
+                return node_id
+            self._end_session(node_id, "node no longer available")
+        return None
 
     def on_send(self, command):
         '''CommandManager hook: a (re)sent chunk request starts that chunk over.'''
@@ -646,40 +659,46 @@ class SyncManager:
             return
         self.awaiting = False
         node_id = self.active
-        count   = se.get("c", 0)
-        got     = len(self._buffer)
+        session = self.sessions.get(node_id)
+        if session is None:
+            return
+        count = se.get("c", 0)
+        got   = len(self._buffer)
 
-        if got < count and self._retries < self.max_retries:
-            self._retries += 1
+        if got < count and session["retries"] < self.max_retries:
+            session["retries"] += 1
             print(f"[SYNC] Node {node_id}: got {got}/{count} lines — re-requesting chunk "
-                  f"(retry {self._retries}/{self.max_retries}).")
+                  f"(retry {session['retries']}/{self.max_retries}).")
+            self._buffer = []
             return
         if got < count:
             print(f"[SYNC] Node {node_id}: storing {got}/{count} lines after "
                   f"{self.max_retries} retries — {count - got} lost.")
 
         self._store(node_id, self._buffer)
-        self._buffer  = []
-        self._retries = 0
+        self._buffer = []
+        session["retries"] = 0
         self._cursors[node_id] = {"g": se.get("g"), "o": se.get("o")}
-        self._session_lines += count
+        session["lines"] += count
 
         if not se.get("m") or count == 0:
-            self._end_session("caught up")
-        elif self._session_lines >= self.lines_per_session:
-            self._end_session("hourly limit reached, more waiting")
+            self._end_session(node_id, "caught up")
+        elif session["lines"] >= self.lines_per_session:
+            self._end_session(node_id, "hourly limit reached, more waiting")
 
     def abort(self):
-        '''The chunk request timed out — give up until the next hour.'''
-        if self.active is not None:
-            self._end_session("node stopped responding")
+        '''The chunk request timed out — that node's session waits for the next hour.'''
+        if self.active in self.sessions:
+            self._end_session(self.active, "node stopped responding")
 
-    def _end_session(self, reason):
-        print(f"[SYNC] Session for node {self.active} ended after "
-              f"{self._session_lines} lines ({reason}).")
-        self.active   = None
-        self.awaiting = False
-        self._buffer  = []
+    def _end_session(self, node_id, reason):
+        session = self.sessions.pop(node_id)
+        print(f"[SYNC] Session for node {node_id} ended after "
+              f"{session['lines']} lines ({reason}).")
+        if node_id == self.active:
+            self.active   = None
+            self.awaiting = False
+            self._buffer  = []
 
     def _store(self, node_id, lines):
         if not lines:
