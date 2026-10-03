@@ -7,8 +7,8 @@ behind a Cloudflare Tunnel to a live dashboard on GitHub Pages.
 
 This is the current setup as actually deployed — rewritten after a full
 disaster-recovery rebuild surfaced a lot of drift from the original guide.
-If you're setting up a fresh Pi (new SD card, new hardware), follow this
-top to bottom. If something here doesn't match reality, it's more likely
+If you're setting up a fresh Pi (new SD card, new hardware), use the
+Quick setup below; Parts 1–4 document what it does, step by step. If something here doesn't match reality, it's more likely
 this doc that's stale than your memory of how things work — please fix it
 inline as you find gaps, the same way this rewrite happened.
 
@@ -72,6 +72,33 @@ All nodes share one 915MHz frequency and encryption key — see
 `board_config_*.h`. The key must match exactly across every node and the Pi.
 
 ---
+
+## Quick setup (a fresh card)
+
+Works on a Pi 3B or a Pi Zero 2 W. `deploy/setup.sh` does Parts 1–4.
+
+1. **Flash the card** with Raspberry Pi Imager: *Raspberry Pi OS Lite
+   (64-bit)*. In its settings (the gear / "Edit settings"), set the
+   hostname, username and password, Wi-Fi, time zone, and turn on SSH.
+2. **Copy a backup over**, if you have one (see Disaster recovery). From
+   the PC, once the new Pi is on the network:
+   ```bash
+   scp garden_backup_<date>.tar.gz <user>@<new-pi-ip>:~
+   ```
+3. **On the new Pi:**
+   ```bash
+   sudo apt update && sudo apt install -y git
+   git clone https://github.com/fletchmeyers/Automated_Watering_System.git ~/Automated_Watering_System
+   ~/Automated_Watering_System/deploy/setup.sh --restore ~/garden_backup_<date>.tar.gz --wittypi
+   sudo reboot
+   ```
+   Leave out `--restore` for a brand-new hub with no data or tunnel yet
+   (then set up the tunnel per Part 4), and `--wittypi` if there's no
+   Witty Pi HAT. The script is safe to re-run if it stops partway.
+
+**Only run one hub at a time.** Two Pis polling the same nodes would
+collide on the radio, and two copies of one Cloudflare tunnel would split
+the dashboard's requests between them.
 
 ## Part 1: OS-level dependencies (not in git — install fresh every time)
 
@@ -224,8 +251,21 @@ require credentials for.
 
 Do these **now**, while a card is known-good — not after the next failure.
 
-1. **Full SD card image** (`Win32DiskImager` or `dd`) of a fully-configured,
-   working card. This is the single highest-leverage backup: it captures
+0. **Backup bundle** — everything on the Pi that isn't in git (the
+   database and logs, `node_info.json`, the weather API keys, the
+   Cloudflare tunnel credentials and the time zone), in one file that
+   `setup.sh --restore` puts back:
+   ```bash
+   ~/Automated_Watering_System/deploy/backup.sh          # on the Pi
+   scp <user>@<pi-ip>:~/garden_backup_<date>.tar.gz .    # on the PC
+   ```
+   Add `--stop` when moving to a new card: it stops the services first
+   (and leaves them stopped), so no readings arrive after the snapshot.
+   The bundle contains secrets — keep it off GitHub and other public places.
+1. **Full SD card image** of a fully-configured, working card: shut the
+   Pi down, put its card in the PC, and in Win32DiskImager pick a file
+   name, tick *Read Only Allocated Partitions*, and click *Read*. Restore
+   by writing the `.img` to a card of the same size or larger. This is the single highest-leverage backup: it captures
    every apt package, both Python environments, the SPI toggle, systemd
    units, `/etc/garden-api.env`, and cloudflared config in one shot. Restoring an image
    is minutes; rebuilding by hand (what this doc replaces) took days.
