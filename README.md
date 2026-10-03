@@ -78,7 +78,12 @@ All nodes share one 915MHz frequency and encryption key — see
 Works on a Pi 3B or a Pi Zero 2 W. `deploy/setup.sh` does Parts 1–4.
 
 1. **Flash the card** with Raspberry Pi Imager: *Raspberry Pi OS Lite
-   (64-bit)*. In its settings (the gear / "Edit settings"), set the
+   (64-bit)*, found under *Raspberry Pi OS (other)*. Lite is the same OS
+   without the desktop, which a headless hub doesn't need (the desktop
+   costs 200–300 MB of RAM; too much for a Zero 2 W's 512 MB). The full
+   OS also works on a Pi 3B; run `sudo raspi-config nonint
+   do_boot_behaviour B1` after setup so it boots to the console. In the
+   Imager's settings (the gear / "Edit settings"), set the
    hostname, username and password, Wi-Fi, time zone, and turn on SSH.
 2. **Copy a backup over**, if you have one (see Disaster recovery). From
    the PC, once the new Pi is on the network:
