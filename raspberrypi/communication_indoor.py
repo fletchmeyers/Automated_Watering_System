@@ -390,6 +390,15 @@ class SleepScheduler:
         print(f"[SLEEP] Node {node_id} asleep until {wake_str}.")
 
 
+def _is_iso(value):
+    '''True if value is a timestamp in ISO_FORMAT (not None, "unknown", etc.).'''
+    try:
+        datetime.strptime(value, ISO_FORMAT)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 class BatchReceiver:
     '''
     Collects sensor packets arriving from the Pico within a single batch.
@@ -397,7 +406,10 @@ class BatchReceiver:
     A batch opens on receipt of a "ts" packet (poll response) and closes
     when batch_end arrives. If a sensor packet arrives before a ts packet
     (e.g. ts was dropped in radio transit), open_batch() is called defensively
-    with a placeholder so the packet is not lost.
+    so the packet is not lost. The batch then takes the Pi's own clock as its
+    timestamp — the node answers within a second or so of the poll, and the
+    poll's ts it would have echoed came from that same clock. Likewise if the
+    ts packet carries no usable time.
 
     For bulk sync chunks, sends a per-chunk data_ack carrying the chunk number
     so the Pico can advance to the next chunk.
@@ -424,7 +436,9 @@ class BatchReceiver:
         self._batch_end_q = None
         self._chunk       = None   # present only during bulk sync
 
-    def open_batch(self, ts_value):
+    def open_batch(self, ts_value=None):
+        if not _is_iso(ts_value):
+            ts_value = datetime.now().strftime(ISO_FORMAT)
         if self._received:
             print(f"[BATCH] Warning: {len(self._received)} unwritten packets — flushing.")
             self._flush(radio=None, send_ack=False)
@@ -440,8 +454,8 @@ class BatchReceiver:
         Returns True if expected count reached before batch_end.
         '''
         if self._current_ts is None:
-            print("[BATCH] Sensor packet arrived before ts — opening batch with placeholder.")
-            self.open_batch("unknown")
+            print("[BATCH] Sensor packet arrived before ts — stamping the batch with the Pi's clock.")
+            self.open_batch()
 
         data["ts"] = self._current_ts
         self._received.append(data)
