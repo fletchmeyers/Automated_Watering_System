@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up sensors.db to the GARDENBAK USB stick
+# Runs from garden-backup.timer; see deploy/backup_db.sh.
+
+[Service]
+Type=oneshot
+Environment=GARDEN_USER=<username>
+ExecStart=/bin/sh /home/<username>/Automated_Watering_System/deploy/backup_db.sh
