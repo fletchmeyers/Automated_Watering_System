@@ -45,12 +45,18 @@ while True:
 
         # Polls get every reading; the SD log only keeps one every
         # LOG_INTERVAL, since everything on it has to go back over the radio.
-        if now - last_log_at >= LOG_INTERVAL:
+        # A board without a battery-backed clock reads 2000 until the Pi's
+        # first poll sets it — don't log readings with that date.
+        if now - last_log_at >= LOG_INTERVAL and ts >= "2024":
             last_log_at = now
             append_to_sd(packets, ts)
 
     # ── Radio listen (short timeout so sense loop stays on schedule) ───────
-    command = check_for_command(rfm69, timeout=0.1)
+    if rfm69 is not None:
+        command = check_for_command(rfm69, timeout=0.1)
+    else:
+        command = None   # no radio (a board on the bench): USB only
+        time.sleep(0.1)
     if command is not None:
         new_interval = dispatch_command(
             command, sender, rfm69, rtc,

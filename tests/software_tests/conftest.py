@@ -15,6 +15,7 @@ sys.path.append(str(project_root / "raspberrypi"))
 sys.path.append(str(project_root / "circuitpython"))
 
 sys.modules['board'] = MagicMock()
+sys.modules['rtc'] = MagicMock()
 sys.modules['busio'] = MagicMock()
 sys.modules['digitalio'] = MagicMock()
 sys.modules['storage'] = MagicMock()

@@ -273,10 +273,32 @@ python3 node_setup.py list          # the nodes in nodes.json
 
 It works out which node is plugged in and what it runs. A CircuitPython
 board gets the changed files from `circuitpython/` plus the libraries they
-use, and a `node_config.py` written from `nodes.json`. An Arduino board is
-built with its settings and flashed. For a board that isn't a node yet,
-add it to `nodes.json` first and pass `--node N`. The library `.mpy` files
-in `circuitpython/lib` must match the board's CircuitPython major version.
+use, and a `node_config.py` written from `nodes.json` (and is restarted
+from its console if `boot.py` changed). An Arduino board is built with its
+settings and flashed. For a board that isn't a node yet, add it to
+`nodes.json` first and pass `--node N`. The library `.mpy` files in
+`circuitpython/lib` must match the board's CircuitPython major version.
+
+**A new CircuitPython board** — add it to `nodes.json`, plug it in, and:
+
+```bash
+python3 node_setup.py --install --node 3
+```
+
+That downloads CircuitPython (the version in `nodes.py`) for its board
+from circuitpython.org, installs it, and then sets the board up as node 3.
+A blank Pico shows its bootloader drive by itself; a board already running
+CircuitPython is restarted into it from its console; otherwise hold BOOTSEL
+(Pico) or double-tap reset (ESP32-S2) as you plug it in. Boards
+(`"board"` in `nodes.json`): `pico`, `picow`, `pico2`, `pico2w`,
+`feather_rp2040_adalogger`, `feather_esp32s2` for CircuitPython;
+`feather_m0` for Arduino. A board with no radio, no STEMMA QT port or no
+PCF8523 clock still runs (USB only, no sensors, or its own clock set by
+the Pi's polls), which makes a bare board easy to test on the bench.
+
+The dashboard reads node names, colors and battery labels from
+`nodes.json` too, so a new node needs no other edits: restart
+`garden-sensor` on the Pi so it starts polling it.
 
 Flashing Arduino boards needs PlatformIO on the Pi, a one-time install
 (`deploy/setup.sh --platformio` does the same):

@@ -7,10 +7,12 @@ const API_BASE = "https://api.fletchermeyers.com";
 
 // ── Nodes ─────────────────────────────────────────────────────────────────────
 // Display name, short name (used in plot labels) and color for each radio
-// node ID. Add a line here when a node joins — one that isn't listed still
-// shows up, as "Node N" in one of the fallback colors. Colors stay clear of
-// the green/amber/red used for status so a node never reads as a warning.
-// Shared with analysis.js (loaded after this file, same page scope).
+// node ID, read from nodes.json at the repo root by loadNodes() — add a node
+// there, not here. The list below is only used if that file can't be loaded.
+// A node that isn't listed still shows up, as "Node N" in one of the
+// fallback colors. Colors stay clear of the green/amber/red used for status
+// so a node never reads as a warning. Shared with analysis.js (loaded after
+// this file, same page scope).
 //
 // `battery` says which sensor measures the node's supply, for the Nodes
 // card: a MAX17048 fuel gauge ("batt": charge % and cell voltage) unless
@@ -21,15 +23,43 @@ const NODES = {
        battery: { type: 'pw0', label: 'CAR BATTERY' } },
   2: { name: 'M0 (Arduino)',         short: 'M0',   color: '#f778ba' },
 };
+const NODES_URL = '../nodes.json';   // the repo root, next to dashboard/ on GitHub Pages
+
+// Replace NODES with what nodes.json says. Never throws: on any problem the
+// built-in list above stays, so the dashboard still starts.
+async function loadNodes(timeoutMs = 4000) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(NODES_URL, { cache: 'no-cache', signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const listed = (await res.json()).nodes;
+    if (!listed || typeof listed !== 'object' || !Object.keys(listed).length) {
+      throw new Error('no "nodes" in it');
+    }
+    for (const id of Object.keys(NODES)) delete NODES[id];
+    for (const [id, n] of Object.entries(listed)) {
+      NODES[id] = {
+        name: n.name || `Node ${id}`,
+        short: n.short || `N${id}`,
+        color: n.color || nodeInfo.fallbackColor(id),
+        ...(n.battery ? { battery: n.battery } : {}),
+      };
+    }
+  } catch (e) {
+    console.warn(`Couldn't load ${NODES_URL}, using the built-in node list:`, e);
+  }
+}
 const DEFAULT_BATTERY = { type: 'batt', label: 'BATTERY' };
 const NODE_FALLBACK_COLORS = ['#d2a8ff', '#ffa657', '#a5d6ff', '#7ee787'];
 
 function nodeInfo(n) {
   const known = NODES[n];
   if (known) return known;
-  const color = NODE_FALLBACK_COLORS[(Number(n) || 0) % NODE_FALLBACK_COLORS.length];
-  return { name: `Node ${n}`, short: `N${n}`, color };
+  return { name: `Node ${n}`, short: `N${n}`, color: nodeInfo.fallbackColor(n) };
 }
+nodeInfo.fallbackColor = n => NODE_FALLBACK_COLORS[(Number(n) || 0) % NODE_FALLBACK_COLORS.length];
 
 // Configured nodes plus any others that turn up in the data, in ID order.
 function knownNodeIds(extra = []) {
