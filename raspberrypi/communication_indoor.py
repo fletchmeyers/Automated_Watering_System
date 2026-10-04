@@ -112,12 +112,12 @@ class CommandManager:
                 # poll retried for up to CMD_TIMEOUT would otherwise set the
                 # node's clock that far behind.
                 command["ts"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            if self._on_send is not None:
+                self._on_send(command)   # may adjust the command, so before it's encoded
             packet  = json.dumps(command, separators=(",", ":"))
             time.sleep(0.5)  # let Pico finish any in-progress work before listening
             radio.send(bytes(packet, "utf-8"))
             print(f"[CMD] Sent: {packet}")
-            if self._on_send is not None:
-                self._on_send(command)
             self.pending    = command
             self._last_sent = now
             if not self._first_sent:
@@ -575,7 +575,13 @@ class SyncManager:
     packet arrives. If fewer lines arrived than the node says it sent, the
     same chunk is requested again on that node's next turn (up to
     max_retries) — the node only moves its cursor forward once the next
-    request confirms the previous offset. The confirmed cursor is kept per
+    request confirms the previous offset.
+
+    Newer node firmware tags each line with its place in the chunk ("j"), so
+    a retry only asks for the lines still missing: the request's "j" is a
+    bitmask of the wanted lines (bit i = line i), which keeps it small enough
+    for one radio packet. Untagged lines from older firmware are handled the
+    old way, by asking for the whole chunk again. The confirmed cursor is kept per
     node across sessions, so the next session carries on without resending
     the last chunk (only a Pi restart loses it, which costs at most one
     duplicated chunk).
@@ -613,8 +619,16 @@ class SyncManager:
         self.active = node_id
         command = {"t": "sync", "n": node_id, "k": self.chunk_lines}
         command.update(self._cursors.get(node_id, {}))
+        session = self.sessions[node_id]
+        if session["chunk"] != self._chunk_id(command):
+            session.update(chunk=self._chunk_id(command), have={}, count=None)
         self.awaiting = True
         return command
+
+    @staticmethod
+    def _chunk_id(command):
+        '''Which chunk a request is for: same cursor and size means the same lines.'''
+        return (command.get("g"), command.get("o"), command.get("k"))
 
     def _start_sessions(self, reachable):
         hour = datetime.now().strftime("%Y-%m-%dT%H")
@@ -629,7 +643,10 @@ class SyncManager:
 
     def _begin(self, node_id, hour):
         self._last_hour[node_id] = hour
-        self.sessions[node_id] = {"lines": 0, "retries": 0}
+        # have: tagged lines received so far for the chunk in progress, by
+        # place in the chunk; count: its line count, once an "se" has said.
+        self.sessions[node_id] = {"lines": 0, "retries": 0,
+                                  "chunk": None, "have": {}, "count": None}
         print(f"[SYNC] Session started for node {node_id} (up to {self.lines_per_session} lines).")
 
     def _next_turn(self, reachable):
@@ -646,12 +663,32 @@ class SyncManager:
         return None
 
     def on_send(self, command):
-        '''CommandManager hook: a (re)sent chunk request starts that chunk over.'''
-        if command.get("t") == "sync":
-            self._buffer = []
+        '''
+        CommandManager hook, called before each (re)send of a request. Untagged
+        lines start over with every send. If tagged lines of this chunk have
+        already arrived, ask only for the rest: after a short chunk, or when
+        the "se" was lost and CommandManager is resending.
+        '''
+        if command.get("t") != "sync":
+            return
+        self._buffer = []
+        command.pop("j", None)
+        session = self.sessions.get(command.get("n"))
+        if (session is None or not session["have"]
+                or session["chunk"] != self._chunk_id(command)):
+            return
+        total = session["count"] if session["count"] is not None else command.get("k", 0)
+        if total > 32:
+            return   # too many lines for the node's 32-bit mask — ask for them all
+        command["j"] = sum(1 << i for i in range(total) if i not in session["have"])
 
     def collect(self, line):
-        self._buffer.append(line)
+        place = line.pop("j", None)
+        session = self.sessions.get(self.active)
+        if isinstance(place, int) and session is not None:
+            session["have"][place] = line
+        else:
+            self._buffer.append(line)
 
     def handle_end(self, se):
         '''Process a chunk's "se" packet: store the chunk, or re-request it if lines went missing.'''
@@ -662,12 +699,16 @@ class SyncManager:
         session = self.sessions.get(node_id)
         if session is None:
             return
-        count = se.get("c", 0)
-        got   = len(self._buffer)
+        count  = se.get("c", 0)
+        tagged = {i: line for i, line in session["have"].items() if i < count}
+        lines  = [tagged[i] for i in sorted(tagged)] if tagged else self._buffer
+        got    = len(lines)
 
         if got < count and session["retries"] < self.max_retries:
             session["retries"] += 1
-            print(f"[SYNC] Node {node_id}: got {got}/{count} lines — re-requesting chunk "
+            session["count"] = count
+            what = f"the {count - got} missing" if tagged else "the whole chunk"
+            print(f"[SYNC] Node {node_id}: got {got}/{count} lines — re-requesting {what} "
                   f"(retry {session['retries']}/{self.max_retries}).")
             self._buffer = []
             return
@@ -675,9 +716,9 @@ class SyncManager:
             print(f"[SYNC] Node {node_id}: storing {got}/{count} lines after "
                   f"{self.max_retries} retries — {count - got} lost.")
 
-        self._store(node_id, self._buffer)
+        self._store(node_id, lines)
         self._buffer = []
-        session["retries"] = 0
+        session.update(retries=0, chunk=None, have={}, count=None)
         self._cursors[node_id] = {"g": se.get("g"), "o": se.get("o")}
         session["lines"] += count
 

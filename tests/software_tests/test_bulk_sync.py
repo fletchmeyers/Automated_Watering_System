@@ -264,3 +264,71 @@ def test_timed_out_chunk_aborts_session_until_next_hour(sd):
     sync.abort()
     assert sync.active is None
     assert sync.next_command() is None
+
+
+# ── Re-requesting only the missing lines ─────────────────────────────────────
+
+def test_short_chunk_retry_resends_only_the_missing_line(sd):
+    write_log(sd, 0, 8)
+    radio = FakeRadio(drop_at={5})                   # 2nd fragment of line 2
+    sender, frags = PacketSender(1, radio), FragmentReassembler()
+    sync = SyncManager([1], chunk_lines=8)
+
+    first = sync.next_command()
+    sync.on_send(first)
+    send_sync_chunk(sender, first)
+    pi_receive(sync, frags, radio.take())
+    assert not sync.awaiting and sync.sessions[1]["count"] == 8   # 7/8 arrived
+
+    retry = sync.next_command()
+    sync.on_send(retry)
+    assert retry["j"] == 1 << 2                      # only line 2
+    send_sync_chunk(sender, retry)
+    resent = radio.take()
+    assert len(resent) == 3                          # line 2's 2 fragments + "se"
+    pi_receive(sync, frags, resent)
+
+    assert [l["i"] for l in stored(sd)] == list(range(8))
+    assert not any("j" in l for l in stored(sd))     # the tag is never stored
+
+
+def test_lost_se_resend_skips_lines_that_already_arrived(sd):
+    write_log(sd, 0, 8)
+    radio = FakeRadio()
+    sender, frags = PacketSender(1, radio), FragmentReassembler()
+    sync = SyncManager([1], chunk_lines=8)
+
+    command = sync.next_command()
+    sync.on_send(command)
+    send_sync_chunk(sender, command)
+    pi_receive(sync, frags, radio.take()[:-1])       # every line, but no "se"
+
+    sync.on_send(command)                            # CommandManager's resend
+    assert command["j"] == 0                         # nothing missing
+    send_sync_chunk(sender, command)
+    resent = radio.take()
+    assert len(resent) == 1                          # just the "se"
+    pi_receive(sync, frags, resent)
+
+    assert [l["i"] for l in stored(sd)] == list(range(8))
+
+
+def test_old_firmware_without_tags_still_retries_whole_chunk(sd, monkeypatch):
+    monkeypatch.setattr(garden, "tag_line", lambda line, place: line)
+    write_log(sd, 0, 25)
+    radio = FakeRadio(drop_at={5})
+    sync = SyncManager([1], chunk_lines=20)
+    run_session(sync, PacketSender(1, radio), radio, FragmentReassembler())
+    assert [l["i"] for l in stored(sd)] == list(range(25))
+
+
+def test_retry_request_fits_one_radio_packet():
+    sync = SyncManager([2], chunk_lines=8)
+    sync._cursors[2] = {"g": 65535, "o": 4_294_967_295}   # largest cursor a node can have
+    command = sync.next_command()
+    sync.sessions[2]["have"] = {0: {}}
+    sync.sessions[2]["count"] = 8
+    sync.on_send(command)
+    assert command["j"] == 0b11111110
+    packet = json.dumps(command, separators=(",", ":")).encode()
+    assert len(packet) <= RADIO_MAX_BYTES, packet
