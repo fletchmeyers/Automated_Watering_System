@@ -1,0 +1,36 @@
+{
+  "_about": "Every radio node, in one place. The Pi (main.py) reads its node list, sleep windows and sync list from here, and raspberrypi/node_setup.py builds each node's settings from it when updating the node over USB. See README 'Adding or updating a node'.",
+
+  "nodes": {
+    "1": {
+      "name": "Pico (CircuitPython)",
+      "short": "Pico",
+      "color": "#79c0ff",
+      "framework": "circuitpython",
+      "board": "pico2w",
+      "sense_interval_s": 3,
+      "log_interval_s": 60,
+      "storage": "sd",
+      "pins": {
+        "spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
+        "radio_cs": "GP22", "radio_rst": "GP27",
+        "sd_cs": "GP17"
+      }
+    },
+    "2": {
+      "name": "M0 (Arduino)",
+      "short": "M0",
+      "color": "#f778ba",
+      "framework": "arduino",
+      "board": "feather_m0",
+      "sense_interval_s": 3,
+      "log_interval_s": 300,
+      "storage": "sd",
+      "sleep_window": ["19:00", "07:00"],
+      "pins": {
+        "radio_cs": 9, "radio_irq": 6, "radio_rst": 11,
+        "sd_cs": 10
+      }
+    }
+  }
+}

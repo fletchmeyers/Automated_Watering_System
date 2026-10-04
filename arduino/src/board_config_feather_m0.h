@@ -7,6 +7,10 @@
  * This is the ONLY file that should need to change to bring up a different
  * board later — pins, node identity, and the sensor list all live here.
  * packet_protocol.h/.cpp should never need to know which board it's on.
+ *
+ * The per-node settings (node ID, radio and SD pins, intervals, storage)
+ * come from nodes.json: raspberrypi/node_setup.py passes them as -D build
+ * flags. The values below are only the defaults for a plain `pio run`.
  */
 
 #ifndef BOARD_CONFIG_H
@@ -24,7 +28,9 @@
 
 // ── Node identity ────────────────────────────────────────────────────────
 // Must be unique across every radio node the Pi talks to (Pico node is 1).
-#define NODE_ID 2
+#ifndef NODE_ID
+  #define NODE_ID 2
+#endif
 
 // ── Radio ────────────────────────────────────────────────────────────────
 // Feather M0 + RFM69 FeatherWing. These match this board's actual jumper
@@ -32,9 +38,15 @@
 // CS moved off D10 to make room for the Adalogger's SD card. D9 is also the
 // battery divider pin (A7), so the vbat reading is dropped while CS is on
 // D9 — move CS to D5 or D12 to get it back.
-#define RFM69_CS   9
-#define RFM69_INT  6
-#define RFM69_RST  11
+#ifndef RFM69_CS
+  #define RFM69_CS   9
+#endif
+#ifndef RFM69_INT
+  #define RFM69_INT  6
+#endif
+#ifndef RFM69_RST
+  #define RFM69_RST  11
+#endif
 
 #define RADIO_FREQ_MHZ 915.0
 
@@ -47,14 +59,21 @@ static const uint8_t RADIO_ENCRYPT_KEY[16] = {
 // ── Sensing ──────────────────────────────────────────────────────────────
 // Seconds between sense cycles. Mirrors SENSE_INTERVAL in hardware_setup_garden.py
 // — can be overwritten at runtime by a set_interval command.
-#define DEFAULT_SENSE_INTERVAL_MS 3000
+#ifndef DEFAULT_SENSE_INTERVAL_MS
+  #define DEFAULT_SENSE_INTERVAL_MS 3000
+#endif
 
 // ── Reading log (see node_log.h) ─────────────────────────────────────────
 // Adalogger FeatherWing (Adafruit 2922) microSD, CS on D10. FAT16/FAT32
-// cards only. Without the SD card, LOG_FLASH_SAMD + LOG_FLASH_BYTES
-// (128UL * 1024) keeps ~2000 readings in spare internal flash instead.
-#define LOG_BACKEND      LOG_SD
-#define SD_CS            10
+// cards only. Without the SD card, LOG_FLASH_SAMD keeps ~2000 readings in
+// the top LOG_FLASH_BYTES of spare internal flash instead.
+#ifndef LOG_BACKEND
+  #define LOG_BACKEND    LOG_SD
+  #define SD_CS          10
+#endif
+#ifndef LOG_FLASH_BYTES
+  #define LOG_FLASH_BYTES (128UL * 1024)
+#endif
 #ifndef LOG_INTERVAL_MS                      // overridable with -D for quick bench tests
   #define LOG_INTERVAL_MS (5UL * 60 * 1000)  // one logged snapshot every 5 minutes
 #endif

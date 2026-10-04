@@ -10,3 +10,4 @@ data_from_pico.txt
 raspberrypi/data_from_pico.txt
 raspberrypi/archive/
 raspberrypi/sensors.db*
+circuitpython/node_config.py

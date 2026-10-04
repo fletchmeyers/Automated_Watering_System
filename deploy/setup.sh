@@ -14,16 +14,20 @@
 #     --restore FILE   restore a bundle made by deploy/backup.sh: the data,
 #                      weather API keys, Cloudflare tunnel and time zone
 #     --wittypi        also install the Witty Pi 4 software
+#     --platformio     also install PlatformIO, so raspberrypi/node_setup.py can
+#                      build and flash Arduino nodes from the Pi
 #
 # Safe to run again if it stops partway. Reboot when it finishes.
 set -e
 
 RESTORE=""
 WITTYPI=0
+PLATFORMIO=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --restore) RESTORE="$2"; shift 2 ;;
         --wittypi) WITTYPI=1; shift ;;
+        --platformio) PLATFORMIO=1; shift ;;
         *) echo "Unknown option: $1"; sed -n 2,20p "$0"; exit 1 ;;
     esac
 done
@@ -194,6 +198,22 @@ if [ $WITTYPI = 1 ]; then
         (cd "$HOME" && curl -fsSL -o install.sh https://www.uugear.com/repo/WittyPi4/install.sh \
             && sudo sh install.sh && rm -f install.sh)
     fi
+fi
+
+# ── 8. PlatformIO, for flashing Arduino nodes (optional) ─────────────────────
+if [ $PLATFORMIO = 1 ]; then
+    step "PlatformIO"
+    if [ -x "$HOME/.platformio/penv/bin/pio" ]; then
+        echo "   already installed (~/.platformio)"
+    else
+        curl -fsSL -o /tmp/get-platformio.py \
+            https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
+        python3 /tmp/get-platformio.py
+        rm -f /tmp/get-platformio.py
+    fi
+    # Uploading needs the board's serial port, which belongs to "dialout".
+    sudo usermod -aG dialout "$USER_NAME"
+    echo "   pio: $HOME/.platformio/penv/bin/pio (the first build downloads the compiler)"
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
