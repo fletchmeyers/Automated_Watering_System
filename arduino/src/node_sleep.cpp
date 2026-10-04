@@ -8,14 +8,10 @@ void handle_sleep(JsonDocument &command, PacketSender &sender) {
   uint32_t wake = 0;
   const char *refused = nullptr;
 
-#ifndef BOARD_HAS_RTC
-  refused = "no RTC to wake from";
-#else
   if (!clock_valid())                          refused = "clock not set";
   else if (!parse_iso(w, &wake))               refused = "bad wake time";
   else if (wake <= clock_now())                refused = "wake time already passed";
   else if (wake - clock_now() > SLEEP_MAX_S)   refused = "longer than SLEEP_MAX_S";
-#endif
 
   JsonDocument doc;
   doc["ok"] = refused ? 0 : 1;
@@ -88,6 +84,25 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
 
 #else
 
-void sleep_until(uint32_t, RH_RF69 &) {}
+// No RTC to wake the chip from a deeper sleep: switch the radio off and stay
+// awake on the millis() clock, still logging every LOG_INTERVAL_MS. Saves the
+// radio's share of the power (and keeps the radio quiet, as the Pi expects).
+void sleep_until(uint32_t wake, RH_RF69 &radio) {
+  char ts[20];
+  format_iso(wake, ts);
+  Serial.print(F("[SLEEP] Radio off until "));
+  Serial.print(ts);
+  Serial.println(F(" (no RTC, so the chip stays awake)."));
+
+  radio.sleep();
+  while (clock_now() < wake) {
+    uint32_t next = min(wake, clock_now() + (uint32_t)(LOG_INTERVAL_MS / 1000));
+    while (clock_now() < next) delay(200);
+    run_sense_cycle();
+    node_log_snapshot(clock_now());
+  }
+  // RadioHead puts the radio back in receive mode on its next available().
+  Serial.println(F("[SLEEP] Awake, radio back on."));
+}
 
 #endif

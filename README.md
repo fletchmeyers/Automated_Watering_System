@@ -65,7 +65,7 @@ script, and path reference below assumes this exact location.
 |---|---|---|
 | 1 | Garden Pico (Pico 2W, solar/car-battery powered) | CircuitPython |
 | 2 | Feather M0 | Arduino (PlatformIO) |
-| 3+ | reserved for future Arduino boards (Pico, ESP32, etc.) | Arduino |
+| 3+ | any board listed in `nodes.json` (see "Adding or updating a node") | CircuitPython or Arduino |
 
 All nodes share one 915MHz frequency and encryption key — see
 `hardware_setup_indoor.py` / `hardware_setup_garden.py` / each
@@ -279,22 +279,36 @@ settings and flashed. For a board that isn't a node yet, add it to
 `nodes.json` first and pass `--node N`. The library `.mpy` files in
 `circuitpython/lib` must match the board's CircuitPython major version.
 
-**A new CircuitPython board** — add it to `nodes.json`, plug it in, and:
+**A new board, or switching a board's framework** — set it up in
+`nodes.json` (`"framework"`: `circuitpython` or `arduino`), plug it in, and:
 
 ```bash
-python3 node_setup.py --install --node 3
+python3 node_setup.py --node 3
 ```
 
-That downloads CircuitPython (the version in `nodes.py`) for its board
-from circuitpython.org, installs it, and then sets the board up as node 3.
-A blank Pico shows its bootloader drive by itself; a board already running
-CircuitPython is restarted into it from its console; otherwise hold BOOTSEL
-(Pico) or double-tap reset (ESP32-S2) as you plug it in. Boards
-(`"board"` in `nodes.json`): `pico`, `picow`, `pico2`, `pico2w`,
-`feather_rp2040_adalogger`, `feather_esp32s2` for CircuitPython;
-`feather_m0` for Arduino. A board with no radio, no STEMMA QT port or no
-PCF8523 clock still runs (USB only, no sensors, or its own clock set by
-the Pi's polls), which makes a bare board easy to test on the bench.
+`nodes.json` says what the node should be, and the script gets the board
+there from whatever it runs now. A board without CircuitPython gets
+CircuitPython (the version in `nodes.py`, downloaded for its board from
+circuitpython.org) before the node code; an Arduino node on a Pico or
+Feather RP2040 gets its firmware built with the node's settings and copied
+to the board's bootloader drive; the Feather M0 is uploaded over serial.
+To reach the bootloader, a board running CircuitPython is restarted from
+its console and one running Arduino with a "1200-baud touch". A blank Pico
+shows its bootloader drive by itself; otherwise hold BOOTSEL (Pico) or BOOT
+(Feather RP2040) as you plug it in.
+
+Boards (`"board"` in `nodes.json`): `pico`, `picow`, `pico2`, `pico2w` and
+`feather_rp2040_adalogger` run either framework; `feather_m0` is Arduino
+only. ESP32 boards (`feather_esp32s2`, `feather_esp32_v2`) are listed but
+not set up yet. On the RP2 boards the radio uses the board's default SPI
+pins unless `spi_sck`/`spi_mosi`/`spi_miso` say otherwise, and an SD card
+on its own bus (the Adalogger's slot: `sd_sck` 18, `sd_mosi` 19,
+`sd_miso` 20, `sd_cs` 23) goes on the second one. Arduino nodes there have
+no RTC unless `"rtc": "pcf8523"` is set: their clock is set by the Pi's
+polls and nothing is logged after a restart until the first poll, and a
+sleep command turns the radio off but keeps the chip awake. A board with
+no radio, no I2C sensors or no RTC still runs (USB only), which makes a
+bare board easy to test on the bench.
 
 The dashboard reads node names, colors and battery labels from
 `nodes.json` too, so a new node needs no other edits: restart

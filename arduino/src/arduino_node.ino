@@ -22,6 +22,7 @@ RH_RF69 rf69(RFM69_CS, RFM69_INT);
 PacketSender sender(NODE_ID, &rf69);
 PacketSender usb_sender(NODE_ID, &Serial);   // replies to commands that came over USB
 
+bool radio_ok = false;
 unsigned long sense_interval_ms = DEFAULT_SENSE_INTERVAL_MS;
 unsigned long last_sense_at = 0;
 unsigned long last_log_at = 0;
@@ -46,15 +47,25 @@ void setup() {
   digitalWrite(RFM69_RST, LOW);
   delay(10);
 
-  if (!rf69.init()) {
-    Serial.println(F("[ERROR] RFM69 init failed — check wiring/IRQ jumper."));
-    while (1) delay(1000);
+#if defined(BOARD_RP2) && defined(RADIO_SPI_SCK)
+  // Radio on other pins than the board's default SPI ones (nodes.json).
+  SPI.setSCK(RADIO_SPI_SCK);
+  SPI.setTX(RADIO_SPI_MOSI);
+  SPI.setRX(RADIO_SPI_MISO);
+#endif
+
+  // Without a radio (a board on the bench) the node still runs and answers
+  // over USB, so it can be set up and tested from the Pi.
+  radio_ok = rf69.init();
+  if (!radio_ok) {
+    Serial.println(F("[ERROR] RFM69 init failed — check wiring/IRQ jumper. USB only."));
+  } else {
+    if (!rf69.setFrequency(RADIO_FREQ_MHZ)) {
+      Serial.println(F("[ERROR] setFrequency failed."));
+    }
+    rf69.setEncryptionKey((uint8_t *)RADIO_ENCRYPT_KEY);
+    rf69.setTxPower(20, true); // RFM69HCW maximum, same as the Pi and Pico
   }
-  if (!rf69.setFrequency(RADIO_FREQ_MHZ)) {
-    Serial.println(F("[ERROR] setFrequency failed."));
-  }
-  rf69.setEncryptionKey((uint8_t *)RADIO_ENCRYPT_KEY);
-  rf69.setTxPower(20, true); // RFM69HCW maximum, same as the Pi and Pico
 
   init_sensors();
   clock_begin();
@@ -82,7 +93,9 @@ void loop() {
 
   // ── Radio listen (short timeout so the sense loop stays on schedule) ──
   JsonDocument command;
-  if (check_for_command(rf69, 100, command)) {
+  if (!radio_ok) {
+    delay(100);   // USB only: keep the loop's pace without the radio's wait
+  } else if (check_for_command(rf69, 100, command)) {
     long new_interval_ms = dispatch_command(command, sender, rf69, NODE_ID);
     if (new_interval_ms > 0) {
       sense_interval_ms = new_interval_ms;

@@ -46,7 +46,7 @@ def test_flash_storage_has_no_sd_pin_flag():
 @pytest.mark.parametrize("change, message", [
     (lambda n: n.update(framework="micropython"), "framework must be one of"),
     (lambda n: n.update(board="esp32"), "unknown board"),
-    (lambda n: n.update(board="pico"), "arduino on pico isn.t supported yet"),
+    (lambda n: n.update(board="feather_esp32_v2"), "arduino on feather_esp32_v2 isn.t supported yet"),
     (lambda n: n.update(color="pink"), "color must look like"),
     (lambda n: n.update(battery="pw0"), "battery must be"),
     (lambda n: n["pins"].update(sd_sck=1), "all of"),
@@ -160,17 +160,6 @@ def test_every_bootloader_drive_maps_to_a_known_chip():
     assert chips == set(BOOTLOADER_DRIVES.values())
 
 
-def test_old_esp32s2_bootloader_is_refused(tmp_path):
-    info = tmp_path / "INFO_UF2.TXT"
-    info.write_text("TinyUF2 Bootloader 0.18.2 - tinyusb (0.15.0)\nModel: Adafruit Feather ESP32-S2\n")
-    with pytest.raises(node_setup.SetupError, match="0.18.2"):
-        node_setup.check_tinyuf2(tmp_path)
-    info.write_text("TinyUF2 Bootloader 0.35.0 - tinyusb (0.18.0)\n")
-    node_setup.check_tinyuf2(tmp_path)                 # new enough
-    info.unlink()
-    node_setup.check_tinyuf2(tmp_path)                 # can't tell: let it try
-
-
 def test_uf2_is_downloaded_once_then_cached(tmp_path, monkeypatch):
     fetched = []
 
@@ -275,3 +264,122 @@ def test_console_keeps_trying_while_the_board_is_busy_reloading(monkeypatch):
     assert node_setup.run_on_console(["import microcontroller", "microcontroller.reset()"]) is not None
     assert len(opened) == 3
     assert typed == ["import microcontroller", "microcontroller.reset()"]
+
+
+# ── Arduino on RP2040 / RP2350 boards ────────────────────────────────────────
+
+def rp2_node(**changes):
+    node = {"name": "Bench Pico", "framework": "arduino", "board": "pico",
+            "sense_interval_s": 3, "log_interval_s": 60, "storage": "none",
+            "pins": {"radio_cs": 17, "radio_irq": 21, "radio_rst": 20}}
+    node.update(changes)
+    return node
+
+
+def test_rp2_arduino_flags_cover_their_own_spi_buses_and_rtc():
+    from nodes import arduino_env
+    adalogger = rp2_node(board="feather_rp2040_adalogger", storage="sd", rtc="pcf8523",
+                         pins={"radio_cs": 10, "radio_irq": 6, "radio_rst": 11,
+                               "sd_cs": 23, "sd_sck": 18, "sd_mosi": 19, "sd_miso": 20})
+    check_node(12, adalogger)
+    flags = arduino_build_flags(12, adalogger)
+    assert arduino_env(adalogger) == "feather_rp2040_adalogger"
+    assert {"-D LOG_BACKEND=LOG_SD", "-D SD_CS=23", "-D SD_SPI_SCK=18", "-D SD_SPI_MOSI=19",
+            "-D SD_SPI_MISO=20", "-D BOARD_HAS_PCF8523"} <= set(flags)
+    assert not any("RADIO_SPI" in f for f in flags)          # radio on the board's default SPI
+
+    moved = rp2_node(pins={"radio_cs": 13, "radio_irq": 21, "radio_rst": 20,
+                           "spi_sck": 10, "spi_mosi": 11, "spi_miso": 12})
+    check_node(9, moved)
+    assert {"-D RADIO_SPI_SCK=10", "-D RADIO_SPI_MOSI=11", "-D RADIO_SPI_MISO=12"} <= set(
+        arduino_build_flags(9, moved))
+
+
+@pytest.mark.parametrize("node, message", [
+    (rp2_node(storage="flash"), 'only for Arduino SAMD boards'),
+    (rp2_node(rtc="ds3231"), "rtc must be one of"),
+    (rp2_node(pins={"radio_cs": 17, "radio_irq": 21, "radio_rst": 20, "spi_sck": 10}), 'all of "spi_sck"'),
+])
+def test_rp2_mistakes_are_reported(node, message):
+    with pytest.raises(NodeConfigError, match=message):
+        check_node(9, node)
+
+
+def test_custom_spi_pins_are_rp2_only():
+    m0 = copy.deepcopy(real()[2])
+    m0["pins"].update(spi_sck=24, spi_mosi=23, spi_miso=22)
+    with pytest.raises(NodeConfigError, match="only supported on RP2040/RP2350"):
+        check_node(2, m0)
+
+
+class Recorder:
+    '''Stands in for the flashing functions and records which one run() chose.'''
+    def __init__(self, monkeypatch, board, nodes):
+        self.calls = []
+        monkeypatch.setattr(node_setup, "load_nodes", lambda: nodes)
+        monkeypatch.setattr(node_setup, "detect", lambda args: board)
+        for name in ("update_circuitpython", "install_circuitpython", "flash_arduino_uf2", "update_arduino"):
+            monkeypatch.setattr(node_setup, name, self._record(name))
+        monkeypatch.setattr(node_setup, "confirm_running", lambda *a, **k: self.calls.append("confirm"))
+
+    def _record(self, name):
+        def call(*args, **kwargs):
+            self.calls.append(name)
+            return True
+        return call
+
+
+def args(**kw):
+    import types
+    return types.SimpleNamespace(**{"node": None, "install": False, "port": None, "dry_run": False, **kw})
+
+
+def test_a_circuitpython_pico_set_to_arduino_is_flashed_by_uf2(monkeypatch):
+    nodes = {9: rp2_node()}
+    r = Recorder(monkeypatch, node_setup.Board("circuitpython", 9), nodes)
+    node_setup.run(args())
+    assert r.calls == ["flash_arduino_uf2", "confirm"]
+
+
+def test_an_arduino_pico_set_to_circuitpython_gets_circuitpython_installed(monkeypatch):
+    nodes = {9: dict(real()[1], board="pico")}
+    r = Recorder(monkeypatch, node_setup.Board("arduino", 9, port="/dev/ttyACM0"), nodes)
+    node_setup.run(args())
+    assert r.calls == ["install_circuitpython", "confirm"]
+
+
+def test_a_circuitpython_node_is_just_updated(monkeypatch):
+    r = Recorder(monkeypatch, node_setup.Board("circuitpython", 1), real())
+    node_setup.run(args())
+    assert r.calls == ["update_circuitpython", "confirm"]
+
+
+def test_the_m0_is_still_uploaded_over_serial(monkeypatch):
+    r = Recorder(monkeypatch, node_setup.Board("arduino", 2, port="/dev/ttyACM0"), real())
+    node_setup.run(args())
+    assert r.calls == ["update_arduino", "confirm"]
+
+
+def test_a_board_in_its_bootloader_needs_to_be_told_which_node_it_is(monkeypatch):
+    Recorder(monkeypatch, node_setup.Board("bootloader", label="RPI-RP2"), real())
+    with pytest.raises(node_setup.SetupError, match="--node"):
+        node_setup.run(args())
+
+
+def test_entering_the_bootloader_uses_the_console_or_a_1200_baud_touch(monkeypatch):
+    typed, touched = [], []
+    monkeypatch.setattr(node_setup, "run_on_console", lambda lines: typed.extend(lines) or "")
+    monkeypatch.setattr(node_setup, "touch_1200", touched.append)
+    monkeypatch.setattr(node_setup, "wait_until", lambda check, timeout: "RPI-RP2")
+    monkeypatch.setattr(node_setup, "bootloader_drive", lambda: None)
+
+    assert node_setup.enter_bootloader(node_setup.Board("circuitpython", 9)) == "RPI-RP2"
+    assert "microcontroller.on_next_reset(microcontroller.RunMode.UF2)" in typed and not touched
+
+    assert node_setup.enter_bootloader(node_setup.Board("arduino", 9, port="/dev/ttyACM0")) == "RPI-RP2"
+    assert touched == ["/dev/ttyACM0"]
+
+
+def test_a_uf2_for_the_wrong_chip_is_refused(tmp_path):
+    with pytest.raises(node_setup.SetupError, match="rp2350"):
+        node_setup.copy_uf2("RP2350", tmp_path / "firmware.uf2", 9, rp2_node())
