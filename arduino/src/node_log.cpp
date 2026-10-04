@@ -20,6 +20,28 @@ static size_t reading_json(size_t i, const char *ts, char *buf, size_t cap) {
   return serializeJson(rec, buf, cap);
 }
 
+// Add "j":<place> to a JSON log line, so the Pi knows where in the chunk it
+// goes and can ask again for just the lines it missed. Returns the length.
+__attribute__((unused))
+static size_t tag_line(const char *line, size_t len, uint32_t place, char *out, size_t cap) {
+  if (len < 3 || line[0] != '{') {
+    size_t n = len < cap ? len : cap;
+    memcpy(out, line, n);
+    return n;
+  }
+  int n = snprintf(out, cap, "{\"j\":%lu,%.*s", (unsigned long)place, (int)(len - 1), line + 1);
+  if (n < 0) return 0;
+  return (size_t)n < cap ? (size_t)n : cap - 1;
+}
+
+// A sync request's optional "j" is a bitmask of the chunk's lines it wants
+// (bit i = line i); without one, the whole chunk is sent.
+__attribute__((unused))
+static bool line_wanted(JsonDocument &command, uint32_t place) {
+  if (!command["j"].is<uint32_t>()) return true;
+  return place < 32 && (command["j"].as<uint32_t>() >> place & 1);
+}
+
 static void send_se(PacketSender &sender, uint32_t gen, uint32_t offset, uint32_t count, bool more) {
   JsonDocument doc;
   doc["g"] = gen;
@@ -183,16 +205,19 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
     Serial.println(F("[SYNC] Could not read sending.txt."));
     return;
   }
-  char line[128];
-  uint32_t sent = 0;
+  char line[128], tagged[144];
+  uint32_t sent = 0;   // lines in this chunk, whether or not they were asked for again
   while (sent < k) {
     int n = f.fgets(line, sizeof(line));
     if (n <= 0) break;
     offset += n;
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
     if (n == 0) continue;
-    sender.send_raw((const uint8_t *)line, n);
-    delay(SYNC_LINE_GAP_MS);
+    if (line_wanted(command, sent)) {
+      size_t len = tag_line(line, n, sent, tagged, sizeof(tagged));
+      sender.send_raw((const uint8_t *)tagged, len);
+      delay(SYNC_LINE_GAP_MS);
+    }
     sent++;
   }
   f.close();
@@ -256,14 +281,17 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
   uint32_t k = command["k"] | 8;
 
   uint32_t i = log_tail(), sent = 0, epoch;
-  char json[LOG_JSON_MAX + 1], ts[20], line[LOG_JSON_MAX + 32];
+  char json[LOG_JSON_MAX + 1], ts[20], line[LOG_JSON_MAX + 32], tagged[LOG_JSON_MAX + 48];
   while (sent < k && i < log_head()) {
     if (log_read(i, &epoch, json)) {
-      format_iso(epoch, ts);
-      int len = snprintf(line, sizeof(line), "%.*s,\"ts\":\"%s\"}",
-                         (int)strlen(json) - 1, json, ts);
-      sender.send_raw((const uint8_t *)line, len);
-      delay(SYNC_LINE_GAP_MS);
+      if (line_wanted(command, sent)) {
+        format_iso(epoch, ts);
+        int len = snprintf(line, sizeof(line), "%.*s,\"ts\":\"%s\"}",
+                           (int)strlen(json) - 1, json, ts);
+        len = tag_line(line, len, sent, tagged, sizeof(tagged));
+        sender.send_raw((const uint8_t *)tagged, len);
+        delay(SYNC_LINE_GAP_MS);
+      }
       sent++;
     }
     i++;

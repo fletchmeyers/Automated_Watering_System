@@ -200,6 +200,13 @@ def _write_cursor(gen, offset):
         print(f"[SYNC] Could not save cursor: {e}")
 
 
+def tag_line(line, place):
+    '''Add "j":<place> to a logged JSON line, so the Pi knows where in the chunk it goes.'''
+    if line[:1] == b"{" and len(line) > 2:
+        return b'{"j":' + str(place).encode() + b"," + line[1:]
+    return line
+
+
 def send_sync_chunk(sender, command, max_lines=20):
     '''
     Answer one Pi "sync" request with up to max_lines lines from sending.txt,
@@ -212,7 +219,11 @@ def send_sync_chunk(sender, command, max_lines=20):
       them confirms the Pi has stored everything before o, so the cursor
       advances. Omitting them (e.g. the Pi restarted) resumes from the saved
       cursor instead.
+      j (optional) is a bitmask of the lines wanted from this chunk (bit i =
+      line i): a retry asks only for the lines that went missing.
     Reply: lines..., then {"t":"se","g":<gen>,"o":<next offset>,"c":<lines>,"m":<0/1>}
+      Each line is tagged with its place in the chunk ("j":i) so the Pi can
+      tell which ones arrived. c is always the chunk's full line count.
       m = 1 if more data is waiting after this chunk.
 
     data.txt is renamed to sending.txt when a new transfer starts, so logging
@@ -228,6 +239,9 @@ def send_sync_chunk(sender, command, max_lines=20):
         offset = command["o"]
         _write_cursor(gen, offset)
     max_lines = command.get("k", max_lines)
+    wanted = command.get("j")
+    if not isinstance(wanted, int):
+        wanted = None   # no mask: send the whole chunk
 
     size = _file_size(SD_SENDING_FILE)
 
@@ -255,7 +269,7 @@ def send_sync_chunk(sender, command, max_lines=20):
         gen, offset, size = gen + 1, 0, data_size
         _write_cursor(gen, offset)
 
-    sent = 0
+    sent = 0   # lines in this chunk, whether or not they were asked for again
     try:
         with open(SD_SENDING_FILE, "rb") as f:
             f.seek(offset)
@@ -267,8 +281,9 @@ def send_sync_chunk(sender, command, max_lines=20):
                 line = line.strip()
                 if not line:
                     continue
-                sender.send_raw(line)
-                time.sleep(SYNC_LINE_GAP)
+                if wanted is None or wanted >> sent & 1:
+                    sender.send_raw(tag_line(line, sent))
+                    time.sleep(SYNC_LINE_GAP)
                 sent += 1
     except OSError as e:
         print(f"[SYNC] Read failed at offset {offset}: {e}")

@@ -13,6 +13,8 @@
  *   exp/snt = batch_end fields (expected/sent)
  *   pq  = ping's q, echoed back in pong
  *   g/o/c/m/k = sync fields (log format ID / record offset / count / more / max)
+ *   j   = sync line's place in its chunk; in a request, a bitmask of the
+ *         lines wanted (bit i = line i), so a retry only resends what's missing
  *   ub/fb/tb  = info fields (log bytes used / free / total)
  *   w/ok/why  = sleep fields (wake time / accepted / reason refused)
  */
