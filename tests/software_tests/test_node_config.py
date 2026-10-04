@@ -213,16 +213,17 @@ def test_boot_py_change_restarts_the_board_from_its_console(tmp_path, monkeypatc
 
 
 def test_a_bare_board_still_starts(monkeypatch):
-    '''No STEMMA QT port, no radio, no PCF8523 (a plain Pico on the bench).'''
+    '''No STEMMA QT port, unusable SPI pins, no radio, no PCF8523 (a plain Pico on the bench).'''
     from unittest.mock import MagicMock
     import hardware_setup_garden
     monkeypatch.setattr(sys.modules["board"], "STEMMA_I2C", MagicMock(side_effect=ValueError("no STEMMA")))
+    monkeypatch.setattr(sys.modules["busio"], "SPI", MagicMock(side_effect=ValueError("pin in use")))
     monkeypatch.setattr(sys.modules["adafruit_rfm69"], "RFM69", MagicMock(side_effect=RuntimeError("no radio")))
     monkeypatch.setattr(sys.modules["adafruit_pcf8523.pcf8523"], "PCF8523",
                         MagicMock(side_effect=AttributeError("no I2C")))
     try:
         hw = importlib.reload(hardware_setup_garden)
-        assert hw.i2c is None and hw.rfm69 is None
+        assert hw.i2c is None and hw.spi is None and hw.rfm69 is None
         assert hw.rtc is sys.modules["rtc"].RTC.return_value     # the chip's own clock
     finally:
         monkeypatch.undo()

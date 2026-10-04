@@ -46,8 +46,13 @@ def pin(name):
     return getattr(board, PINS[name])
 
 
-# SPI SETUP
-spi = busio.SPI(clock=pin("spi_sck"), MOSI=pin("spi_mosi"), MISO=pin("spi_miso"))
+# SPI SETUP — a bad pin name in nodes.json leaves the board running (no
+# radio or SD) with a warning, rather than stopping it from starting at all.
+try:
+    spi = busio.SPI(clock=pin("spi_sck"), MOSI=pin("spi_mosi"), MISO=pin("spi_miso"))
+except Exception as e:
+    print(f"[WARN] SPI bus not set up (check the pins in nodes.json): {e}")
+    spi = None
 
 # Radio — without one (e.g. a board on the bench) the node still runs and
 # answers over USB, so it can be set up and tested from the Pi.
