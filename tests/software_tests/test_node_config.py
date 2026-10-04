@@ -243,3 +243,35 @@ def test_console_text_loses_terminal_codes():
     text = node_setup._clean(raw)
     assert text == ("Traceback (most recent call last):\n"
                     "ImportError: no module named 'adafruit_ina228'\nCode done running.\n")
+
+
+def test_console_keeps_trying_while_the_board_is_busy_reloading(monkeypatch):
+    '''Just after files are written the board is reloading and ignores Ctrl-C
+    for a moment: the console command must wait for the prompt, not give up.'''
+    import types
+    opened, typed = [], []
+
+    class FakeSerial:
+        def __init__(self, path, baud, timeout):
+            opened.append(path)
+            self.busy = len(opened) <= 2           # the first two tries hit a reload
+            self.out = b""
+        def reset_input_buffer(self):
+            pass
+        def write(self, data):
+            if data == b"\r" and not self.busy:
+                self.out += b"\r\n>>> "
+            elif data.endswith(b"\r") and data != b"\r":
+                typed.append(data[:-1].decode())
+        def close(self):
+            pass
+
+    fake = types.SimpleNamespace(Serial=FakeSerial, SerialException=OSError)
+    monkeypatch.setitem(sys.modules, "serial", fake)
+    monkeypatch.setattr(node_setup, "console_ports", lambda: ["/dev/ttyACM0"])
+    monkeypatch.setattr(node_setup, "_read_for", lambda s, seconds: (s.out, setattr(s, "out", b""))[0])
+    monkeypatch.setattr(node_setup.time, "sleep", lambda s: None)
+
+    assert node_setup.run_on_console(["import microcontroller", "microcontroller.reset()"]) is not None
+    assert len(opened) == 3
+    assert typed == ["import microcontroller", "microcontroller.reset()"]

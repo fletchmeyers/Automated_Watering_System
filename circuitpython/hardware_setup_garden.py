@@ -87,33 +87,40 @@ def try_init(name, init_fn):
         return None
 
 
-# I2C + SENSORS — the STEMMA QT port unless nodes.json gives i2c_scl/i2c_sda
-# (a plain Pico has no STEMMA QT port, so it needs them for any sensors).
+# I2C + SENSORS — the board's STEMMA QT pins unless nodes.json gives
+# i2c_scl/i2c_sda. With nothing wired up (no pull-ups) there's no bus at all.
 try:
     i2c = busio.I2C(pin("i2c_scl"), pin("i2c_sda")) if "i2c_scl" in PINS else board.STEMMA_I2C()
 except Exception as e:
     print(f"[WARN] No I2C bus, so no sensors (set i2c_scl/i2c_sda in nodes.json?): {e}")
     i2c = None
-rtc    = try_init("RTC",      lambda: PCF8523(i2c))
+
+
+def i2c_init(name, init_fn):
+    '''try_init() for a sensor on the I2C bus; skipped quietly when there's no bus.'''
+    return try_init(name, init_fn) if i2c is not None else None
+
+
+rtc    = i2c_init("RTC",      lambda: PCF8523(i2c))
 if rtc is None:
     # No PCF8523: keep time on the chip's own clock instead. It starts at
     # 2000 after every reset until the Pi's first poll sets it (code.py
     # doesn't log readings until then).
     import rtc as chip_clock
     rtc = chip_clock.RTC()
-max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))
-ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))
-soil_0 = try_init("Soil_0",   lambda: Seesaw(i2c, addr=0x37))
-soil_1 = try_init("Soil_1",   lambda: Seesaw(i2c, addr=0x38))
-soil_2 = try_init("Soil_2",   lambda: Seesaw(i2c, addr=0x39))
-sht40  = try_init("SHT40",    lambda: adafruit_sht4x.SHT4x(i2c))
+max17  = i2c_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))
+ltr    = i2c_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))
+soil_0 = i2c_init("Soil_0",   lambda: Seesaw(i2c, addr=0x37))
+soil_1 = i2c_init("Soil_1",   lambda: Seesaw(i2c, addr=0x38))
+soil_2 = i2c_init("Soil_2",   lambda: Seesaw(i2c, addr=0x39))
+sht40  = i2c_init("SHT40",    lambda: adafruit_sht4x.SHT4x(i2c))
 if sht40:
     sht40.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
-sgp40     = try_init("SGP40",      lambda: adafruit_sgp40.SGP40(i2c))
-ina238_0  = try_init("INA238_0x40", lambda: adafruit_ina23x.INA23X(i2c, address=0x40))
-ina238_1  = try_init("INA238_0x41", lambda: adafruit_ina23x.INA23X(i2c, address=0x41))
-ina238_2  = try_init("INA238_0x44", lambda: adafruit_ina23x.INA23X(i2c, address=0x44))
-ina238_3  = try_init("INA238_0x45", lambda: adafruit_ina23x.INA23X(i2c, address=0x45))
+sgp40     = i2c_init("SGP40",      lambda: adafruit_sgp40.SGP40(i2c))
+ina238_0  = i2c_init("INA238_0x40", lambda: adafruit_ina23x.INA23X(i2c, address=0x40))
+ina238_1  = i2c_init("INA238_0x41", lambda: adafruit_ina23x.INA23X(i2c, address=0x41))
+ina238_2  = i2c_init("INA238_0x44", lambda: adafruit_ina23x.INA23X(i2c, address=0x44))
+ina238_3  = i2c_init("INA238_0x45", lambda: adafruit_ina23x.INA23X(i2c, address=0x45))
 
 
 def get_timestamp(clock=None):
