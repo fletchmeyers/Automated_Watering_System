@@ -116,7 +116,15 @@ bool node_log_init() {
   // SHARED_SPI: the radio is on the same bus. Both use SPI transactions,
   // and RadioHead registers its interrupt, so the radio can't cut in on an
   // SD transfer.
+#ifdef SD_SPI_SCK
+  // A card on its own SPI bus (the Adalogger's built-in slot): the second bus.
+  SPI1.setSCK(SD_SPI_SCK);
+  SPI1.setTX(SD_SPI_MOSI);
+  SPI1.setRX(SD_SPI_MISO);
+  sd_ok = sd.begin(SdSpiConfig(SD_CS, DEDICATED_SPI, SD_SCK_MHZ(12), &SPI1));
+#else
   sd_ok = sd.begin(SdSpiConfig(SD_CS, SHARED_SPI, SD_SCK_MHZ(12)));
+#endif
   if (!sd_ok) {
     Serial.println(F("[LOG] SD card not found (FAT16/FAT32 only). Logging disabled."));
     return false;

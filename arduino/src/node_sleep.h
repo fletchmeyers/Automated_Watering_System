@@ -8,8 +8,9 @@
  * night's data can be synced the next day. The wake time is absolute rather
  * than a duration, so a retried command can't push it later.
  *
- * Needs a clock that keeps running in sleep and can raise an alarm — the
- * SAMD21's RTC (BOARD_HAS_RTC). Boards without one refuse the command.
+ * With a clock that keeps running in sleep and can raise an alarm — the
+ * SAMD21's RTC (BOARD_HAS_RTC) — the chip itself sleeps between readings.
+ * Boards without one (RP2040/RP2350) switch the radio off but stay awake.
  */
 
 #ifndef NODE_SLEEP_H

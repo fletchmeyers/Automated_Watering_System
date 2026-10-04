@@ -27,12 +27,13 @@ STORAGE    = ("sd", "flash", "none")
 #   arduino       — its PlatformIO environment (platformio.ini), or None until
 #                   it has a board_config_*.h
 BOARDS = {
-    "pico":   {"chip": "rp2040", "circuitpython": "raspberry_pi_pico",    "arduino": None},
-    "picow":  {"chip": "rp2040", "circuitpython": "raspberry_pi_pico_w",  "arduino": None},
-    "pico2":  {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2",   "arduino": None},
-    "pico2w": {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2_w", "arduino": None},
+    "pico":   {"chip": "rp2040", "circuitpython": "raspberry_pi_pico",    "arduino": "pico"},
+    "picow":  {"chip": "rp2040", "circuitpython": "raspberry_pi_pico_w",  "arduino": "picow"},
+    "pico2":  {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2",   "arduino": "pico2"},
+    "pico2w": {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2_w", "arduino": "pico2w"},
     "feather_rp2040_adalogger": {"chip": "rp2040",
-                                 "circuitpython": "adafruit_feather_rp2040_adalogger", "arduino": None},
+                                 "circuitpython": "adafruit_feather_rp2040_adalogger",
+                                 "arduino": "feather_rp2040_adalogger"},
     # ESP32 boards are Arduino-only here: CircuitPython on them needs the
     # TinyUF2 bootloader installed first (not on every board as shipped).
     "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": None,                       "arduino": None},
@@ -55,7 +56,10 @@ REQUIRED_PINS = {
     "circuitpython": ("spi_sck", "spi_mosi", "spi_miso", "radio_cs", "radio_rst"),
     "arduino":       ("radio_cs", "radio_irq", "radio_rst"),
 }
-OPTIONAL_PINS = ("sd_cs", "sd_sck", "sd_mosi", "sd_miso", "i2c_scl", "i2c_sda")
+OPTIONAL_PINS = ("spi_sck", "spi_mosi", "spi_miso",
+                 "sd_cs", "sd_sck", "sd_mosi", "sd_miso", "i2c_scl", "i2c_sda")
+RP2_CHIPS = ("rp2040", "rp2350")   # boards flashed by copying a UF2 to their bootloader drive
+RTCS = ("pcf8523",)
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -124,8 +128,10 @@ def check_node(node_id, node):
     storage = node.get("storage", "sd")
     if storage not in STORAGE:
         fail(f'storage must be one of {", ".join(STORAGE)}, not "{storage}"')
-    if storage == "flash" and framework != "arduino":
-        fail('storage "flash" is only for Arduino SAMD boards')
+    if storage == "flash" and (framework != "arduino" or board["chip"] != "samd21"):
+        fail('storage "flash" is only for Arduino SAMD boards (feather_m0)')
+    if "rtc" in node and node["rtc"] not in RTCS:
+        fail(f'rtc must be one of {", ".join(RTCS)}, or left out for no RTC chip')
 
     pins = node.get("pins")
     if not isinstance(pins, dict):
@@ -147,8 +153,12 @@ def check_node(node_id, node):
     sd_bus = [p for p in ("sd_sck", "sd_mosi", "sd_miso") if p in pins]
     if sd_bus and len(sd_bus) != 3:
         fail('give all of "sd_sck", "sd_mosi", "sd_miso" (a separate SD bus), or none')
-    if sd_bus and framework == "arduino":
-        fail("a separate SD SPI bus isn't supported on Arduino boards yet")
+    radio_bus = [p for p in ("spi_sck", "spi_mosi", "spi_miso") if p in pins]
+    if framework == "arduino":
+        if radio_bus and len(radio_bus) != 3:
+            fail('give all of "spi_sck", "spi_mosi", "spi_miso", or none (the board\'s default SPI pins)')
+        if (radio_bus or sd_bus) and board["chip"] not in RP2_CHIPS:
+            fail("custom SPI pins are only supported on RP2040/RP2350 Arduino boards")
 
     window = node.get("sleep_window")
     if window is not None:
@@ -211,4 +221,12 @@ def arduino_build_flags(node_id, node):
     ]
     if storage == "sd":
         flags.append(f"-D SD_CS={pins['sd_cs']}")
+        if "sd_sck" in pins:      # a card on its own bus (the Adalogger's slot)
+            flags += [f"-D SD_SPI_SCK={pins['sd_sck']}", f"-D SD_SPI_MOSI={pins['sd_mosi']}",
+                      f"-D SD_SPI_MISO={pins['sd_miso']}"]
+    if "spi_sck" in pins:         # radio on other pins than the board's default SPI ones
+        flags += [f"-D RADIO_SPI_SCK={pins['spi_sck']}", f"-D RADIO_SPI_MOSI={pins['spi_mosi']}",
+                  f"-D RADIO_SPI_MISO={pins['spi_miso']}"]
+    if node.get("rtc") == "pcf8523":
+        flags.append("-D BOARD_HAS_PCF8523")
     return flags

@@ -3,7 +3,7 @@
 
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Board-specific entries live here (not in the header) since this is where
-// SENSOR_COUNT gets computed. Add new sensors from board_config_feather_m0.h
+// SENSOR_COUNT gets computed. Add new sensors from sensors.h
 // as additional rows.
 
 Adafruit_seesaw soil_0, soil_1, soil_2;
@@ -21,7 +21,7 @@ static bool ext_rtc_ok = false;
 #endif
 
 SensorEntry SENSOR_LIST[] = {
-#if RFM69_CS != VBAT_PIN   // the battery divider pin can't double as the radio's CS
+#if defined(VBAT_PIN) && RFM69_CS != VBAT_PIN   // a board with a battery divider pin, not also the radio CS
   { "vbat", vbat_init,   vbat_read,   false },
 #endif
   { "s0",   soil_0_init, soil_0_read, false },
