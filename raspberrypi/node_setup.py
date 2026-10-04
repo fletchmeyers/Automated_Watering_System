@@ -197,12 +197,13 @@ def apply_plan(drive, plan):
 
 
 def update_circuitpython(node_id, node, dry_run):
-    '''Copy what differs onto CIRCUITPY. Returns True if the node should now be checked.'''
+    '''Copy what differs onto CIRCUITPY. Returns True if the node should now be
+    checked (always, unless it's a dry run).'''
     with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT, read_only=dry_run) as drive:
         plan = plan_circuitpython(drive, node_id, node)
         if not plan:
             print(f"[SETUP] Node {node_id} already matches the repo and nodes.json — nothing to copy.")
-            return False
+            return not dry_run
         print(f"[SETUP] {'Would copy' if dry_run else 'Copying'} {len(plan)} file(s) to {drive}:")
         for rel, data in plan:
             print(f"          {rel}  ({len(data):,} bytes)")
@@ -249,48 +250,66 @@ def _clean(raw):
     return _ANSI.sub("", raw.decode(errors="replace")).replace("\r", "")
 
 
-def run_on_console(lines):
+def _to_prompt(s):
+    '''Stop code.py and get to the REPL. Returns (reached ">>>"?, what was printed).'''
+    s.reset_input_buffer()
+    s.write(b"\x03\x03")     # Ctrl-C twice: stop code.py
+    out = _read_for(s, 1)
+    s.write(b"\r")           # "Press any key to enter the REPL"
+    out += _read_for(s, 1.5)
+    return b">>>" in out, out
+
+
+def _with_console(action, timeout=15):
     '''
-    Stop the running code, get to the REPL prompt (">>>") and type lines into
-    it. Returns what the board printed, or None if no port gave a prompt.
+    Find the port that reaches the REPL prompt and return action(port, text so
+    far). Keeps trying for timeout seconds: just after files are written the
+    board is busy reloading and doesn't answer Ctrl-C straight away. Returns
+    None if no port ever gave a prompt, or "" if the action reset the board
+    (which takes the port away mid-command).
     '''
     import serial
-    for path in console_ports():
-        try:
-            with serial.Serial(path, 115200, timeout=0.2) as s:
-                s.reset_input_buffer()
-                s.write(b"\x03\x03")     # Ctrl-C twice: stop code.py
-                out = _read_for(s, 1)
-                s.write(b"\r")           # "Press any key to enter the REPL"
-                out += _read_for(s, 1.5)
-                if b">>>" not in out:
-                    continue             # not the console (or not CircuitPython)
-                for line in lines:
-                    s.write(line.encode() + b"\r")
-                    out += _read_for(s, 0.5)
-                return _clean(out)
-        except (OSError, serial.SerialException):
-            return ""                    # a reset took the port away mid-command
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for path in console_ports():
+            try:
+                s = serial.Serial(path, 115200, timeout=0.2)
+            except (OSError, serial.SerialException):
+                continue
+            at_prompt = False
+            try:
+                at_prompt, out = _to_prompt(s)
+                if at_prompt:
+                    return action(s, out)
+            except (OSError, serial.SerialException):
+                if at_prompt:
+                    return ""
+            finally:
+                try:
+                    s.close()
+                except (OSError, serial.SerialException):
+                    pass
+        time.sleep(1)
     return None
+
+
+def run_on_console(lines):
+    '''Type lines into the board's REPL. Returns what it printed, or None if
+    there was no console to type into.'''
+    def type_lines(s, out):
+        for line in lines:
+            s.write(line.encode() + b"\r")
+            out += _read_for(s, 0.5)
+        return _clean(out)
+    return _with_console(type_lines)
 
 
 def console_output(seconds=10):
     '''Restart code.py from the console (Ctrl-D) and return what it prints, e.g. a traceback.'''
-    import serial
-    for path in console_ports():
-        try:
-            with serial.Serial(path, 115200, timeout=0.2) as s:
-                s.write(b"\x03\x03")     # stop code.py, if it's running
-                out = _read_for(s, 1)
-                s.write(b"\r")           # into the REPL
-                out += _read_for(s, 1.5)
-                if b">>>" not in out:
-                    continue
-                s.write(b"\x04")         # Ctrl-D: soft reboot, which runs code.py
-                return _clean(_read_for(s, seconds))
-        except (OSError, serial.SerialException):
-            continue
-    return None
+    def soft_reboot(s, out):
+        s.write(b"\x04")
+        return _clean(_read_for(s, seconds))
+    return _with_console(soft_reboot)
 
 
 # ── Installing CircuitPython ─────────────────────────────────────────────────
