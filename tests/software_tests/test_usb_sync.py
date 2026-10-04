@@ -169,3 +169,24 @@ def test_usb_sync_flag_is_ignored_once_its_process_is_gone(tmp_path, monkeypatch
     assert sync_indoor.usb_sync_node() == 2
     flag.write_text(json.dumps({"n": 2, "pid": 2 ** 22 + 12345}))   # no such process
     assert sync_indoor.usb_sync_node() is None
+
+
+def test_lines_cut_off_by_the_read_timeout_are_joined_back_up(sd, monkeypatch):
+    monkeypatch.setattr(garden.time, "sleep", lambda s: None)
+    write_log(sd, 0, 30)
+
+    class SlowPico(PicoOnUsb):
+        '''pyserial's readline() returns whatever has arrived when its timeout
+        hits — here, every line comes back in two halves.'''
+        def readline(self):
+            if not self.replies:
+                return b""
+            line = self.replies.pop(0)
+            if len(line) > 4 and line.endswith(b"\n"):
+                self.replies.insert(0, line[len(line) // 2:])
+                return line[:len(line) // 2]
+            return line
+
+    count = usb_sync.sync_node(usb_sync.UsbNode(SlowPico()), 1, db_conn=None, chunk_lines=200)
+    assert count == 30
+    assert [l["i"] for l in stored(sd)] == list(range(30))
