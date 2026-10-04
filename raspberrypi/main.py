@@ -25,19 +25,21 @@ from communication_indoor import (
 )
 
 import db
+from nodes import load_nodes, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
-NODE_IDS      = [1, 2] # add node IDs here as you expand the network
-POLL_INTERVAL = 60     # seconds between polls per node
+# Nodes come from nodes.json at the repo root (add a node there, then restart).
+# Sleep windows: node ID -> ("start", "end") in the Pi's local time; the
+# node logs a reading every 5 minutes while asleep and the next day's sync
+# collects them. Nodes with "storage": "none" keep no log, so aren't synced.
+NODES         = load_nodes()
+NODE_IDS      = list(NODES)
+SLEEP_WINDOWS = sleep_windows(NODES)
+SYNC_NODE_IDS = sync_node_ids(NODES)
 
+POLL_INTERVAL = 60     # seconds between polls per node
 INFO_INTERVAL = 3600   # seconds between storage reports per node
 
-# Battery nodes sleep through the night: node ID -> ("start", "end") in the
-# Pi's local time. The node logs a reading every 5 minutes while asleep,
-# and the next day's sync collects them.
-SLEEP_WINDOWS = {2: ("19:00", "07:00")}
-
-SYNC_NODE_IDS       = [1, 2] # nodes with logged data to pull
 SYNC_LINES_PER_HOUR = 2000   # cap per hourly session — a backlog drains over several hours
 SYNC_CHUNK_LINES    = 8      # lines per chunk — small, so one lost packet costs little on a weak link
 

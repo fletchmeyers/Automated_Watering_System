@@ -252,6 +252,45 @@ require credentials for.
 
 ---
 
+## Adding or updating a node
+
+Every node's settings live in **`nodes.json`** at the repo root: name,
+framework (`circuitpython` or `arduino`), board, sense and log intervals,
+storage (`sd`, `flash` for Arduino SAMD boards, or `none`), pins, and an
+optional `sleep_window`. `main.py` takes its node list from it (restart
+`garden-sensor` after changing it), and `node_setup.py` builds each node's
+settings from it. Sensors aren't listed: both firmwares look for every
+sensor they know at boot and use whichever answer.
+
+To update a node to the latest code, plug it into the Pi by USB and run:
+
+```bash
+cd ~/Automated_Watering_System/raspberrypi
+python3 node_setup.py --dry-run     # see what would change first
+python3 node_setup.py               # update it
+python3 node_setup.py list          # the nodes in nodes.json
+```
+
+It works out which node is plugged in and what it runs. A CircuitPython
+board gets the changed files from `circuitpython/` plus the libraries they
+use, and a `node_config.py` written from `nodes.json`. An Arduino board is
+built with its settings and flashed. For a board that isn't a node yet,
+add it to `nodes.json` first and pass `--node N`. The library `.mpy` files
+in `circuitpython/lib` must match the board's CircuitPython major version.
+
+Flashing Arduino boards needs PlatformIO on the Pi, a one-time install
+(`deploy/setup.sh --platformio` does the same):
+
+```bash
+curl -fsSL -o get-platformio.py https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
+python3 get-platformio.py && rm get-platformio.py
+```
+
+The first Arduino build then downloads the compiler (a few hundred MB) and
+takes several minutes on a Pi 3B; later builds take a minute or two.
+
+---
+
 ## Syncing a node over USB
 
 For a big backlog (days of readings waiting on a node's SD card), plug the

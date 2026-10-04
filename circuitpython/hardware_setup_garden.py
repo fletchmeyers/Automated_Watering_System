@@ -20,31 +20,49 @@ import adafruit_ina23x
 
 
 # CONFIG
-NODE_ID = 1
-SENSE_INTERVAL = 3       # seconds between sensor reads; updated via set_interval command
-LOG_INTERVAL = 60        # seconds between SD log writes (a subset of sensor reads) —
+# This node's ID, intervals and pins come from node_config.py, which the Pi's
+# node_setup.py writes from nodes.json. The values below are only used if
+# it's missing (a board set up by hand).
+try:
+    from node_config import NODE_ID, SENSE_INTERVAL, LOG_INTERVAL, USE_SD, PINS
+except ImportError:
+    NODE_ID = 1
+    SENSE_INTERVAL = 3   # seconds between sensor reads; updated via set_interval command
+    LOG_INTERVAL = 60    # seconds between SD log writes (a subset of sensor reads) —
                          # every logged line goes back over the radio, so keep this
                          # well under SYNC_LINES_PER_HOUR in main.py
+    USE_SD = True
+    PINS = {
+        "spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
+        "radio_cs": "GP22", "radio_rst": "GP27", "sd_cs": "GP17",
+    }
 RADIO_FREQ_MHZ = 915.0
 
 sequence = 0
 
 
+def pin(name):
+    '''The board pin nodes.json names for name, e.g. "radio_cs" -> board.GP22.'''
+    return getattr(board, PINS[name])
+
+
 # SPI SETUP
-spi = busio.SPI(clock=board.GP18, MOSI=board.GP19, MISO=board.GP16)
+spi = busio.SPI(clock=pin("spi_sck"), MOSI=pin("spi_mosi"), MISO=pin("spi_miso"))
 
 # Radio pins
-radio_cs = digitalio.DigitalInOut(board.GP22)
-radio_reset = digitalio.DigitalInOut(board.GP27)
+radio_cs = digitalio.DigitalInOut(pin("radio_cs"))
+radio_reset = digitalio.DigitalInOut(pin("radio_rst"))
 rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
 rfm69.tx_power = 20   # RFM69HCW maximum — the link to the Pi needs the margin
 rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
 
-# SD card
-SD_CS = board.GP17
-sdcard = sdcardio.SDCard(spi, SD_CS)
-vfs = storage.VfsFat(sdcard)
-storage.mount(vfs, "/sd")
+# SD card — without one, the node still runs; it just has no log to sync.
+if USE_SD:
+    try:
+        sdcard = sdcardio.SDCard(spi, pin("sd_cs"))
+        storage.mount(storage.VfsFat(sdcard), "/sd")
+    except Exception as e:
+        print(f"[WARN] SD card not mounted, readings won't be logged: {e}")
 
 
 def try_init(name, init_fn):
@@ -56,7 +74,7 @@ def try_init(name, init_fn):
 
 
 # I2C + SENSORS
-i2c = board.STEMMA_I2C()
+i2c = busio.I2C(pin("i2c_scl"), pin("i2c_sda")) if "i2c_scl" in PINS else board.STEMMA_I2C()
 rtc    = try_init("RTC",      lambda: PCF8523(i2c))
 max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))
 ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))
