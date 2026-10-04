@@ -45,6 +45,7 @@ class UsbNode:
 
     def __init__(self, port):
         self.port = port
+        self._partial = b""   # a line cut off by the port's read timeout, waiting for the rest
 
     def send(self, command):
         self.port.write(json.dumps(command, separators=(",", ":")).encode() + b"\n")
@@ -56,7 +57,12 @@ class UsbNode:
             raw = self.port.readline()
             if not raw:
                 continue
-            raw = raw.strip()
+            if not raw.endswith(b"\n"):
+                # readline() gave up mid-line (the node was still writing it):
+                # keep what came and finish the line on the next read.
+                self._partial += raw
+                continue
+            raw, self._partial = (self._partial + raw).strip(), b""
             if raw[:1] != b"{":
                 continue                      # the M0's debug output
             try:
