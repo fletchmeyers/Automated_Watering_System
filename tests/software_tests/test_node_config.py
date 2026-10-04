@@ -228,3 +228,18 @@ def test_a_bare_board_still_starts(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(hardware_setup_garden)
+
+
+def test_libraries_needed_by_other_libraries_are_included():
+    needed = node_setup.required_libs()
+    assert "adafruit_ina228.mpy" in needed        # imported inside adafruit_ina23x, not by our code
+    assert {"adafruit_rfm69.mpy", "adafruit_register", "adafruit_bus_device"} <= needed
+    assert not needed & {"adafruit_display_text", "adafruit_ssd1306.mpy", "adafruit_motor"}
+
+
+def test_console_text_loses_terminal_codes():
+    raw = (b"\x1b]0;\xf0\x9f\x90\x8dcode.py | 10.3.1\x1b\Traceback (most recent call last):\r\n"
+           b"ImportError: no module named 'adafruit_ina228'\r\n\x1b[2K\x1b[0GCode done running.\r\n")
+    text = node_setup._clean(raw)
+    assert text == ("Traceback (most recent call last):\n"
+                    "ImportError: no module named 'adafruit_ina228'\nCode done running.\n")
