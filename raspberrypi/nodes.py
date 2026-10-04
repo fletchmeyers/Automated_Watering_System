@@ -33,13 +33,15 @@ BOARDS = {
     "pico2w": {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2_w", "arduino": None},
     "feather_rp2040_adalogger": {"chip": "rp2040",
                                  "circuitpython": "adafruit_feather_rp2040_adalogger", "arduino": None},
-    "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": "adafruit_feather_esp32s2", "arduino": None},
+    # ESP32 boards are Arduino-only here: CircuitPython on them needs the
+    # TinyUF2 bootloader installed first (not on every board as shipped).
+    "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": None,                       "arduino": None},
     "feather_esp32_v2": {"chip": "esp32",   "circuitpython": None,                       "arduino": None},
     "feather_m0":       {"chip": "samd21",  "circuitpython": None,                       "arduino": "feather_m0"},
 }
 
 # The drive a board shows while it waits in its UF2 bootloader, by volume label.
-BOOTLOADER_DRIVES = {"RPI-RP2": "rp2040", "RP2350": "rp2350", "FTHRS2BOOT": "esp32s2"}
+BOOTLOADER_DRIVES = {"RPI-RP2": "rp2040", "RP2350": "rp2350"}
 
 # The CircuitPython that node_setup.py installs. Its major version must match
 # the .mpy libraries in circuitpython/lib.

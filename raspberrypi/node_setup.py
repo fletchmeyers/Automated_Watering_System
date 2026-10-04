@@ -55,11 +55,7 @@ UF2_CACHE        = Path.home() / ".cache" / "garden-nodes"
 CIRCUITPY_FILES = ("hardware_setup_garden.py", "communication_garden.py",
                    "sync_garden.py", "boot.py", "code.py")
 
-# CircuitPython 10 on a 4 MB ESP32-S2 needs at least this TinyUF2 bootloader.
-MIN_TINYUF2 = (0, 33, 0)
-
 _NODE_ID_LINE = re.compile(rb"^NODE_ID\s*=\s*(\d+)", re.MULTILINE)
-_TINYUF2      = re.compile(r"TinyUF2 Bootloader\s+v?(\d+)\.(\d+)\.(\d+)")
 
 
 class SetupError(Exception):
@@ -322,21 +318,6 @@ def bootloader_drive():
     return None
 
 
-def check_tinyuf2(drive):
-    '''Refuse an ESP32-S2 bootloader too old for CircuitPython 10.'''
-    try:
-        info = (Path(drive) / "INFO_UF2.TXT").read_text(errors="replace")
-    except OSError:
-        return
-    match = _TINYUF2.search(info)
-    if match and tuple(int(x) for x in match.groups()) < MIN_TINYUF2:
-        have = ".".join(match.groups())
-        need = ".".join(map(str, MIN_TINYUF2))
-        raise SetupError(f"This ESP32-S2's TinyUF2 bootloader is {have}; CircuitPython 10 needs "
-                         f"{need} or newer. Update it first (Adafruit's ESP32-S2 Feather guide, "
-                         "'Install UF2 Bootloader'), then run this again.")
-
-
 def download_uf2(node):
     '''The CircuitPython UF2 for this node's board, downloaded once and kept in UF2_CACHE.'''
     url = circuitpython_uf2_url(node)
@@ -364,7 +345,7 @@ def install_circuitpython(args, nodes, label):
         if not Path(device(CIRCUITPY_LABEL)).exists():
             raise SetupError(
                 "No board waiting to install. A blank Pico shows its bootloader drive by itself; "
-                "otherwise hold BOOTSEL (Pico) or double-tap reset (ESP32-S2) as you plug it in. "
+                "otherwise hold the board's BOOTSEL/BOOT button while you plug it in. "
                 "Switching an Arduino board to CircuitPython isn't automated yet.")
         with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT, read_only=True) as drive:
             detected = node_id_on_drive(drive)
@@ -397,8 +378,8 @@ def install_circuitpython(args, nodes, label):
         if label is None:
             if typed.strip():
                 print("[SETUP] The board's console said:\n" + typed.strip())
-            raise SetupError("The bootloader drive didn't appear. Hold BOOTSEL (Pico) or "
-                             "double-tap reset (ESP32-S2) as you plug it in, then run this again.")
+            raise SetupError("The bootloader drive didn't appear. Hold the board's BOOTSEL/BOOT "
+                             "button while you plug it in, then run this again.")
 
     if BOOTLOADER_DRIVES[label] != chip:
         raise SetupError(f"nodes.json says node {node_id} is a {node['board']} ({chip}), but the "
@@ -411,8 +392,6 @@ def install_circuitpython(args, nodes, label):
     uf2 = download_uf2(node)
     print(f"[SETUP] Installing {uf2.name} (the board restarts by itself)...")
     with mounted(device(label), BOOT_MOUNT_POINT) as drive:
-        if chip == "esp32s2":
-            check_tinyuf2(drive)
         shutil.copyfile(uf2, Path(drive) / uf2.name)
         sync_disks()
     if not wait_until(lambda: Path(device(CIRCUITPY_LABEL)).exists(), timeout=90):

@@ -289,9 +289,9 @@ That downloads CircuitPython (the version in `nodes.py`) for its board
 from circuitpython.org, installs it, and then sets the board up as node 3.
 A blank Pico shows its bootloader drive by itself; a board already running
 CircuitPython is restarted into it from its console; otherwise hold BOOTSEL
-(Pico) or double-tap reset (ESP32-S2) as you plug it in. Boards
+(Pico) or BOOT (Feather RP2040) as you plug it in. Boards
 (`"board"` in `nodes.json`): `pico`, `picow`, `pico2`, `pico2w`,
-`feather_rp2040_adalogger`, `feather_esp32s2` for CircuitPython;
+`feather_rp2040_adalogger` for CircuitPython;
 `feather_m0` for Arduino. A board with no radio, no STEMMA QT port or no
 PCF8523 clock still runs (USB only, no sensors, or its own clock set by
 the Pi's polls), which makes a bare board easy to test on the bench.

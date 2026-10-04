@@ -160,17 +160,6 @@ def test_every_bootloader_drive_maps_to_a_known_chip():
     assert chips == set(BOOTLOADER_DRIVES.values())
 
 
-def test_old_esp32s2_bootloader_is_refused(tmp_path):
-    info = tmp_path / "INFO_UF2.TXT"
-    info.write_text("TinyUF2 Bootloader 0.18.2 - tinyusb (0.15.0)\nModel: Adafruit Feather ESP32-S2\n")
-    with pytest.raises(node_setup.SetupError, match="0.18.2"):
-        node_setup.check_tinyuf2(tmp_path)
-    info.write_text("TinyUF2 Bootloader 0.35.0 - tinyusb (0.18.0)\n")
-    node_setup.check_tinyuf2(tmp_path)                 # new enough
-    info.unlink()
-    node_setup.check_tinyuf2(tmp_path)                 # can't tell: let it try
-
-
 def test_uf2_is_downloaded_once_then_cached(tmp_path, monkeypatch):
     fetched = []
 
