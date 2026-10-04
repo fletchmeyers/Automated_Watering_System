@@ -36,7 +36,7 @@ SD_CURSOR_FILE  = "/sd/sync_cursor.txt"   # "<generation> <byte offset>" the Pi 
 RADIO_MAX_BYTES     = 60   # RFM69 payload limit with encryption on
 FRAGMENT_BODY_BYTES = 45   # leaves 15 bytes for the "~n.msg.i.k|" fragment header
 FRAGMENT_GAP        = 0.1  # seconds between fragments, same spacing as normal packets
-SYNC_LINE_GAP       = 0.1  # seconds between lines during a sync chunk
+SYNC_LINE_GAP       = 0.1  # seconds between lines during a sync chunk (radio only)
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +72,44 @@ SYNC_LINE_GAP       = 0.1  # seconds between lines during a sync chunk
 latest_reading = []
 
 
+class SerialLink:
+    '''
+    Stands in for the radio when the Pi talks to this node over USB (the data
+    port that boot.py turns on), e.g. to pull a big sync backlog quickly.
+    Each packet is one JSON line, with no size limit — so no fragments — and
+    no pauses between sync lines.
+    '''
+    max_bytes = None
+    line_gap  = 0
+
+    def __init__(self, port):
+        self.port = port
+        self._buf = b""
+
+    def send(self, data):
+        self.port.write(data + b"\n")
+
+    def receive(self):
+        '''Return the next complete command line as a dict, or None.'''
+        waiting = self.port.in_waiting
+        if waiting:
+            self._buf += self.port.read(waiting)
+        end = self._buf.find(b"\n")
+        if end < 0:
+            if len(self._buf) > 1024:
+                self._buf = b""   # no newline in sight — not a command, drop it
+            return None
+        line, self._buf = self._buf[:end].strip(), self._buf[end + 1:]
+        if line[:1] != b"{":
+            return None
+        try:
+            command = json.loads(line)
+        except ValueError:
+            print("[USB] Could not parse:", line)
+            return None
+        return command if isinstance(command, dict) else None
+
+
 class PacketSender:
     def __init__(self, node_id, radio):
         self.node_id = node_id
@@ -99,7 +137,8 @@ class PacketSender:
         string would escape every quote and nearly double the size.
         '''
         try:
-            if len(data) <= RADIO_MAX_BYTES:
+            limit = getattr(self.radio, "max_bytes", RADIO_MAX_BYTES)
+            if limit is None or len(data) <= limit:
                 self.radio.send(data)
                 return
 
@@ -235,9 +274,14 @@ def send_sync_chunk(sender, command, max_lines=20):
     import os
 
     gen, offset = _read_cursor()
-    if command.get("g") == gen and isinstance(command.get("o"), int):
+    # Only ever move forward: a request carrying an older offset (e.g. the
+    # radio side catching up after a USB sync went further) resumes from
+    # the saved cursor instead of resending what's already been stored.
+    if (command.get("g") == gen and isinstance(command.get("o"), int)
+            and command["o"] >= offset):
         offset = command["o"]
         _write_cursor(gen, offset)
+    gap = getattr(sender.radio, "line_gap", SYNC_LINE_GAP)
     max_lines = command.get("k", max_lines)
     wanted = command.get("j")
     if not isinstance(wanted, int):
@@ -283,7 +327,8 @@ def send_sync_chunk(sender, command, max_lines=20):
                     continue
                 if wanted is None or wanted >> sent & 1:
                     sender.send_raw(tag_line(line, sent))
-                    time.sleep(SYNC_LINE_GAP)
+                    if gap:
+                        time.sleep(gap)
                 sent += 1
     except OSError as e:
         print(f"[SYNC] Read failed at offset {offset}: {e}")
@@ -305,7 +350,7 @@ def send_storage_info(sender):
     try:
         st = os.statvfs("/sd")
         total, free = st[0] * st[2], st[0] * st[3]
-    except OSError:
+    except (OSError, AttributeError):   # no card, or a desktop Python running the tests
         total = free = 0
     sender.send({"t": "info", "ub": used, "fb": free, "tb": total})
 

@@ -166,7 +166,11 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
     send_se(sender, gen, 0, 0, false);
     return;
   }
-  if (command["g"].as<long>() == (long)gen && command["o"].is<uint32_t>()) {
+  // Only ever move forward: a request carrying an older offset (e.g. the
+  // radio side catching up after a USB sync went further) resumes from the
+  // saved cursor instead of resending what's already been stored.
+  if (command["g"].as<long>() == (long)gen && command["o"].is<uint32_t>()
+      && command["o"].as<uint32_t>() >= offset) {
     offset = command["o"].as<uint32_t>();
     write_cursor(gen, offset);
   }
@@ -216,7 +220,7 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
     if (line_wanted(command, sent)) {
       size_t len = tag_line(line, n, sent, tagged, sizeof(tagged));
       sender.send_raw((const uint8_t *)tagged, len);
-      delay(SYNC_LINE_GAP_MS);
+      if (!sender.over_usb()) delay(SYNC_LINE_GAP_MS);
     }
     sent++;
   }
@@ -290,7 +294,7 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
                            (int)strlen(json) - 1, json, ts);
         len = tag_line(line, len, sent, tagged, sizeof(tagged));
         sender.send_raw((const uint8_t *)tagged, len);
-        delay(SYNC_LINE_GAP_MS);
+        if (!sender.over_usb()) delay(SYNC_LINE_GAP_MS);
       }
       sent++;
     }

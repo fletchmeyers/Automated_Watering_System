@@ -42,7 +42,15 @@ extern const size_t SENSOR_COUNT;
 class PacketSender {
   public:
     PacketSender(uint8_t node_id, RH_RF69 *radio)
-      : node_id(node_id), radio(radio), sequence(0), fragment_id(0) {}
+      : node_id(node_id), radio(radio), serial(nullptr), sequence(0), fragment_id(0) {}
+
+    // Over USB instead (the Pi's usb_sync.py): each packet is one JSON line,
+    // with no size limit, so no fragments and no pauses between sync lines.
+    // Debug prints share the port, but never start with "{".
+    PacketSender(uint8_t node_id, Stream *serial)
+      : node_id(node_id), radio(nullptr), serial(serial), sequence(0), fragment_id(0) {}
+
+    bool over_usb() const { return serial != nullptr; }
 
     // Sends any JsonDocument that already has its sensor-specific fields
     // set; this stamps t/q/n and increments the sequence counter.
@@ -66,6 +74,11 @@ class PacketSender {
     // PacketSender.send_raw() on the Pico, reassembled by the Pi's
     // FragmentReassembler.
     void send_raw(const uint8_t *data, size_t len) {
+      if (serial) {
+        serial->write(data, len);
+        serial->write('\n');
+        return;
+      }
       if (len <= RH_RF69_MAX_MESSAGE_LEN) {
         radio->send(data, len);
         radio->waitPacketSent();
@@ -102,6 +115,7 @@ class PacketSender {
     static const uint16_t FRAGMENT_GAP_MS   = 100;
 
     RH_RF69 *radio;
+    Stream *serial;
     uint16_t sequence;
     uint16_t fragment_id;
 };
@@ -138,6 +152,10 @@ bool parse_iso(const char *ts, uint32_t *epoch);  // false if ts isn't that form
 // Returns a parsed JsonDocument if a valid command packet was received,
 // or an empty/null document otherwise. Non-blocking beyond `timeout_ms`.
 bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out);
+
+// The same, for commands the Pi sends over USB (usb_sync.py): one JSON
+// object per line. Never waits — returns false until a whole line is in.
+bool check_for_usb_command(JsonDocument &out);
 
 // Returns a new sense-interval in ms if a set_interval command changed it,
 // or -1 otherwise. node_id is this node's own ID — commands addressed to a

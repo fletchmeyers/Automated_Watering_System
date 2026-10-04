@@ -201,6 +201,35 @@ uint32_t clock_now() {
 }
 
 // ── Command receive/dispatch ─────────────────────────────────────────────
+bool check_for_usb_command(JsonDocument &out) {
+  static char line[160];
+  static size_t len = 0;
+  static bool overflow = false;   // dropping a line too long to be a command
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      bool complete = len > 0 && !overflow && line[0] == '{';
+      size_t n = len;
+      len = 0;
+      overflow = false;
+      if (!complete) continue;
+      DeserializationError err = deserializeJson(out, line, n);
+      if (err) {
+        Serial.print(F("[USB] Could not parse command: "));
+        Serial.println(err.c_str());
+        continue;
+      }
+      return true;
+    }
+    if (len < sizeof(line)) {
+      line[len++] = c;
+    } else {
+      overflow = true;
+    }
+  }
+  return false;
+}
+
 bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
   if (!radio.waitAvailableTimeout(timeout_ms)) {
     return false;

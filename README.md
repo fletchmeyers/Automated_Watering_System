@@ -252,6 +252,29 @@ require credentials for.
 
 ---
 
+## Syncing a node over USB
+
+For a big backlog (days of readings waiting on a node's SD card), plug the
+node into the Pi with a USB data cable and pull it over the cable, at
+hundreds of lines a second instead of a few:
+
+```bash
+cd ~/Automated_Watering_System/raspberrypi
+python3 usb_sync.py              # finds the node on any USB serial port
+```
+
+`main.py` keeps running; while `usb_sync.py` works, it leaves that node's
+radio sync alone, and afterwards carries on from wherever the node got to.
+Lines are stored exactly as radio sync stores them. Needs `python3-serial`
+(installed by `setup.sh`; otherwise `sudo apt install python3-serial`).
+
+The Pico talks over a second USB port that `circuitpython/boot.py` turns
+on, so copy `boot.py` onto it and reset it (unplug, or the reset button)
+once before the first USB sync. The M0 needs nothing extra, but must be
+awake (not in its overnight sleep), since standby disconnects its USB.
+
+---
+
 ## Disaster recovery
 
 Do these **now**, while a card is known-good — not after the next failure.
