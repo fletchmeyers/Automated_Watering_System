@@ -1,18 +1,23 @@
 '''
 Python 3 running on Raspberry Pi 3B
 
-Update a node plugged into the Pi by USB to the code in this repo, with its
-settings from nodes.json:
+Set up or update a node plugged into the Pi by USB, with the code in this
+repo and its settings from nodes.json:
 
     python3 node_setup.py              — update whichever node is plugged in
     python3 node_setup.py --dry-run    — show what would change, change nothing
-    python3 node_setup.py --node 3     — set the board up as node 3 (one that isn't
-                                         a node yet, or to change its ID)
+    python3 node_setup.py --install --node 3
+                                       — install CircuitPython on a board and set it
+                                         up as node 3 (add node 3 to nodes.json first)
+    python3 node_setup.py --node 3     — update a board as node 3 (to change its ID)
     python3 node_setup.py list         — show the nodes in nodes.json
 
 CircuitPython: mounts the CIRCUITPY drive and copies over whichever files
 differ: the code in circuitpython/, the libraries it uses, and a
-node_config.py written from nodes.json. The board restarts on its own.
+node_config.py written from nodes.json, then restarts the board if boot.py
+changed. --install first puts CircuitPython itself on the board: a blank
+board shows its bootloader drive by itself, one already running CircuitPython
+is restarted into it, and the UF2 for its board is downloaded and copied over.
 Arduino: builds with this node's settings and uploads, using PlatformIO
 (see README for the one-time install).
 
@@ -28,17 +33,22 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 from nodes import (
-    NodeConfigError, load_nodes, circuitpython_config, arduino_env, arduino_build_flags,
+    NodeConfigError, load_nodes, circuitpython_config, circuitpython_uf2_url,
+    arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION,
 )
 
 REPO             = Path(__file__).resolve().parent.parent
 CIRCUITPY_SRC    = REPO / "circuitpython"
 ARDUINO_DIR      = REPO / "arduino"
-CIRCUITPY_DEVICE = "/dev/disk/by-label/CIRCUITPY"
+CIRCUITPY_LABEL  = "CIRCUITPY"
 MOUNT_POINT      = Path("/mnt/circuitpy")
+BOOT_MOUNT_POINT = Path("/mnt/uf2boot")
+UF2_CACHE        = Path.home() / ".cache" / "garden-nodes"
 
 # The node's own code, copied in this order: code.py last, so the board's
 # auto-reload doesn't start the new code before the rest is in place.
@@ -51,14 +61,70 @@ CIRCUITPY_LIBS = ("adafruit_bus_device", "adafruit_register", "adafruit_ticks.mp
                   "adafruit_ltr390.mpy", "adafruit_seesaw", "adafruit_sht4x.mpy",
                   "adafruit_sgp40", "adafruit_ina23x.mpy")
 
+# CircuitPython 10 on a 4 MB ESP32-S2 needs at least this TinyUF2 bootloader.
+MIN_TINYUF2 = (0, 33, 0)
+
 _NODE_ID_LINE = re.compile(rb"^NODE_ID\s*=\s*(\d+)", re.MULTILINE)
+_TINYUF2      = re.compile(r"TinyUF2 Bootloader\s+v?(\d+)\.(\d+)\.(\d+)")
 
 
 class SetupError(Exception):
     pass
 
 
-# ── CircuitPython ────────────────────────────────────────────────────────────
+def device(label):
+    return f"/dev/disk/by-label/{label}"
+
+
+def wait_until(check, timeout, interval=0.5):
+    '''Poll check() until it returns something truthy; return that, or None on timeout.'''
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = check()
+        if result:
+            return result
+        time.sleep(interval)
+    return None
+
+
+# ── Mounting drives ──────────────────────────────────────────────────────────
+
+def mounted_at(dev):
+    '''Where dev is already mounted, or None.'''
+    real = os.path.realpath(dev)
+    try:
+        for line in Path("/proc/mounts").read_text().splitlines():
+            source, where = line.split()[:2]
+            if os.path.realpath(source) == real:
+                return Path(where.replace("\\040", " "))
+    except OSError:
+        pass
+    return None
+
+
+@contextmanager
+def mounted(dev, where, read_only=False):
+    '''Mount dev at where for the duration (or use it where it's already mounted).'''
+    existing = mounted_at(dev)
+    if existing:
+        yield existing
+        return
+    options = f"uid={os.getuid()},gid={os.getgid()}" + (",ro" if read_only else "")
+    subprocess.run(["sudo", "mkdir", "-p", str(where)], check=True)
+    subprocess.run(["sudo", "mount", "-o", options, dev, str(where)], check=True)
+    try:
+        yield where
+    finally:
+        # A board that just took a UF2 has already gone, so this may fail.
+        subprocess.run(["sudo", "umount", str(where)], check=False, stderr=subprocess.DEVNULL)
+
+
+def sync_disks():
+    if hasattr(os, "sync"):   # flush to the drive before it can be unplugged
+        os.sync()
+
+
+# ── Updating a CircuitPython drive ───────────────────────────────────────────
 
 def node_id_on_drive(drive):
     '''The NODE_ID set on a CIRCUITPY drive, or None for a board that isn't a node yet.'''
@@ -111,32 +177,12 @@ def apply_plan(drive, plan):
         target = Path(drive) / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
-    if hasattr(os, "sync"):   # flush to the drive before it can be unplugged
-        os.sync()
-
-
-def mounted_at(device):
-    '''Where device is already mounted, or None.'''
-    real = os.path.realpath(device)
-    try:
-        for line in Path("/proc/mounts").read_text().splitlines():
-            dev, where = line.split()[:2]
-            if os.path.realpath(dev) == real:
-                return Path(where.replace("\\040", " "))
-    except OSError:
-        pass
-    return None
+    sync_disks()
 
 
 def update_circuitpython(node_id, node, dry_run):
-    drive = mounted_at(CIRCUITPY_DEVICE)
-    we_mounted = drive is None
-    if we_mounted:
-        drive = MOUNT_POINT
-        options = f"uid={os.getuid()},gid={os.getgid()}" + (",ro" if dry_run else "")
-        subprocess.run(["sudo", "mkdir", "-p", str(drive)], check=True)
-        subprocess.run(["sudo", "mount", "-o", options, CIRCUITPY_DEVICE, str(drive)], check=True)
-    try:
+    '''Copy what differs onto CIRCUITPY. Returns True if the node should now be checked.'''
+    with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT, read_only=dry_run) as drive:
         plan = plan_circuitpython(drive, node_id, node)
         if not plan:
             print(f"[SETUP] Node {node_id} already matches the repo and nodes.json — nothing to copy.")
@@ -147,15 +193,158 @@ def update_circuitpython(node_id, node, dry_run):
         if dry_run:
             return False
         apply_plan(drive, plan)
+    if any(rel.name == "boot.py" for rel, _ in plan):
+        # boot.py only runs at a hard reset; do one from the console.
+        print("[SETUP] boot.py changed — restarting the board so it takes effect.")
+        if not run_on_console(["import microcontroller", "microcontroller.reset()"]):
+            print("[SETUP] Couldn't reach its console: press the board's reset button instead.")
+    else:
         print("[SETUP] Done. CircuitPython restarts the code by itself.")
-        if any(rel.name == "boot.py" for rel, _ in plan):
-            print("[SETUP] boot.py changed: press the board's reset button (or unplug it)\n"
-                  "        so it takes effect — until then the USB data port may be missing.")
-            return False
-        return True
-    finally:
-        if we_mounted:
-            subprocess.run(["sudo", "umount", str(drive)], check=False)
+    return True
+
+
+# ── The CircuitPython console (REPL) ─────────────────────────────────────────
+
+def console_port():
+    '''The serial port of a CircuitPython board's console (not its data port), or None.'''
+    from serial.tools import list_ports
+    ports = [p for p in list_ports.comports()
+             if p.vid in (0x239A, 0x2E8A, 0x303A)]   # Adafruit, Raspberry Pi, Espressif
+    for p in ports:
+        if "CircuitPython" in (p.interface or "") and "data" not in p.interface.lower():
+            return p.device
+    # No interface names: the console is the first port a board offers.
+    return sorted(p.device for p in ports)[0] if ports else None
+
+
+def run_on_console(lines):
+    '''Stop the running code, and type lines into the REPL. False if there's no console.'''
+    import serial
+    port = console_port()
+    if port is None:
+        return False
+    try:
+        with serial.Serial(port, 115200, timeout=0.5) as s:
+            s.write(b"\x03\x03")    # Ctrl-C twice: stop code.py
+            time.sleep(1)
+            s.write(b"\r")          # "Press any key to enter the REPL"
+            time.sleep(1)
+            for line in lines:
+                s.write(line.encode() + b"\r")
+                time.sleep(0.3)
+    except (OSError, serial.SerialException):
+        pass                        # the board resetting takes the port away mid-write
+    return True
+
+
+# ── Installing CircuitPython ─────────────────────────────────────────────────
+
+def bootloader_drive():
+    '''The label of a UF2 bootloader drive that's plugged in, or None.'''
+    for label in BOOTLOADER_DRIVES:
+        if Path(device(label)).exists():
+            return label
+    return None
+
+
+def check_tinyuf2(drive):
+    '''Refuse an ESP32-S2 bootloader too old for CircuitPython 10.'''
+    try:
+        info = (Path(drive) / "INFO_UF2.TXT").read_text(errors="replace")
+    except OSError:
+        return
+    match = _TINYUF2.search(info)
+    if match and tuple(int(x) for x in match.groups()) < MIN_TINYUF2:
+        have = ".".join(match.groups())
+        need = ".".join(map(str, MIN_TINYUF2))
+        raise SetupError(f"This ESP32-S2's TinyUF2 bootloader is {have}; CircuitPython 10 needs "
+                         f"{need} or newer. Update it first (Adafruit's ESP32-S2 Feather guide, "
+                         "'Install UF2 Bootloader'), then run this again.")
+
+
+def download_uf2(node):
+    '''The CircuitPython UF2 for this node's board, downloaded once and kept in UF2_CACHE.'''
+    url = circuitpython_uf2_url(node)
+    path = UF2_CACHE / url.rsplit("/", 1)[1]
+    if path.exists():
+        return path
+    UF2_CACHE.mkdir(parents=True, exist_ok=True)
+    print(f"[SETUP] Downloading {url}")
+    part = path.with_suffix(".part")
+    request = urllib.request.Request(url, headers={"User-Agent": "garden node_setup.py"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as r, open(part, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except OSError as e:
+        part.unlink(missing_ok=True)
+        raise SetupError(f"Could not download CircuitPython for {node['board']}: {e}")
+    part.rename(path)
+    return path
+
+
+def install_circuitpython(args, nodes, label):
+    '''Put CircuitPython on the plugged-in board, then set it up as its node.'''
+    detected = None
+    if label is None:
+        if not Path(device(CIRCUITPY_LABEL)).exists():
+            raise SetupError(
+                "No board waiting to install. A blank Pico shows its bootloader drive by itself; "
+                "otherwise hold BOOTSEL (Pico) or double-tap reset (ESP32-S2) as you plug it in. "
+                "Switching an Arduino board to CircuitPython isn't automated yet.")
+        with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT, read_only=True) as drive:
+            detected = node_id_on_drive(drive)
+
+    node_id = args.node or detected
+    if node_id is None:
+        raise SetupError("Which node should this board be? Say with --node N "
+                         "(add it to nodes.json first).")
+    if node_id not in nodes:
+        raise SetupError(f"Node {node_id} isn't in nodes.json yet — add it there first.")
+    node = nodes[node_id]
+    if node["framework"] != "circuitpython":
+        raise SetupError(f"nodes.json says node {node_id} runs {node['framework']}; "
+                         "--install only installs CircuitPython so far.")
+    chip = BOARDS[node["board"]]["chip"]
+    print(f"[SETUP] Node {node_id}: {node['name']} ({node['board']}, CircuitPython {CIRCUITPYTHON_VERSION})")
+
+    if label is None:
+        if args.dry_run:
+            print("[SETUP] Would restart it into its bootloader, then install CircuitPython "
+                  f"{CIRCUITPYTHON_VERSION} from {circuitpython_uf2_url(node)}")
+            return
+        print("[SETUP] Restarting it into its bootloader...")
+        if not run_on_console(["import microcontroller",
+                               "microcontroller.on_next_reset(microcontroller.RunMode.UF2)",
+                               "microcontroller.reset()"]):
+            raise SetupError("Couldn't reach the board's console to restart it into its bootloader.")
+        label = wait_until(bootloader_drive, timeout=30)
+        if label is None:
+            raise SetupError("The bootloader drive didn't appear. Hold BOOTSEL (Pico) or "
+                             "double-tap reset (ESP32-S2) as you plug it in, then run this again.")
+
+    if BOOTLOADER_DRIVES[label] != chip:
+        raise SetupError(f"nodes.json says node {node_id} is a {node['board']} ({chip}), but the "
+                         f"board plugged in is a {BOOTLOADER_DRIVES[label]} ({label} drive).")
+    if args.dry_run:
+        print(f"[SETUP] Would install CircuitPython {CIRCUITPYTHON_VERSION} from "
+              f"{circuitpython_uf2_url(node)}, then copy the node code.")
+        return
+
+    uf2 = download_uf2(node)
+    print(f"[SETUP] Installing {uf2.name} (the board restarts by itself)...")
+    with mounted(device(label), BOOT_MOUNT_POINT) as drive:
+        if chip == "esp32s2":
+            check_tinyuf2(drive)
+        shutil.copyfile(uf2, Path(drive) / uf2.name)
+        sync_disks()
+    if not wait_until(lambda: Path(device(CIRCUITPY_LABEL)).exists(), timeout=90):
+        raise SetupError("CircuitPython didn't come up (no CIRCUITPY drive after 90s).")
+    time.sleep(3)   # let it finish starting before its drive is written to
+    print("[SETUP] CircuitPython is installed. Copying the node code...")
+    if update_circuitpython(node_id, node, dry_run=False):
+        confirm_running(node_id, wait=12)
+    print("[SETUP] If this is a new node, restart the Pi's radio loop so it starts "
+          "polling it: sudo systemctl restart garden-sensor")
 
 
 # ── Arduino ──────────────────────────────────────────────────────────────────
@@ -215,19 +404,17 @@ def confirm_running(node_id, wait=8):
 def run(args):
     nodes = load_nodes()
 
-    if Path(CIRCUITPY_DEVICE).exists():
+    label = bootloader_drive()
+    if args.install or label:
+        if label and not args.install:
+            print(f"[SETUP] A board is waiting in its bootloader ({label} drive) — installing CircuitPython.")
+        install_circuitpython(args, nodes, label)
+        return
+
+    if Path(device(CIRCUITPY_LABEL)).exists():
         framework = "circuitpython"
-        drive = mounted_at(CIRCUITPY_DEVICE)
-        detected = node_id_on_drive(drive) if drive else None
-        if detected is None and drive is None:
-            # Read it from the drive itself; mount read-only just for this.
-            subprocess.run(["sudo", "mkdir", "-p", str(MOUNT_POINT)], check=True)
-            subprocess.run(["sudo", "mount", "-o", f"ro,uid={os.getuid()}", CIRCUITPY_DEVICE,
-                            str(MOUNT_POINT)], check=True)
-            try:
-                detected = node_id_on_drive(MOUNT_POINT)
-            finally:
-                subprocess.run(["sudo", "umount", str(MOUNT_POINT)], check=False)
+        with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT, read_only=True) as drive:
+            detected = node_id_on_drive(drive)
         port = None
         print(f"[SETUP] Found a CircuitPython board (CIRCUITPY drive), "
               f"{'node ' + str(detected) if detected else 'not set up as a node yet'}.")
@@ -278,6 +465,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?", choices=["update", "list"], default="update")
     parser.add_argument("--node", type=int, help="node ID to set the board up as")
+    parser.add_argument("--install", action="store_true",
+                        help=f"install CircuitPython {CIRCUITPYTHON_VERSION} on the board first")
     parser.add_argument("--port", help="the board's serial port, if more than one is plugged in (Arduino)")
     parser.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
     args = parser.parse_args()

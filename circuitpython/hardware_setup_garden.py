@@ -49,17 +49,26 @@ def pin(name):
 # SPI SETUP
 spi = busio.SPI(clock=pin("spi_sck"), MOSI=pin("spi_mosi"), MISO=pin("spi_miso"))
 
-# Radio pins
-radio_cs = digitalio.DigitalInOut(pin("radio_cs"))
-radio_reset = digitalio.DigitalInOut(pin("radio_rst"))
-rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
-rfm69.tx_power = 20   # RFM69HCW maximum — the link to the Pi needs the margin
-rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
+# Radio — without one (e.g. a board on the bench) the node still runs and
+# answers over USB, so it can be set up and tested from the Pi.
+try:
+    radio_cs = digitalio.DigitalInOut(pin("radio_cs"))
+    radio_reset = digitalio.DigitalInOut(pin("radio_rst"))
+    rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
+    rfm69.tx_power = 20   # RFM69HCW maximum — the link to the Pi needs the margin
+    rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
+except Exception as e:
+    print(f"[WARN] No radio found, USB only: {e}")
+    rfm69 = None
 
 # SD card — without one, the node still runs; it just has no log to sync.
+# Boards with a built-in card slot on its own SPI bus (e.g. the Feather
+# RP2040 Adalogger) give that bus's pins as sd_sck/sd_mosi/sd_miso.
 if USE_SD:
     try:
-        sdcard = sdcardio.SDCard(spi, pin("sd_cs"))
+        sd_spi = (busio.SPI(clock=pin("sd_sck"), MOSI=pin("sd_mosi"), MISO=pin("sd_miso"))
+                  if "sd_sck" in PINS else spi)
+        sdcard = sdcardio.SDCard(sd_spi, pin("sd_cs"))
         storage.mount(storage.VfsFat(sdcard), "/sd")
     except Exception as e:
         print(f"[WARN] SD card not mounted, readings won't be logged: {e}")
@@ -73,9 +82,20 @@ def try_init(name, init_fn):
         return None
 
 
-# I2C + SENSORS
-i2c = busio.I2C(pin("i2c_scl"), pin("i2c_sda")) if "i2c_scl" in PINS else board.STEMMA_I2C()
+# I2C + SENSORS — the STEMMA QT port unless nodes.json gives i2c_scl/i2c_sda
+# (a plain Pico has no STEMMA QT port, so it needs them for any sensors).
+try:
+    i2c = busio.I2C(pin("i2c_scl"), pin("i2c_sda")) if "i2c_scl" in PINS else board.STEMMA_I2C()
+except Exception as e:
+    print(f"[WARN] No I2C bus, so no sensors (set i2c_scl/i2c_sda in nodes.json?): {e}")
+    i2c = None
 rtc    = try_init("RTC",      lambda: PCF8523(i2c))
+if rtc is None:
+    # No PCF8523: keep time on the chip's own clock instead. It starts at
+    # 2000 after every reset until the Pi's first poll sets it (code.py
+    # doesn't log readings until then).
+    import rtc as chip_clock
+    rtc = chip_clock.RTC()
 max17  = try_init("MAX1704x", lambda: adafruit_max1704x.MAX17048(i2c))
 ltr    = try_init("LTR390",   lambda: adafruit_ltr390.LTR390(i2c))
 soil_0 = try_init("Soil_0",   lambda: Seesaw(i2c, addr=0x37))

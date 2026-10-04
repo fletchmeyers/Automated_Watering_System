@@ -21,17 +21,40 @@ NODES_FILE = Path(__file__).parent.parent / "nodes.json"
 FRAMEWORKS = ("circuitpython", "arduino")
 STORAGE    = ("sd", "flash", "none")
 
-# Arduino boards with a board_config_*.h, by PlatformIO environment
-# (platformio.ini). The key is the "board" value in nodes.json.
-ARDUINO_BOARDS = {"feather_m0": "feather_m0"}
+# Boards a node can be, by the "board" value in nodes.json:
+#   chip          — which UF2 bootloader drive it shows (BOOTLOADER_DRIVES)
+#   circuitpython — its board ID on circuitpython.org, or None if not supported
+#   arduino       — its PlatformIO environment (platformio.ini), or None until
+#                   it has a board_config_*.h
+BOARDS = {
+    "pico":   {"chip": "rp2040", "circuitpython": "raspberry_pi_pico",    "arduino": None},
+    "picow":  {"chip": "rp2040", "circuitpython": "raspberry_pi_pico_w",  "arduino": None},
+    "pico2":  {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2",   "arduino": None},
+    "pico2w": {"chip": "rp2350", "circuitpython": "raspberry_pi_pico2_w", "arduino": None},
+    "feather_rp2040_adalogger": {"chip": "rp2040",
+                                 "circuitpython": "adafruit_feather_rp2040_adalogger", "arduino": None},
+    "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": "adafruit_feather_esp32s2", "arduino": None},
+    "feather_esp32_v2": {"chip": "esp32",   "circuitpython": None,                       "arduino": None},
+    "feather_m0":       {"chip": "samd21",  "circuitpython": None,                       "arduino": "feather_m0"},
+}
+
+# The drive a board shows while it waits in its UF2 bootloader, by volume label.
+BOOTLOADER_DRIVES = {"RPI-RP2": "rp2040", "RP2350": "rp2350", "FTHRS2BOOT": "esp32s2"}
+
+# The CircuitPython that node_setup.py installs. Its major version must match
+# the .mpy libraries in circuitpython/lib.
+CIRCUITPYTHON_VERSION = "10.3.1"
 
 # Pins each framework needs. CircuitPython pins are board pin names ("GP22");
-# Arduino pins are numbers. Optional pins can be left out.
+# Arduino pins are numbers. Optional pins can be left out: sd_cs for a card,
+# sd_sck/sd_mosi/sd_miso when the card has its own SPI bus (the Adalogger's
+# built-in slot), i2c_scl/i2c_sda instead of the board's STEMMA QT port.
 REQUIRED_PINS = {
     "circuitpython": ("spi_sck", "spi_mosi", "spi_miso", "radio_cs", "radio_rst"),
     "arduino":       ("radio_cs", "radio_irq", "radio_rst"),
 }
-OPTIONAL_PINS = ("sd_cs", "i2c_scl", "i2c_sda")
+OPTIONAL_PINS = ("sd_cs", "sd_sck", "sd_mosi", "sd_miso", "i2c_scl", "i2c_sda")
+_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -76,9 +99,20 @@ def check_node(node_id, node):
     framework = node["framework"]
     if framework not in FRAMEWORKS:
         fail(f'framework must be one of {", ".join(FRAMEWORKS)}, not "{framework}"')
-    if framework == "arduino" and node["board"] not in ARDUINO_BOARDS:
-        fail(f'no Arduino board config for "{node["board"]}" yet '
-             f'(have: {", ".join(ARDUINO_BOARDS)})')
+    board = BOARDS.get(node["board"])
+    if board is None:
+        fail(f'unknown board "{node["board"]}" (known: {", ".join(BOARDS)})')
+    if board[framework] is None:
+        able = [name for name, b in BOARDS.items() if b[framework]]
+        fail(f'{framework} on {node["board"]} isn\'t supported yet (it is on: {", ".join(able)})')
+
+    if "color" in node and not (isinstance(node["color"], str) and _COLOR.match(node["color"])):
+        fail('color must look like "#79c0ff"')
+    battery = node.get("battery")
+    if battery is not None and not (isinstance(battery, dict)
+                                    and isinstance(battery.get("type"), str)
+                                    and isinstance(battery.get("label"), str)):
+        fail('battery must be {"type": <sensor type, e.g. "pw0">, "label": <text>}')
 
     for field in ("sense_interval_s", "log_interval_s"):
         value = node.get(field)
@@ -108,6 +142,11 @@ def check_node(node_id, node):
             fail(f'CircuitPython pin "{pin}" must be a board pin name like "GP22", not {value!r}')
     if ("i2c_scl" in pins) != ("i2c_sda" in pins):
         fail('give both "i2c_scl" and "i2c_sda", or neither (STEMMA QT port)')
+    sd_bus = [p for p in ("sd_sck", "sd_mosi", "sd_miso") if p in pins]
+    if sd_bus and len(sd_bus) != 3:
+        fail('give all of "sd_sck", "sd_mosi", "sd_miso" (a separate SD bus), or none')
+    if sd_bus and framework == "arduino":
+        fail("a separate SD SPI bus isn't supported on Arduino boards yet")
 
     window = node.get("sleep_window")
     if window is not None:
@@ -144,8 +183,15 @@ def circuitpython_config(node_id, node):
     )
 
 
+def circuitpython_uf2_url(node, version=CIRCUITPYTHON_VERSION):
+    '''Where circuitpython.org publishes the UF2 for this node's board.'''
+    board = BOARDS[node["board"]]["circuitpython"]
+    return (f"https://downloads.circuitpython.org/bin/{board}/en_US/"
+            f"adafruit-circuitpython-{board}-en_US-{version}.uf2")
+
+
 def arduino_env(node):
-    return ARDUINO_BOARDS[node["board"]]
+    return BOARDS[node["board"]]["arduino"]
 
 
 def arduino_build_flags(node_id, node):

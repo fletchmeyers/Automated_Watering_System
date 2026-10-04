@@ -124,13 +124,17 @@
 <script>
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
-initUnitToggle();
-buildPingNodeSelect();
-refresh();
-setInterval(refresh, REFRESH_MS);
-initCardCustomization();
-initAnalysisPanel();
-initWeatherPanel();
+// Node names and colors come from nodes.json; everything else waits for them
+// (a few seconds at most — loadNodes() falls back to its built-in list).
+loadNodes().then(() => {
+  initUnitToggle();
+  buildPingNodeSelect();
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+  initCardCustomization();
+  initAnalysisPanel();
+  initWeatherPanel();
+});
 </script>
 </body>
 </html>

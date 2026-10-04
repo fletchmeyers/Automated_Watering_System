@@ -45,7 +45,11 @@ def test_flash_storage_has_no_sd_pin_flag():
 
 @pytest.mark.parametrize("change, message", [
     (lambda n: n.update(framework="micropython"), "framework must be one of"),
-    (lambda n: n.update(board="esp32"), "no Arduino board config"),
+    (lambda n: n.update(board="esp32"), "unknown board"),
+    (lambda n: n.update(board="pico"), "arduino on pico isn.t supported yet"),
+    (lambda n: n.update(color="pink"), "color must look like"),
+    (lambda n: n.update(battery="pw0"), "battery must be"),
+    (lambda n: n["pins"].update(sd_sck=1), "all of"),
     (lambda n: n["pins"].pop("radio_irq"), 'needs pin "radio_irq"'),
     (lambda n: n["pins"].update(radio_cs="D9"), "must be a number"),
     (lambda n: n["pins"].pop("sd_cs"), 'storage "sd" needs pin "sd_cs"'),
@@ -138,3 +142,88 @@ def test_libraries_already_on_the_drive_are_kept_up_to_date(tmp_path):
     (lib / "label.mpy").write_bytes(b"old version")
     names = {str(rel).replace("\\", "/") for rel, _ in node_setup.plan_circuitpython(tmp_path, 1, real()[1])}
     assert "lib/adafruit_display_text/label.mpy" in names
+
+
+# ── Installing CircuitPython ─────────────────────────────────────────────────
+
+def test_uf2_comes_from_circuitpython_org_for_the_nodes_board():
+    from nodes import circuitpython_uf2_url, CIRCUITPYTHON_VERSION
+    assert circuitpython_uf2_url(real()[1]) == (
+        "https://downloads.circuitpython.org/bin/raspberry_pi_pico2_w/en_US/"
+        f"adafruit-circuitpython-raspberry_pi_pico2_w-en_US-{CIRCUITPYTHON_VERSION}.uf2")
+    assert CIRCUITPYTHON_VERSION.startswith("10.")   # must match the .mpy libraries
+
+
+def test_every_bootloader_drive_maps_to_a_known_chip():
+    from nodes import BOARDS, BOOTLOADER_DRIVES
+    chips = {b["chip"] for b in BOARDS.values() if b["circuitpython"]}
+    assert chips == set(BOOTLOADER_DRIVES.values())
+
+
+def test_old_esp32s2_bootloader_is_refused(tmp_path):
+    info = tmp_path / "INFO_UF2.TXT"
+    info.write_text("TinyUF2 Bootloader 0.18.2 - tinyusb (0.15.0)\nModel: Adafruit Feather ESP32-S2\n")
+    with pytest.raises(node_setup.SetupError, match="0.18.2"):
+        node_setup.check_tinyuf2(tmp_path)
+    info.write_text("TinyUF2 Bootloader 0.35.0 - tinyusb (0.18.0)\n")
+    node_setup.check_tinyuf2(tmp_path)                 # new enough
+    info.unlink()
+    node_setup.check_tinyuf2(tmp_path)                 # can't tell: let it try
+
+
+def test_uf2_is_downloaded_once_then_cached(tmp_path, monkeypatch):
+    fetched = []
+
+    class Response:
+        def __init__(self, url):
+            fetched.append(url)
+            self.data = [b"UF2 bytes"]
+        def read(self, n=-1):
+            return self.data.pop() if self.data else b""
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(node_setup, "UF2_CACHE", tmp_path)
+    monkeypatch.setattr(node_setup.urllib.request, "urlopen", lambda req, timeout: Response(req.full_url))
+    first = node_setup.download_uf2(real()[1])
+    again = node_setup.download_uf2(real()[1])
+    assert first == again and first.read_bytes() == b"UF2 bytes"
+    assert len(fetched) == 1 and first.name.endswith(".uf2")
+
+
+def test_boot_py_change_restarts_the_board_from_its_console(tmp_path, monkeypatch):
+    typed = []
+    monkeypatch.setattr(node_setup, "run_on_console", lambda lines: typed.extend(lines) or True)
+
+    @node_setup.contextmanager
+    def fake_mount(dev, where, read_only=False):
+        yield tmp_path
+    monkeypatch.setattr(node_setup, "mounted", fake_mount)
+
+    assert node_setup.update_circuitpython(1, real()[1], dry_run=False)   # fresh drive: boot.py is new
+    assert typed == ["import microcontroller", "microcontroller.reset()"]
+
+    typed.clear()
+    changed = copy.deepcopy(real()[1])
+    changed["log_interval_s"] = 30
+    assert node_setup.update_circuitpython(1, changed, dry_run=False)     # only node_config.py
+    assert typed == []                                                   # auto-reload is enough
+
+
+def test_a_bare_board_still_starts(monkeypatch):
+    '''No STEMMA QT port, no radio, no PCF8523 (a plain Pico on the bench).'''
+    from unittest.mock import MagicMock
+    import hardware_setup_garden
+    monkeypatch.setattr(sys.modules["board"], "STEMMA_I2C", MagicMock(side_effect=ValueError("no STEMMA")))
+    monkeypatch.setattr(sys.modules["adafruit_rfm69"], "RFM69", MagicMock(side_effect=RuntimeError("no radio")))
+    monkeypatch.setattr(sys.modules["adafruit_pcf8523.pcf8523"], "PCF8523",
+                        MagicMock(side_effect=AttributeError("no I2C")))
+    try:
+        hw = importlib.reload(hardware_setup_garden)
+        assert hw.i2c is None and hw.rfm69 is None
+        assert hw.rtc is sys.modules["rtc"].RTC.return_value     # the chip's own clock
+    finally:
+        monkeypatch.undo()
+        importlib.reload(hardware_setup_garden)
