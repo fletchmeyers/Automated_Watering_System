@@ -91,21 +91,22 @@ def open_port(path):
     return serial.Serial(path, 115200, timeout=0.2)
 
 
-def find_node(paths):
+def find_node(paths, quiet=False):
     '''Return (UsbNode, info reply) for the first port that answers "info".'''
+    say = (lambda msg: None) if quiet else print
     for path in paths:
         try:
             port = open_port(path)
         except Exception as e:
-            print(f"[USB] {path}: could not open ({e})")
+            say(f"[USB] {path}: could not open ({e})")
             continue
         port.reset_input_buffer()
         node = UsbNode(port)
         info, _ = node.ask({"t": "info"}, "info", timeout=3)
         if info is not None and isinstance(info.get("n"), int):
-            print(f"[USB] {path}: node {info['n']}")
+            say(f"[USB] {path}: node {info['n']}")
             return node, info
-        print(f"[USB] {path}: no answer")
+        say(f"[USB] {path}: no answer")
         port.close()
     return None, None
 

@@ -54,12 +54,6 @@ UF2_CACHE        = Path.home() / ".cache" / "garden-nodes"
 # auto-reload doesn't start the new code before the rest is in place.
 CIRCUITPY_FILES = ("hardware_setup_garden.py", "communication_garden.py",
                    "sync_garden.py", "boot.py", "code.py")
-# Libraries the node code imports (and theirs). Other libraries already on
-# the drive are kept up to date too, but unused ones aren't added.
-CIRCUITPY_LIBS = ("adafruit_bus_device", "adafruit_register", "adafruit_ticks.mpy",
-                  "adafruit_rfm69.mpy", "adafruit_pcf8523", "adafruit_max1704x.mpy",
-                  "adafruit_ltr390.mpy", "adafruit_seesaw", "adafruit_sht4x.mpy",
-                  "adafruit_sgp40", "adafruit_ina23x.mpy")
 
 # CircuitPython 10 on a 4 MB ESP32-S2 needs at least this TinyUF2 bootloader.
 MIN_TINYUF2 = (0, 33, 0)
@@ -146,14 +140,36 @@ def _lib_files(entry):
     return [src] if src.is_file() else []
 
 
+def required_libs():
+    '''
+    The lib/ entries the node code needs: the libraries its files mention,
+    then the ones those mention, and so on. A .mpy keeps the names of the
+    modules it imports as plain text, so a name turning up in a file's bytes
+    is how a dependency shows (e.g. adafruit_ina23x needs adafruit_ina228).
+    A false match only copies a spare library.
+    '''
+    entries = sorted(p.name for p in (CIRCUITPY_SRC / "lib").iterdir())
+    modules = {name[:-4] if name.endswith(".mpy") else name: name for name in entries}
+    needed = set()
+    to_scan = [CIRCUITPY_SRC / name for name in CIRCUITPY_FILES]
+    while to_scan:
+        data = to_scan.pop().read_bytes()
+        for module, entry in modules.items():
+            if entry not in needed and module.encode() in data:
+                needed.add(entry)
+                to_scan.extend(_lib_files(entry))
+    return needed
+
+
 def plan_circuitpython(drive, node_id, node):
-    '''The files to write to the drive, as [(path on drive, contents)], only where they differ.'''
+    '''The files to write to the drive, as [(path on drive, contents)], only where they differ.
+    Libraries the node code needs are added; others already on the drive are kept up to date.'''
     drive = Path(drive)
     wanted = []
 
     on_drive = {p.name for p in (drive / "lib").iterdir()} if (drive / "lib").is_dir() else set()
     in_repo = {p.name for p in (CIRCUITPY_SRC / "lib").iterdir()}
-    for entry in sorted(set(CIRCUITPY_LIBS) | (on_drive & in_repo)):
+    for entry in sorted(required_libs() | (on_drive & in_repo)):
         for src in _lib_files(entry):
             wanted.append((Path("lib") / src.relative_to(CIRCUITPY_SRC / "lib"), src.read_bytes()))
 
@@ -196,7 +212,7 @@ def update_circuitpython(node_id, node, dry_run):
     if any(rel.name == "boot.py" for rel, _ in plan):
         # boot.py only runs at a hard reset; do one from the console.
         print("[SETUP] boot.py changed — restarting the board so it takes effect.")
-        if not run_on_console(["import microcontroller", "microcontroller.reset()"]):
+        if run_on_console(["import microcontroller", "microcontroller.reset()"]) is None:
             print("[SETUP] Couldn't reach its console: press the board's reset button instead.")
     else:
         print("[SETUP] Done. CircuitPython restarts the code by itself.")
@@ -205,36 +221,76 @@ def update_circuitpython(node_id, node, dry_run):
 
 # ── The CircuitPython console (REPL) ─────────────────────────────────────────
 
-def console_port():
-    '''The serial port of a CircuitPython board's console (not its data port), or None.'''
+_ANSI = re.compile(r"\x1b\][^\x1b\x07]*(\x1b\\|\x07)|\x1b\[[0-9;]*[A-Za-z]")
+
+
+def console_ports():
+    '''Serial ports that may be a CircuitPython console, likeliest first: ports
+    named as the console, then unnamed ones, then the data port (boot.py's).'''
     from serial.tools import list_ports
     ports = [p for p in list_ports.comports()
              if p.vid in (0x239A, 0x2E8A, 0x303A)]   # Adafruit, Raspberry Pi, Espressif
-    for p in ports:
-        if "CircuitPython" in (p.interface or "") and "data" not in p.interface.lower():
-            return p.device
-    # No interface names: the console is the first port a board offers.
-    return sorted(p.device for p in ports)[0] if ports else None
+    def rank(p):
+        name = (p.interface or "").lower()
+        return (2 if "data" in name else 0 if "circuitpython" in name else 1, p.device)
+    return [p.device for p in sorted(ports, key=rank)]
+
+
+def _read_for(port, seconds):
+    out = b""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        out += port.read(256)
+    return out
+
+
+def _clean(raw):
+    '''Console bytes as readable text: no terminal title or colour codes.'''
+    return _ANSI.sub("", raw.decode(errors="replace")).replace("\r", "")
 
 
 def run_on_console(lines):
-    '''Stop the running code, and type lines into the REPL. False if there's no console.'''
+    '''
+    Stop the running code, get to the REPL prompt (">>>") and type lines into
+    it. Returns what the board printed, or None if no port gave a prompt.
+    '''
     import serial
-    port = console_port()
-    if port is None:
-        return False
-    try:
-        with serial.Serial(port, 115200, timeout=0.5) as s:
-            s.write(b"\x03\x03")    # Ctrl-C twice: stop code.py
-            time.sleep(1)
-            s.write(b"\r")          # "Press any key to enter the REPL"
-            time.sleep(1)
-            for line in lines:
-                s.write(line.encode() + b"\r")
-                time.sleep(0.3)
-    except (OSError, serial.SerialException):
-        pass                        # the board resetting takes the port away mid-write
-    return True
+    for path in console_ports():
+        try:
+            with serial.Serial(path, 115200, timeout=0.2) as s:
+                s.reset_input_buffer()
+                s.write(b"\x03\x03")     # Ctrl-C twice: stop code.py
+                out = _read_for(s, 1)
+                s.write(b"\r")           # "Press any key to enter the REPL"
+                out += _read_for(s, 1.5)
+                if b">>>" not in out:
+                    continue             # not the console (or not CircuitPython)
+                for line in lines:
+                    s.write(line.encode() + b"\r")
+                    out += _read_for(s, 0.5)
+                return _clean(out)
+        except (OSError, serial.SerialException):
+            return ""                    # a reset took the port away mid-command
+    return None
+
+
+def console_output(seconds=10):
+    '''Restart code.py from the console (Ctrl-D) and return what it prints, e.g. a traceback.'''
+    import serial
+    for path in console_ports():
+        try:
+            with serial.Serial(path, 115200, timeout=0.2) as s:
+                s.write(b"\x03\x03")     # stop code.py, if it's running
+                out = _read_for(s, 1)
+                s.write(b"\r")           # into the REPL
+                out += _read_for(s, 1.5)
+                if b">>>" not in out:
+                    continue
+                s.write(b"\x04")         # Ctrl-D: soft reboot, which runs code.py
+                return _clean(_read_for(s, seconds))
+        except (OSError, serial.SerialException):
+            continue
+    return None
 
 
 # ── Installing CircuitPython ─────────────────────────────────────────────────
@@ -313,12 +369,15 @@ def install_circuitpython(args, nodes, label):
                   f"{CIRCUITPYTHON_VERSION} from {circuitpython_uf2_url(node)}")
             return
         print("[SETUP] Restarting it into its bootloader...")
-        if not run_on_console(["import microcontroller",
-                               "microcontroller.on_next_reset(microcontroller.RunMode.UF2)",
-                               "microcontroller.reset()"]):
+        typed = run_on_console(["import microcontroller",
+                                "microcontroller.on_next_reset(microcontroller.RunMode.UF2)",
+                                "microcontroller.reset()"])
+        if typed is None:
             raise SetupError("Couldn't reach the board's console to restart it into its bootloader.")
         label = wait_until(bootloader_drive, timeout=30)
         if label is None:
+            if typed.strip():
+                print("[SETUP] The board's console said:\n" + typed.strip())
             raise SetupError("The bootloader drive didn't appear. Hold BOOTSEL (Pico) or "
                              "double-tap reset (ESP32-S2) as you plug it in, then run this again.")
 
@@ -379,26 +438,40 @@ def serial_ports():
     return sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
 
 
-def ask_node(paths):
+def ask_node(paths, quiet=False):
     '''(node ID, port) of a running node on one of paths, or (None, None).'''
     from usb_sync import find_node   # needs pyserial
-    node, info = find_node(paths)
+    node, info = find_node(paths, quiet=quiet)
     if node is None:
         return None, None
     node.port.close()
     return info["n"], node.port.port
 
 
-def confirm_running(node_id, wait=8):
-    '''After an update, check the node answers over USB with the right ID.'''
-    print(f"[SETUP] Checking the node answers ({wait}s for it to restart)...")
+def confirm_running(node_id, framework="circuitpython", wait=8, timeout=40):
+    '''After an update, check the node answers over USB with the right ID, and if
+    it doesn't, show what a CircuitPython board prints as its code starts.'''
+    print(f"[SETUP] Checking the node answers (up to {timeout}s while it restarts)...")
     time.sleep(wait)
-    answered, _ = ask_node(serial_ports())
+    deadline = time.monotonic() + timeout - wait
+    answered = None
+    while answered != node_id and time.monotonic() < deadline:
+        answered, _ = ask_node(serial_ports(), quiet=True)
+        if answered != node_id:
+            time.sleep(2)
     if answered == node_id:
         print(f"[SETUP] Node {node_id} is running the new code.")
-    else:
-        print(f"[SETUP] It didn't answer as node {node_id} (got {answered}). Check its "
-              "console output; a CircuitPython error shows there.")
+        return True
+    print(f"[SETUP] It didn't answer as node {node_id}" + (f" (it says it's node {answered})" if answered else "") + ".")
+    if framework == "circuitpython":
+        output = console_output()
+        if output:
+            lines = [l for l in output.strip().splitlines() if l.strip()]
+            print("[SETUP] Its console, restarting code.py:\n          " + "\n          ".join(lines[-20:]))
+        else:
+            print("[SETUP] Couldn't read its console either; look with:\n"
+                  "          python3 -m serial.tools.miniterm /dev/ttyACM0 115200")
+    return False
 
 
 def run(args):
@@ -449,7 +522,7 @@ def run(args):
     else:
         updated = update_arduino(node_id, node, port, args.dry_run)
     if updated:
-        confirm_running(node_id)
+        confirm_running(node_id, framework)
 
 
 def list_nodes():
