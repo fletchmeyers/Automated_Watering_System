@@ -16,6 +16,7 @@ from sync_indoor import (
     DATA_FILE, COMMAND_FILE, request_poll, request_sync_chunk, request_info, save_node_info,
     request_command, update_node_info, SLEEP_REQUEST_FILE,
     POLL_RESULT_FILE, PING_REQUEST_FILE, PING_RESULT_FILE, SYNC_REQUEST_FILE,
+    usb_sync_node,
 )
 
 from communication_indoor import (
@@ -123,6 +124,20 @@ while True:
             print(f"[SYNC] Could not parse sync request: {e}")
         sync_req.unlink(missing_ok=True)
 
+    # ── A node being synced over USB (usb_sync.py) is left alone by the ──
+    # ── radio sync, including any chunk request already queued or sent ───
+    usb_node = usb_sync_node()
+    if usb_node is not None:
+        sync.release(usb_node)
+        queued = cmd.pending
+        if queued is None and Path(COMMAND_FILE).exists():
+            try:
+                queued = json.loads(Path(COMMAND_FILE).read_text())
+            except Exception:
+                queued = None
+        if queued and queued.get("t") == "sync" and queued.get("n") == usb_node:
+            cmd.cancel()
+
     # ── Issue the next poll, sleep, storage report or sync chunk, in ─────
     # ── that order, only to nodes that are awake and answering ────────────
     # Only issue a new command if nothing is currently outstanding, and
@@ -155,7 +170,7 @@ while True:
             request_info(info_due[0])
             info_timer.mark_polled(info_due[0])
         else:
-            chunk_request = sync.next_command(available)
+            chunk_request = sync.next_command(lambda n: available(n) and n != usb_node)
             if chunk_request is not None:
                 request_sync_chunk(chunk_request)
 

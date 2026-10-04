@@ -17,6 +17,7 @@ March 2026
 '''
 
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +46,24 @@ SYNC_REQUEST_FILE = "/tmp/pico_sync_request.json"
 # Manual "sleep now" request — main.py's SleepScheduler sends the node a
 # sleep command as soon as the radio is free.
 SLEEP_REQUEST_FILE = "/tmp/pico_sleep_request.json"
+
+# Held by usb_sync.py while it pulls a node's log over USB: {"n": node, "pid": its
+# process}. main.py leaves that node's radio sync alone until it's gone.
+USB_SYNC_FILE = "/tmp/garden_usb_sync.json"
+
+
+def usb_sync_node():
+    '''The node usb_sync.py is syncing right now, or None. A file left behind
+    by a usb_sync.py that died without cleaning up is ignored.'''
+    try:
+        held = json.loads(Path(USB_SYNC_FILE).read_text())
+        os.kill(held["pid"], 0)        # raises if that process is gone
+        return held["n"]
+    except PermissionError:
+        return held["n"]               # running, just as another user
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
 
 # Latest state reported by each node, for the dashboard: {"<node>": {"ub",
 # "fb", "tb", "at", "sleep_until"}}. Storage fields are written when an

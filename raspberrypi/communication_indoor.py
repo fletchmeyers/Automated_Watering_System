@@ -167,6 +167,12 @@ class CommandManager:
 
         return False
 
+    def cancel(self):
+        '''Drop the pending command without waiting for an answer or a timeout.'''
+        if self.pending is not None:
+            print(f"[CMD] Cancelled {self.pending.get('t')!r} to node {self.pending.get('n')}.")
+        self._clear_pending()
+
     def _clear_pending(self):
         Path(COMMAND_FILE).unlink(missing_ok=True)
         self.pending     = None
@@ -741,18 +747,33 @@ class SyncManager:
             self.awaiting = False
             self._buffer  = []
 
+    def release(self, node_id):
+        '''
+        Stop syncing node_id by radio because usb_sync.py is pulling its log
+        over USB. Forgets its cursor too: the USB sync moves it on, so the
+        next radio request leaves it out and the node carries on from its own.
+        '''
+        if node_id in self.sessions:
+            self._end_session(node_id, "syncing over USB instead")
+        self._cursors.pop(node_id, None)
+
     def _store(self, node_id, lines):
-        if not lines:
-            return
+        store_sync_lines(node_id, lines, self.db_conn)
+
+
+def store_sync_lines(node_id, lines, db_conn=None):
+    '''Save synced log lines to the day's sync archive and sensors.db (radio and USB sync alike).'''
+    if not lines:
+        return
+    for line in lines:
+        line.setdefault("n", node_id)
+
+    with open(ARCHIVE_DIR / f"sync_{date.today().isoformat()}.txt", "a") as f:
         for line in lines:
-            line.setdefault("n", node_id)
+            f.write(json.dumps(line) + "\n")
 
-        with open(ARCHIVE_DIR / f"sync_{date.today().isoformat()}.txt", "a") as f:
-            for line in lines:
-                f.write(json.dumps(line) + "\n")
-
-        if self.db_conn is not None:
-            try:
-                db.insert_batch(self.db_conn, lines)
-            except Exception as e:
-                print(f"[DB] Failed to write sync chunk to sensors.db: {e}")
+    if db_conn is not None:
+        try:
+            db.insert_batch(db_conn, lines)
+        except Exception as e:
+            print(f"[DB] Failed to write sync chunk to sensors.db: {e}")

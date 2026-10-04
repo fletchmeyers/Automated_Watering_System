@@ -20,6 +20,7 @@
 
 RH_RF69 rf69(RFM69_CS, RFM69_INT);
 PacketSender sender(NODE_ID, &rf69);
+PacketSender usb_sender(NODE_ID, &Serial);   // replies to commands that came over USB
 
 unsigned long sense_interval_ms = DEFAULT_SENSE_INTERVAL_MS;
 unsigned long last_sense_at = 0;
@@ -83,6 +84,16 @@ void loop() {
   JsonDocument command;
   if (check_for_command(rf69, 100, command)) {
     long new_interval_ms = dispatch_command(command, sender, rf69, NODE_ID);
+    if (new_interval_ms > 0) {
+      sense_interval_ms = new_interval_ms;
+    }
+  }
+
+  // ── USB commands (replies go back over USB, not the radio) ────────────
+  JsonDocument usb_command;
+  if (check_for_usb_command(usb_command)) {
+    if (usb_command["n"].isNull()) usb_command["n"] = NODE_ID;  // over a cable, it can only be for us
+    long new_interval_ms = dispatch_command(usb_command, usb_sender, rf69, NODE_ID);
     if (new_interval_ms > 0) {
       sense_interval_ms = new_interval_ms;
     }
