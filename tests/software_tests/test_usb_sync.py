@@ -190,3 +190,30 @@ def test_lines_cut_off_by_the_read_timeout_are_joined_back_up(sd, monkeypatch):
     count = usb_sync.sync_node(usb_sync.UsbNode(SlowPico()), 1, db_conn=None, chunk_lines=200)
     assert count == 30
     assert [l["i"] for l in stored(sd)] == list(range(30))
+
+
+def test_find_node_waits_for_a_board_that_reset_when_its_port_opened(monkeypatch):
+    '''A USB-serial board (ESP32 V2) reboots as its port opens and misses the
+    first "info"; find_node keeps asking on the same port for such boards.'''
+    class Rebooting:
+        def __init__(self):
+            self.replies, self.asked = [], 0
+        def reset_input_buffer(self):
+            pass
+        def write(self, data):
+            self.asked += 1
+            if self.asked > 1:                       # the first one arrived mid-boot
+                self.replies.append(b'{"t":"info","q":1,"n":14}\n')
+        def readline(self):
+            return self.replies.pop(0) if self.replies else b""
+        def close(self):
+            pass
+
+    board = Rebooting()
+    monkeypatch.setattr(usb_sync, "open_port", lambda path: board)
+    monkeypatch.setattr(usb_sync, "resets_on_open", lambda path: True)
+    real_ask = usb_sync.UsbNode.ask
+    monkeypatch.setattr(usb_sync.UsbNode, "ask",
+                        lambda self, cmd, kind, timeout=1: real_ask(self, cmd, kind, timeout=0.2))
+    node, info = usb_sync.find_node(["/dev/ttyACM0"], quiet=True)
+    assert info["n"] == 14 and board.asked == 2

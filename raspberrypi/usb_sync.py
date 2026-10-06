@@ -107,6 +107,18 @@ def open_port(path):
     return port
 
 
+def resets_on_open(path):
+    '''True for a USB-serial chip (e.g. the ESP32 V2's CH9102): Linux raises
+    DTR/RTS for a moment whenever the port opens, before they can be held
+    off, which resets the board — so it spends a few seconds booting before
+    it can answer.'''
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return False
+    return any(p.device == path and p.vid in _AUTO_RESET_VIDS for p in list_ports.comports())
+
+
 def find_node(paths, quiet=False):
     '''Return (UsbNode, info reply) for the first port that answers "info".'''
     say = (lambda msg: None) if quiet else print
@@ -118,7 +130,12 @@ def find_node(paths, quiet=False):
             continue
         port.reset_input_buffer()
         node = UsbNode(port)
-        info, _ = node.ask({"t": "info"}, "info", timeout=3)
+        # A board that reset as its port opened needs longer: keep asking.
+        deadline = time.monotonic() + (12 if resets_on_open(path) else 0)
+        while True:
+            info, _ = node.ask({"t": "info"}, "info", timeout=3)
+            if info is not None or time.monotonic() >= deadline:
+                break
         if info is not None and isinstance(info.get("n"), int):
             say(f"[USB] {path}: node {info['n']}")
             return node, info
