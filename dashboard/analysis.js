@@ -236,7 +236,13 @@ function setAnalysisMode(mode) {
   const usesFieldPicker = mode === 'timeseries' || mode === 'trend' || mode === 'rate'
     || mode === 'correlation' || mode === 'gaps';
   document.getElementById('ts-field-picker').style.display = usesFieldPicker ? 'flex' : 'none';
-  document.getElementById('ts-overlay-toggle').style.display = mode === 'timeseries' ? 'flex' : 'none';
+  // Raw/Smoothed are time-series only; Shared axes (and Zoom, on a phone)
+  // apply to every multi-axis mode.
+  const multiAxis = mode === 'timeseries' || mode === 'trend' || mode === 'rate';
+  document.getElementById('ts-overlay-toggle').style.display = multiAxis ? 'flex' : 'none';
+  for (const id of ['raw-toggle-btn', 'smoothed-toggle-btn']) {
+    document.getElementById(id).style.display = mode === 'timeseries' ? '' : 'none';
+  }
   document.getElementById('scatter-field-picker').style.display = mode === 'scatter' ? 'flex' : 'none';
   document.getElementById('dayover-field-picker').style.display = mode === 'dayover' ? 'flex' : 'none';
 
@@ -436,7 +442,8 @@ const PLOTLY_LAYOUT_BASE = {
   margin: { l: 50, r: 20, t: 20, b: 40 },
   xaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d', automargin: true },
   yaxis: { gridcolor: '#21262d', linecolor: '#30363d', zerolinecolor: '#30363d', automargin: true },
-  legend: { orientation: 'h', y: -0.2 },
+  // Above the plot, left-aligned: closer to the lines than the old spot below the x axis.
+  legend: { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom' },
 };
 
 function showAnalysisStatus(msg, level = false) {
@@ -457,6 +464,7 @@ async function runAnalysisPlot() {
 
   btn.disabled = true;
   showAnalysisStatus('loading...');
+  lastMultiAxis = null;   // set again by plotMultiAxis() if this mode uses it
 
   try {
     if (analysisMode === 'timeseries') {
@@ -482,45 +490,114 @@ async function runAnalysisPlot() {
   }
 }
 
-// One Y axis per selected field, color-matched to that field's line so the
-// axis a value belongs to is visually obvious. First field gets the normal
-// left axis; every field after that stacks on the right, each shifted
-// further out. Auto-assigned per field for now, uncapped — revisit with a
-// cap (or a "share an axis" option) once we've seen what it looks like with
-// a lot of fields checked at once.
+// One Y axis per unit (or per field, with "Shared axes" off): fields that
+// measure the same thing — two soil moistures, several temperatures — share
+// an axis, so there are fewer axes and their lines are directly comparable.
+// An axis with one field is drawn in that field's color; a shared one in
+// neutral grey, and the legend says which line is which. The first axis is
+// on the left; the rest stack on the right, each shifted further out.
 const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-side axes, desktop baseline
 const MIN_AXIS_PX = 46;       // minimum real pixels reserved per stacked axis so its title text
                                // (e.g. "Soil 2 Moisture") doesn't run into the neighboring axis line
 const MIN_AXIS_PX_COMPACT = 30; // the same without titles: just room for the tick numbers
+const SHARED_AXIS_COLOR = '#8b949e';
 
 // Below this plot width (phones), each axis's sideways title costs too much
-// of the plot's width. Compact plots drop the titles and put the legend
-// above the plot instead, each entry in its line's (and axis's) color.
+// of the plot's width, so compact plots drop them (the legend above the plot
+// names the lines). Dragging on a phone scrolls the page rather than zooming
+// unless the Zoom button is on.
 const COMPACT_PLOT_PX = 600;
+
+let shareAxes = true;
+let zoomOnPhone = false;
+
+// What a shared axis is called: the unit the fields have in common.
+const UNIT_TITLES = {
+  m: 'Moisture', rh: 'Humidity (%)', lux: 'Light (lux)', uvi: 'UV index', voc: 'VOC (raw)',
+  soc: 'Charge (%)', v: 'Voltage (V)', ma: 'Current (mA)', mw: 'Power (mW)',
+};
+function unitTitle(key) {
+  return key === 'tmp' ? `Temperature (${useFahrenheit ? '°F' : '°C'})` : (UNIT_TITLES[key] || key);
+}
+
+// The fields grouped onto axes: [[field, ...], ...], one group per axis.
+function axisGroups(fields) {
+  if (!shareAxes) return fields.map(f => [f]);
+  const byKey = new Map();
+  for (const f of fields) {
+    if (!byKey.has(f.key)) byKey.set(f.key, []);
+    byKey.get(f.key).push(f);
+  }
+  return [...byKey.values()];
+}
+
+// Plotly's name for the axis a field's traces go on ('y', 'y2', ...).
+function axisRef(groups, f) {
+  const i = groups.findIndex(g => g.includes(f));
+  return i <= 0 ? 'y' : `y${i + 1}`;
+}
+
+function defaultAxisTitle(group) {
+  return group.length === 1 ? fieldLabel(group[0]) : unitTitle(group[0].key);
+}
 
 function analysisPlotWidth() {
   const plotEl = document.getElementById('analysis-plot');
   return (plotEl && plotEl.clientWidth) || 600;
 }
 
-// Plot traces with one color-matched Y axis per field (time series, trend,
-// rate of change), in the compact form on a narrow screen.
-function plotMultiAxis(traces, fields, titleFn) {
-  const compact = analysisPlotWidth() < COMPACT_PLOT_PX;
-  if (compact) {
-    // Plotly draws a little HTML in trace names: color each legend entry's
-    // text like its line, since the axis titles that named them are gone.
-    for (const t of traces) {
-      if (t.line && t.line.color) t.name = `<span style="color:${t.line.color}">${t.name}</span>`;
-    }
-  }
-  return Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields, titleFn, compact),
-                        { responsive: true, displaylogo: false, displayModeBar: !compact });
+// The last multi-axis plot, so it can be redrawn for a new width (a phone
+// turned sideways) or with zoom switched on, without fetching again.
+let lastMultiAxis = null;
+
+// Plot traces on their groups' axes (time series, trend, rate of change).
+function plotMultiAxis(traces, groups, titleFn = defaultAxisTitle) {
+  lastMultiAxis = { traces, groups, titleFn };
+  return drawMultiAxis();
 }
 
-function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f), compact = false) {
+function drawMultiAxis() {
+  const { traces, groups, titleFn } = lastMultiAxis;
+  const compact = analysisPlotWidth() < COMPACT_PLOT_PX;
+  document.getElementById('zoom-btn').style.display = compact ? '' : 'none';
+  // Plotly draws a little HTML in trace names: each legend entry's text is
+  // colored like its line, which is what ties a line to its name.
+  const colored = traces.map(t => (t.line && t.line.color)
+    ? { ...t, name: `<span style="color:${t.line.color}">${t.name}</span>` } : t);
+  const layout = buildTimeSeriesLayout(groups, titleFn, compact);
+  const zoomable = !compact || zoomOnPhone;
+  if (!zoomable) {
+    layout.dragmode = false;
+    for (const name of Object.keys(layout)) {
+      if (/^[xy]axis\d*$/.test(name)) layout[name] = { ...layout[name], fixedrange: true };
+    }
+  }
+  return Plotly.react('analysis-plot', colored, layout,
+                      { responsive: true, displaylogo: false, displayModeBar: !compact });
+}
+
+function toggleShareAxes() {
+  shareAxes = !shareAxes;
+  document.getElementById('share-axes-btn').classList.toggle('active', shareAxes);
+  if (['timeseries', 'trend', 'rate'].includes(analysisMode)) runAnalysisPlot();
+}
+
+function toggleZoom() {
+  zoomOnPhone = !zoomOnPhone;
+  document.getElementById('zoom-btn').classList.toggle('active', zoomOnPhone);
+  if (lastMultiAxis) drawMultiAxis();
+}
+
+// Redraw for the new width once a resize (or rotation) settles.
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (lastMultiAxis) drawMultiAxis(); }, 250);
+});
+
+function buildTimeSeriesLayout(groups, titleFn = defaultAxisTitle, compact = false) {
   const layout = { ...PLOTLY_LAYOUT_BASE };
-  const extraAxes = Math.max(0, fields.length - 1);
+  const extraAxes = Math.max(0, groups.length - 1);
 
   // EXTRA_AXIS_STEP is a *paper-fraction*, so the same value reserves fewer
   // and fewer actual pixels as the plot gets narrower (e.g. on mobile).
@@ -530,30 +607,25 @@ function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f), compact = f
   const plotWidth = analysisPlotWidth();
   const minAxisPx = compact ? MIN_AXIS_PX_COMPACT : MIN_AXIS_PX;
   const extraAxisStep = Math.max(compact ? 0 : EXTRA_AXIS_STEP, minAxisPx / plotWidth);
-  if (compact) {
-    layout.legend = { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom',
-                      font: { size: 10 } };
-    layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, l: 10, t: 10 };
-  }
 
-  // Reserve margin starting at the *first* right-side axis, not the second —
-  // previously this only kicked in once extraAxes > 1 (i.e. 3+ fields
-  // total), so with exactly one right axis (2 fields) its tick labels had
-  // no reserved room and collided with its own title.
-  const rightMargin = extraAxes >= 1 ? extraAxes * extraAxisStep : 0;
-
+  // The right-hand axes live in the plot's own area, which the x axis gives
+  // up for them (its domain ends at 1 - rightMargin); the last one's numbers
+  // end at the plot's right edge. So the page margin only needs a sliver —
+  // reserving their width there as well left an empty strip on the right.
+  const rightMargin = extraAxes * extraAxisStep;
   layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin],
                    ...(compact ? { nticks: 4 } : {}) };   // few enough to sit level, not slanted
-  layout.margin = { ...(layout.margin || PLOTLY_LAYOUT_BASE.margin), r: (compact ? 4 : 20) + rightMargin * plotWidth };
+  layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: compact ? 4 : 20, ...(compact ? { l: 10 } : {}) };
+  if (compact) layout.legend = { ...PLOTLY_LAYOUT_BASE.legend, font: { size: 10 } };
 
-  fields.forEach((f, i) => {
-    const color = fieldColor(f);
+  groups.forEach((group, i) => {
+    const color = group.length === 1 ? fieldColor(group[0]) : SHARED_AXIS_COLOR;
     const axisStyle = {
       gridcolor: i === 0 ? PLOTLY_LAYOUT_BASE.yaxis.gridcolor : 'transparent',
       linecolor: color,
       zerolinecolor: PLOTLY_LAYOUT_BASE.yaxis.zerolinecolor,
       tickfont: compact ? { color, size: 9 } : { color },
-      ...(compact ? { nticks: 5 } : { title: { text: titleFn(f), font: { color } } }),
+      ...(compact ? { nticks: 5 } : { title: { text: titleFn(group), font: { color } } }),
       // Without this, Plotly draws the title at a fixed offset from the axis
       // line regardless of how wide the tick labels render — fine once there
       // are enough stacked axes pushing everything outward, but with only
@@ -602,11 +674,12 @@ async function plotTimeSeries(start, end) {
   const traces = [];
   let anyPoints = false;
 
+  const groups = axisGroups(fields);
   fields.forEach((f, i) => {
     const { xs, ys: rawYs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const ys = convertForField(f, rawYs);
     if (xs.length) anyPoints = true;
-    const yaxis = i === 0 ? 'y' : `y${i + 1}`;
+    const yaxis = axisRef(groups, f);
     const color = fieldColor(f);
 
     if (showRawData) {
@@ -638,7 +711,7 @@ async function plotTimeSeries(start, end) {
 
   showAnalysisStatus(anyPoints ? '' : 'no data in that range for the selected field(s)', true);
 
-  plotMultiAxis(traces, fields);
+  plotMultiAxis(traces, groups);
 }
 
 async function plotScatter(start, end) {
@@ -848,10 +921,11 @@ async function plotTrend(start, end) {
   const traces = [];
   let anyFit = false;
 
+  const groups = axisGroups(fields);
   fields.forEach((f, i) => {
     const { xs, ys: rawYs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const ys = convertForField(f, rawYs);
-    const yaxis = i === 0 ? 'y' : `y${i + 1}`;
+    const yaxis = axisRef(groups, f);
     const color = fieldColor(f);
 
     // Faint raw points behind the fitted line so a straight line drawn
@@ -890,7 +964,7 @@ async function plotTrend(start, end) {
 
   showAnalysisStatus(anyFit ? '' : 'not enough data to fit a trend for the selected field(s)', true);
 
-  plotMultiAxis(traces, fields);
+  plotMultiAxis(traces, groups);
 }
 
 // First-difference rate of change, expressed as units-per-minute regardless
@@ -921,6 +995,7 @@ async function plotRateOfChange(start, end) {
   const traces = [];
   let anyPoints = false;
 
+  const groups = axisGroups(fields);
   fields.forEach((f, i) => {
     const { xs, ys: rawYs } = extractPoints(packetsBySeries[seriesKey(f)], f.key);
     const ys = convertForField(f, rawYs);
@@ -932,7 +1007,7 @@ async function plotRateOfChange(start, end) {
       type: 'scatter', mode: 'lines',
       name: fieldLabel(f),
       line: { color: fieldColor(f), width: 1.5 },
-      yaxis: i === 0 ? 'y' : `y${i + 1}`,
+      yaxis: axisRef(groups, f),
     });
   });
 
@@ -940,7 +1015,7 @@ async function plotRateOfChange(start, end) {
 
   // titleFn appends the unit so an axis reading "Soil 2 · Moisture (Δ/min)"
   // doesn't get mistaken for the raw-value axis it's derived from.
-  plotMultiAxis(traces, fields, f => `${fieldLabel(f)} (Δ/min)`);
+  plotMultiAxis(traces, groups, g => `${defaultAxisTitle(g)} (Δ/min)`);
 }
 
 // Standard Pearson correlation coefficient. Returns null rather than NaN
