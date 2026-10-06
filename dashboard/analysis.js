@@ -38,7 +38,8 @@ const FIELD_DEFS = [
   { type: 'pw3',  key: 'mw',  label: 'Battery 3 · Wattage' },
 ];
 
-const FIELD_COLORS = ['#39d0c4', '#58a6ff', '#bc8cff', '#d29922', '#3fb950', '#f85149', '#8b949e', '#56d364'];
+// Eight colors that stay clearly apart on the dark background (no two greens).
+const FIELD_COLORS = ['#39d0c4', '#58a6ff', '#bc8cff', '#d29922', '#3fb950', '#f85149', '#ff9bce', '#c9d1d9'];
 
 // Field ids are "<node>.<sensor_type>.<key>", e.g. "2.batt.soc".
 function makeField(node, def) {
@@ -54,7 +55,35 @@ function fieldById(id) { return analysisFields.find(f => f.id === id); }
 // its position in the currently-available list) so a field's color stays
 // stable regardless of which other fields have data. Node identity is shown
 // by the checkbox grouping and the "· Pico"/"· M0" in every label instead.
-function fieldColor(f) { return FIELD_COLORS[(f.def + f.node * 3) % FIELD_COLORS.length]; }
+function baseFieldColor(f) { return FIELD_COLORS[(f.def + f.node * 3) % FIELD_COLORS.length]; }
+
+// With 8 colors and dozens of fields, two checked fields can share a base
+// color — and the colors are how lines are told apart (on a phone the legend
+// is the only key). So the checked fields pick colors together: each keeps
+// its own unless an earlier checked field already has it, then takes the
+// next free one. Their checkbox swatches follow, so swatch, line, axis and
+// legend always agree.
+let checkedColors = new Map();
+
+function fieldColor(f) { return checkedColors.get(f.id) || baseFieldColor(f); }
+
+function assignCheckedColors() {
+  checkedColors = new Map();
+  const used = new Set();
+  for (const f of analysisFields) {
+    if (!tsSelectedFields.has(f.id)) continue;
+    let i = FIELD_COLORS.indexOf(baseFieldColor(f));
+    for (let tries = 0; tries < FIELD_COLORS.length && used.has(FIELD_COLORS[i]); tries++) {
+      i = (i + 1) % FIELD_COLORS.length;
+    }
+    checkedColors.set(f.id, FIELD_COLORS[i]);
+    used.add(FIELD_COLORS[i]);
+  }
+  document.querySelectorAll('.field-chip').forEach(chip => {
+    const f = fieldById(chip.dataset.field);
+    if (f) chip.style.setProperty('--field-color', fieldColor(f));
+  });
+}
 
 // Every field whose raw key is "tmp" is a temperature reading (soil ×3,
 // ambient, radio module) and is affected by the °C/°F toggle. `useFahrenheit`,
@@ -252,6 +281,7 @@ function toggleField(id, checked) {
   if (checked) tsSelectedFields.add(id); else tsSelectedFields.delete(id);
   const chip = document.querySelector(`.field-chip[data-field="${id}"]`);
   if (chip) chip.classList.toggle('checked', checked);
+  assignCheckedColors();
 }
 
 function buildFieldPicker() {
@@ -260,6 +290,7 @@ function buildFieldPicker() {
   // A field that was checked (e.g. from a saved default) but turns out to have
   // no data shouldn't silently stay "selected" with no checkbox to uncheck it.
   [...tsSelectedFields].forEach(id => { if (!fields.some(f => f.id === id)) tsSelectedFields.delete(id); });
+  assignCheckedColors();
 
   // One row per node, tinted in that node's color.
   const wrap = document.getElementById('ts-field-picker');
@@ -460,8 +491,34 @@ async function runAnalysisPlot() {
 const EXTRA_AXIS_STEP = 0.07; // paper-coordinate spacing between stacked right-side axes, desktop baseline
 const MIN_AXIS_PX = 46;       // minimum real pixels reserved per stacked axis so its title text
                                // (e.g. "Soil 2 Moisture") doesn't run into the neighboring axis line
+const MIN_AXIS_PX_COMPACT = 30; // the same without titles: just room for the tick numbers
 
-function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f)) {
+// Below this plot width (phones), each axis's sideways title costs too much
+// of the plot's width. Compact plots drop the titles and put the legend
+// above the plot instead, each entry in its line's (and axis's) color.
+const COMPACT_PLOT_PX = 600;
+
+function analysisPlotWidth() {
+  const plotEl = document.getElementById('analysis-plot');
+  return (plotEl && plotEl.clientWidth) || 600;
+}
+
+// Plot traces with one color-matched Y axis per field (time series, trend,
+// rate of change), in the compact form on a narrow screen.
+function plotMultiAxis(traces, fields, titleFn) {
+  const compact = analysisPlotWidth() < COMPACT_PLOT_PX;
+  if (compact) {
+    // Plotly draws a little HTML in trace names: color each legend entry's
+    // text like its line, since the axis titles that named them are gone.
+    for (const t of traces) {
+      if (t.line && t.line.color) t.name = `<span style="color:${t.line.color}">${t.name}</span>`;
+    }
+  }
+  return Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields, titleFn, compact),
+                        { responsive: true, displaylogo: false, displayModeBar: !compact });
+}
+
+function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f), compact = false) {
   const layout = { ...PLOTLY_LAYOUT_BASE };
   const extraAxes = Math.max(0, fields.length - 1);
 
@@ -470,9 +527,14 @@ function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f)) {
   // Read the plot's real rendered width and widen the step when needed so
   // every stacked axis keeps at least MIN_AXIS_PX of room regardless of
   // screen size.
-  const plotEl = document.getElementById('analysis-plot');
-  const plotWidth = (plotEl && plotEl.clientWidth) || 600;
-  const extraAxisStep = Math.max(EXTRA_AXIS_STEP, MIN_AXIS_PX / plotWidth);
+  const plotWidth = analysisPlotWidth();
+  const minAxisPx = compact ? MIN_AXIS_PX_COMPACT : MIN_AXIS_PX;
+  const extraAxisStep = Math.max(compact ? 0 : EXTRA_AXIS_STEP, minAxisPx / plotWidth);
+  if (compact) {
+    layout.legend = { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom',
+                      font: { size: 10 } };
+    layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, l: 10, t: 10 };
+  }
 
   // Reserve margin starting at the *first* right-side axis, not the second —
   // previously this only kicked in once extraAxes > 1 (i.e. 3+ fields
@@ -480,8 +542,9 @@ function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f)) {
   // no reserved room and collided with its own title.
   const rightMargin = extraAxes >= 1 ? extraAxes * extraAxisStep : 0;
 
-  layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin] };
-  layout.margin = { ...PLOTLY_LAYOUT_BASE.margin, r: 20 + rightMargin * plotWidth };
+  layout.xaxis = { ...PLOTLY_LAYOUT_BASE.xaxis, domain: [0, 1 - rightMargin],
+                   ...(compact ? { nticks: 4 } : {}) };   // few enough to sit level, not slanted
+  layout.margin = { ...(layout.margin || PLOTLY_LAYOUT_BASE.margin), r: (compact ? 4 : 20) + rightMargin * plotWidth };
 
   fields.forEach((f, i) => {
     const color = fieldColor(f);
@@ -489,8 +552,8 @@ function buildTimeSeriesLayout(fields, titleFn = f => fieldLabel(f)) {
       gridcolor: i === 0 ? PLOTLY_LAYOUT_BASE.yaxis.gridcolor : 'transparent',
       linecolor: color,
       zerolinecolor: PLOTLY_LAYOUT_BASE.yaxis.zerolinecolor,
-      tickfont: { color },
-      title: { text: titleFn(f), font: { color } },
+      tickfont: compact ? { color, size: 9 } : { color },
+      ...(compact ? { nticks: 5 } : { title: { text: titleFn(f), font: { color } } }),
       // Without this, Plotly draws the title at a fixed offset from the axis
       // line regardless of how wide the tick labels render — fine once there
       // are enough stacked axes pushing everything outward, but with only
@@ -575,7 +638,7 @@ async function plotTimeSeries(start, end) {
 
   showAnalysisStatus(anyPoints ? '' : 'no data in that range for the selected field(s)', true);
 
-  Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
+  plotMultiAxis(traces, fields);
 }
 
 async function plotScatter(start, end) {
@@ -827,7 +890,7 @@ async function plotTrend(start, end) {
 
   showAnalysisStatus(anyFit ? '' : 'not enough data to fit a trend for the selected field(s)', true);
 
-  Plotly.newPlot('analysis-plot', traces, buildTimeSeriesLayout(fields), { responsive: true, displaylogo: false });
+  plotMultiAxis(traces, fields);
 }
 
 // First-difference rate of change, expressed as units-per-minute regardless
@@ -877,8 +940,7 @@ async function plotRateOfChange(start, end) {
 
   // titleFn appends the unit so an axis reading "Soil 2 · Moisture (Δ/min)"
   // doesn't get mistaken for the raw-value axis it's derived from.
-  const layout = buildTimeSeriesLayout(fields, f => `${fieldLabel(f)} (Δ/min)`);
-  Plotly.newPlot('analysis-plot', traces, layout, { responsive: true, displaylogo: false });
+  plotMultiAxis(traces, fields, f => `${fieldLabel(f)} (Δ/min)`);
 }
 
 // Standard Pearson correlation coefficient. Returns null rather than NaN
