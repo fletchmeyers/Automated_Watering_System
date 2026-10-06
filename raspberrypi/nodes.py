@@ -69,8 +69,12 @@ class NodeConfigError(ValueError):
     pass
 
 
-def load_nodes(path=NODES_FILE):
-    '''Return {node_id: settings} from nodes.json, checked; raises NodeConfigError.'''
+def load_nodes(path=NODES_FILE, skip_invalid=False):
+    '''
+    Return {node_id: settings} from nodes.json, checked; raises NodeConfigError.
+    With skip_invalid, a node with a mistake in it is left out (with a
+    warning) instead — so main.py keeps polling the others.
+    '''
     try:
         data = json.loads(Path(path).read_text())
     except (OSError, ValueError) as e:
@@ -82,13 +86,21 @@ def load_nodes(path=NODES_FILE):
     nodes = {}
     for key, node in raw.items():
         try:
-            node_id = int(key)
-        except ValueError:
-            raise NodeConfigError(f'Node ID "{key}" is not a number')
-        if not 1 <= node_id <= 254:
-            raise NodeConfigError(f"Node ID {node_id} must be 1-254")
-        check_node(node_id, node)
+            try:
+                node_id = int(key)
+            except ValueError:
+                raise NodeConfigError(f'Node ID "{key}" is not a number')
+            if not 1 <= node_id <= 254:
+                raise NodeConfigError(f"Node ID {node_id} must be 1-254")
+            check_node(node_id, node)
+        except NodeConfigError as e:
+            if not skip_invalid:
+                raise
+            print(f"[NODES] Skipping a node in {Path(path).name}: {e}")
+            continue
         nodes[node_id] = node
+    if not nodes:
+        raise NodeConfigError(f"{path} has no usable nodes")
     return dict(sorted(nodes.items()))
 
 

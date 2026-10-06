@@ -310,6 +310,17 @@ sleep command turns the radio off but keeps the chip awake. A board with
 no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 
+**Bench testing** — don't add test boards to `nodes.json` (`main.py` would
+start polling them). `tests/hardware_tests/` has bench files with the same
+board IDs (9–12) as Arduino or CircuitPython nodes; point the script at one:
+
+```bash
+python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_arduino.json --node 9
+```
+
+A node with a mistake in `nodes.json` is skipped (with a warning) rather
+than stopping `main.py` or `node_setup.py` from running for the others.
+
 The dashboard reads node names, colors and battery labels from
 `nodes.json` too, so a new node needs no other edits: restart
 `garden-sensor` on the Pi so it starts polling it.

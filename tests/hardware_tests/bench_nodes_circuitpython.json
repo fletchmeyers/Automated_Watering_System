@@ -1,0 +1,31 @@
+{
+  "_about": "Bench test boards (no radio, no sensors) set up as CircuitPython nodes. Use with: python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_circuitpython.json. bench_nodes_arduino.json has the same boards and IDs as Arduino nodes, so a board can be switched back and forth. Not read by main.py.",
+
+  "nodes": {
+    "9": {
+      "name": "Bench Pico", "framework": "circuitpython", "board": "pico",
+      "sense_interval_s": 3, "log_interval_s": 60, "storage": "none",
+      "pins": {"spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
+               "radio_cs": "GP22", "radio_rst": "GP27"}
+    },
+    "10": {
+      "name": "Bench Pico 2", "framework": "circuitpython", "board": "pico2",
+      "sense_interval_s": 3, "log_interval_s": 60, "storage": "none",
+      "pins": {"spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
+               "radio_cs": "GP22", "radio_rst": "GP27"}
+    },
+    "11": {
+      "name": "Bench Pico W", "framework": "circuitpython", "board": "picow",
+      "sense_interval_s": 3, "log_interval_s": 60, "storage": "none",
+      "pins": {"spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
+               "radio_cs": "GP22", "radio_rst": "GP27"}
+    },
+    "12": {
+      "name": "Bench Adalogger", "framework": "circuitpython", "board": "feather_rp2040_adalogger",
+      "sense_interval_s": 3, "log_interval_s": 60, "storage": "sd",
+      "pins": {"spi_sck": "SCK", "spi_mosi": "MOSI", "spi_miso": "MISO",
+               "radio_cs": "D10", "radio_rst": "D11",
+               "sd_cs": "SD_CS", "sd_sck": "SD_SCK", "sd_mosi": "SD_MOSI", "sd_miso": "SD_MISO"}
+    }
+  }
+}
