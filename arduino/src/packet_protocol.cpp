@@ -201,12 +201,9 @@ uint32_t clock_now() {
 }
 
 // ── Command receive/dispatch ─────────────────────────────────────────────
-bool check_for_usb_command(JsonDocument &out) {
-  static char line[160];
-  static size_t len = 0;
-  static bool overflow = false;   // dropping a line too long to be a command
-  while (Serial.available()) {
-    char c = Serial.read();
+bool LineReader::read(Stream &in, JsonDocument &out) {
+  while (in.available()) {
+    char c = in.read();
     if (c == '\n' || c == '\r') {
       bool complete = len > 0 && !overflow && line[0] == '{';
       size_t n = len;
@@ -215,7 +212,7 @@ bool check_for_usb_command(JsonDocument &out) {
       if (!complete) continue;
       DeserializationError err = deserializeJson(out, line, n);
       if (err) {
-        Serial.print(F("[USB] Could not parse command: "));
+        Serial.print(F("[CMD] Could not parse command line: "));
         Serial.println(err.c_str());
         continue;
       }
@@ -224,10 +221,15 @@ bool check_for_usb_command(JsonDocument &out) {
     if (len < sizeof(line)) {
       line[len++] = c;
     } else {
-      overflow = true;
+      overflow = true;   // dropping a line too long to be a command
     }
   }
   return false;
+}
+
+bool check_for_usb_command(JsonDocument &out) {
+  static LineReader usb_lines;
+  return usb_lines.read(Serial, out);
 }
 
 bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {

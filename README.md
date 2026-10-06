@@ -314,6 +314,20 @@ command turns the radio off but keeps the chip awake. A board with
 no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 
+**Wi-Fi nodes** — an ESP32 board indoors can skip the radio (and the SD
+card): give it `"link": "wifi"` in `nodes.json` and no `pins` at all. It
+joins the Pi's own Wi-Fi network and connects to the `garden-wifi` service
+(`raspberrypi/wifi_nodes.py`, installed by `deploy/install.sh`), which
+polls it every minute and stores its readings like a radio node's. The
+Pi stays in charge: the node only answers. `node_setup.py` sends the
+network name, password and the Pi's address to the board over USB after
+flashing it — they never go through git or the terminal — and the board
+keeps them in its own flash, so re-run `node_setup.py` if the Wi-Fi
+password or the Pi's address changes (it also looks the Pi up by name,
+`pi.local`, if the address moved). A Wi-Fi node has no log to sync, so
+readings from while the Pi or the Wi-Fi was down are lost. Check the
+service with `sudo journalctl -u garden-wifi -f`.
+
 **Bench testing** — don't add test boards to `nodes.json` (`main.py` would
 start polling them). `tests/hardware_tests/` has bench files with the same
 board IDs (9–12) as Arduino or CircuitPython nodes; point the script at one:

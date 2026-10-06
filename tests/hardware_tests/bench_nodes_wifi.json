@@ -1,0 +1,14 @@
+{
+  "_about": "The two ESP32 bench boards as Wi-Fi nodes (no radio). Same IDs as in bench_nodes_arduino.json, where they're radio nodes. To test: stop the garden-wifi service, run python3 wifi_nodes.py --nodes ../tests/hardware_tests/bench_nodes_wifi.json --no-store in one tmux window, and python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_wifi.json --node 13 in another. Not read by main.py.",
+
+  "nodes": {
+    "13": {
+      "name": "Bench ESP32-S2 (Wi-Fi)", "framework": "arduino", "board": "feather_esp32s2",
+      "link": "wifi", "sense_interval_s": 3, "log_interval_s": 60
+    },
+    "14": {
+      "name": "Bench ESP32 V2 (Wi-Fi)", "framework": "arduino", "board": "feather_esp32_v2",
+      "link": "wifi", "sense_interval_s": 3, "log_interval_s": 60
+    }
+  }
+}

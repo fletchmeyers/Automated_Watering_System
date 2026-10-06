@@ -21,7 +21,9 @@ gets it there, switching frameworks if needed:
     CircuitPython gets it first (the UF2 for its board from circuitpython.org).
   - Arduino on an RP2040/RP2350 board: builds a UF2 with this node's settings
     and copies it to the board's bootloader drive.
-  - Arduino on the Feather M0: builds and uploads over its serial port.
+  - Arduino on the Feather M0 or an ESP32: builds and uploads over its serial
+    port. A Wi-Fi node ("link": "wifi") is then sent the Pi's Wi-Fi network,
+    password and address over USB, and checked for connecting to garden-wifi.
 To reach the bootloader, a CircuitPython board is restarted from its console
 and an Arduino one with a 1200-baud touch; a blank Pico is already there.
 Arduino builds use PlatformIO (see README for the one-time install).
@@ -32,6 +34,7 @@ October 2026
 
 import argparse
 import glob
+import json
 import os
 import re
 import shutil
@@ -43,7 +46,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from nodes import (
-    NodeConfigError, NODES_FILE, load_nodes, circuitpython_config, circuitpython_uf2_url,
+    NodeConfigError, NODES_FILE, load_nodes, storage_of, link_of, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
 )
 
@@ -540,6 +543,81 @@ def confirm_running(node_id, framework="circuitpython", wait=8, timeout=40):
     return False
 
 
+# ── Wi-Fi nodes ──────────────────────────────────────────────────────────────
+
+def _nmcli(args, sudo=False):
+    '''One value from nmcli -g, with its escaping (\\: and \\\\) undone.'''
+    result = subprocess.run((["sudo"] if sudo else []) + ["nmcli"] + args,
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SetupError(f"nmcli {' '.join(args)} failed: {result.stderr.strip()}")
+    value = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    return value.replace("\\:", ":").replace("\\\\", "\\")
+
+
+def pi_address():
+    '''The Pi's own address on the local network (no packets are sent).'''
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("192.0.2.1", 9))   # a documentation-only address: picks the outgoing interface
+        return s.getsockname()[0]
+
+
+def wifi_settings():
+    '''What a Wi-Fi node needs: the network the Pi itself is on (and its
+    password, from NetworkManager — needs sudo), and where to find the Pi.'''
+    import socket
+    from wifi_nodes import WIFI_PORT
+    connection = _nmcli(["-g", "GENERAL.CONNECTION", "device", "show", "wlan0"])
+    if not connection:
+        raise SetupError("The Pi isn't on Wi-Fi itself (wlan0 has no connection), "
+                         "so there's no network to give the node.")
+    return {
+        "s": _nmcli(["-s", "-g", "802-11-wireless.ssid", "connection", "show", "id", connection]),
+        "p": _nmcli(["-s", "-g", "802-11-wireless-security.psk", "connection", "show", "id", connection],
+                    sudo=True),
+        "h": pi_address(),
+        "hn": socket.gethostname(),
+        "port": WIFI_PORT,
+    }
+
+
+def setup_wifi(node_id, timeout=60):
+    '''Send a freshly flashed Wi-Fi node the network settings over USB (they
+    never touch git or the terminal), then wait for it to reach garden-wifi.'''
+    from usb_sync import UsbNode, open_port
+    from wifi_nodes import STATUS_FILE
+    settings = wifi_settings()
+    _, port = ask_node(serial_ports(), quiet=True)
+    if port is None:
+        raise SetupError("Couldn't reach the node over USB to give it the Wi-Fi settings.")
+    print(f"[SETUP] Sending node {node_id} the Wi-Fi settings for \"{settings['s']}\" "
+          f"(Pi at {settings['h']}:{settings['port']})...")
+    node = UsbNode(open_port(port))
+    try:
+        ack, _ = node.ask({"t": "wifi_config", **settings}, "wifi_config_ack", timeout=10)
+    finally:
+        node.port.close()
+    if ack is None or not ack.get("ok"):
+        raise SetupError("The node didn't confirm the Wi-Fi settings.")
+
+    print(f"[SETUP] Waiting for node {node_id} to connect over Wi-Fi (up to {timeout}s)...")
+    def connected():
+        try:
+            return json.loads(Path(STATUS_FILE).read_text()).get(str(node_id))
+        except (OSError, ValueError):
+            return None
+    link = wait_until(connected, timeout=timeout, interval=2)
+    if link:
+        print(f"[SETUP] Node {node_id} is connected over Wi-Fi from {link['ip']}; "
+              "the Pi polls it every minute.")
+    else:
+        print(f"[SETUP] Node {node_id} hasn't connected yet. Check the Pi's side with\n"
+              "          sudo journalctl -u garden-wifi -n 30\n"
+              "        and the node's own output with\n"
+              "          python3 -m serial.tools.miniterm /dev/ttyACM0 115200")
+
+
 def run(args):
     # Another node's mistake shouldn't stop this one being set up: skip it.
     nodes = load_nodes(args.nodes, skip_invalid=True)
@@ -577,9 +655,13 @@ def run(args):
                              f"{board}. A {node['board']} is only set up from its serial port.")
         checked = update_arduino(node_id, node, board.port, args.dry_run)
 
-    if checked:
-        confirm_running(node_id, target, wait=12 if board.framework != target else 8)
-    if not args.dry_run and board.node_id != node_id:
+    running = checked and confirm_running(node_id, target, wait=12 if board.framework != target else 8)
+    if link_of(node) == "wifi":
+        if args.dry_run:
+            print("[SETUP] Would then send it the Pi's Wi-Fi network, password and address over USB.")
+        elif running:
+            setup_wifi(node_id)
+    elif not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-sensor")
 
@@ -588,7 +670,7 @@ def list_nodes(path):
     for node_id, node in load_nodes(path, skip_invalid=True).items():
         sleep = node.get("sleep_window")
         print(f"  {node_id}: {node['name']:<24} {node['framework']:<13} {node['board']:<24} "
-              f"log every {node['log_interval_s']}s to {node.get('storage', 'sd')}"
+              f"log every {node['log_interval_s']}s to {storage_of(node)}, over {link_of(node)}"
               + (f", asleep {sleep[0]}-{sleep[1]}" if sleep else ""))
 
 

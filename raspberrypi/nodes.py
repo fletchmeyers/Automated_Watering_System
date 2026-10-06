@@ -21,6 +21,12 @@ NODES_FILE = Path(__file__).parent.parent / "nodes.json"
 FRAMEWORKS = ("circuitpython", "arduino")
 STORAGE    = ("sd", "flash", "none")
 
+# How a node talks to the Pi: the RFM69 radio (main.py), or Wi-Fi to the
+# garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins, keep
+# no log by default (nothing to sync once the Pi is reachable again), and
+# don't sleep. So far Wi-Fi means Arduino on an ESP32 board.
+LINKS = ("radio", "wifi")
+
 # Boards a node can be, by the "board" value in nodes.json:
 #   chip          — which UF2 bootloader drive it shows (BOOTLOADER_DRIVES)
 #   circuitpython — its board ID on circuitpython.org, or None if not supported
@@ -138,7 +144,16 @@ def check_node(node_id, node):
         if not isinstance(value, int) or value <= 0:
             fail(f'"{field}" must be a whole number of seconds above 0')
 
-    storage = node.get("storage", "sd")
+    link = link_of(node)
+    if link not in LINKS:
+        fail(f'link must be one of {", ".join(LINKS)}, not "{link}"')
+    if link == "wifi":
+        if framework != "arduino" or board["chip"] not in ESP32_CHIPS:
+            fail("Wi-Fi nodes are Arduino on an ESP32 board so far")
+        if node.get("sleep_window"):
+            fail("a Wi-Fi node doesn't sleep (sleep_window is for radio nodes)")
+
+    storage = storage_of(node)
     if storage not in STORAGE:
         fail(f'storage must be one of {", ".join(STORAGE)}, not "{storage}"')
     if storage == "flash" and (framework != "arduino" or board["chip"] != "samd21"):
@@ -146,10 +161,11 @@ def check_node(node_id, node):
     if "rtc" in node and node["rtc"] not in RTCS:
         fail(f'rtc must be one of {", ".join(RTCS)}, or left out for no RTC chip')
 
-    pins = node.get("pins")
+    pins = node.get("pins", {} if link == "wifi" else None)
     if not isinstance(pins, dict):
         fail('needs a "pins" section')
-    for pin in REQUIRED_PINS[framework]:
+    required = REQUIRED_PINS[framework] if link == "radio" else ()
+    for pin in required:
         if pin not in pins:
             fail(f'needs pin "{pin}"')
     if storage == "sd" and "sd_cs" not in pins:
@@ -182,15 +198,33 @@ def check_node(node_id, node):
             fail('sleep_window must be ["HH:MM", "HH:MM"]')
 
 
-# ── What main.py needs ───────────────────────────────────────────────────────
+def link_of(node):
+    return node.get("link", "radio")
+
+
+def storage_of(node):
+    '''Where a node logs readings: an SD card unless it says otherwise, or
+    nothing at all for a Wi-Fi node unless it says otherwise.'''
+    return node.get("storage", "none" if link_of(node) == "wifi" else "sd")
+
+
+# ── What main.py and wifi_nodes.py need ──────────────────────────────────────
+
+def radio_node_ids(nodes):
+    return [n for n, node in nodes.items() if link_of(node) == "radio"]
+
+
+def wifi_node_ids(nodes):
+    return [n for n, node in nodes.items() if link_of(node) == "wifi"]
+
 
 def sleep_windows(nodes):
     return {n: tuple(node["sleep_window"]) for n, node in nodes.items() if node.get("sleep_window")}
 
 
 def sync_node_ids(nodes):
-    '''Nodes that keep a reading log for the Pi to pull.'''
-    return [n for n, node in nodes.items() if node.get("storage", "sd") != "none"]
+    '''Radio nodes that keep a reading log for the Pi to pull.'''
+    return [n for n in radio_node_ids(nodes) if storage_of(nodes[n]) != "none"]
 
 
 # ── What the nodes need ──────────────────────────────────────────────────────
@@ -205,7 +239,7 @@ def circuitpython_config(node_id, node):
         f"NODE_ID = {node_id}\n"
         f"SENSE_INTERVAL = {node['sense_interval_s']}\n"
         f"LOG_INTERVAL = {node['log_interval_s']}\n"
-        f"USE_SD = {node.get('storage', 'sd') == 'sd'}\n"
+        f"USE_SD = {storage_of(node) == 'sd'}\n"
         f"PINS = {{\n{pins},\n}}\n"
     )
 
@@ -223,13 +257,15 @@ def arduino_env(node):
 
 def arduino_build_flags(node_id, node):
     '''-D flags for PlatformIO, overriding board_config_*.h's defaults for this node.'''
-    pins = node["pins"]
-    storage = node.get("storage", "sd")
-    flags = [
-        f"-D NODE_ID={node_id}",
-        f"-D RFM69_CS={pins['radio_cs']}",
-        f"-D RFM69_INT={pins['radio_irq']}",
-        f"-D RFM69_RST={pins['radio_rst']}",
+    pins = node.get("pins", {})
+    storage = storage_of(node)
+    flags = [f"-D NODE_ID={node_id}"]
+    if link_of(node) == "wifi":
+        flags.append("-D NODE_LINK_WIFI")       # no radio; see wifi_link.h
+    else:
+        flags += [f"-D RFM69_CS={pins['radio_cs']}", f"-D RFM69_INT={pins['radio_irq']}",
+                  f"-D RFM69_RST={pins['radio_rst']}"]
+    flags += [
         f"-D DEFAULT_SENSE_INTERVAL_MS={node['sense_interval_s'] * 1000}UL",
         f"-D LOG_INTERVAL_MS={node['log_interval_s'] * 1000}UL",
         f"-D LOG_BACKEND={ {'sd': 'LOG_SD', 'flash': 'LOG_FLASH_SAMD', 'none': 'LOG_NONE'}[storage] }",

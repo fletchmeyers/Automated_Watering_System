@@ -17,6 +17,7 @@
 #include "board_config.h"
 #include "packet_protocol.h"
 #include "node_sleep.h"
+#include "wifi_link.h"   // empty unless built with -D NODE_LINK_WIFI
 
 RH_RF69 rf69(RFM69_CS, RFM69_INT);
 PacketSender sender(NODE_ID, &rf69);
@@ -43,6 +44,11 @@ void setup() {
   digitalWrite(SD_CS, HIGH);
 #endif
 
+#ifdef NODE_LINK_WIFI
+  // A Wi-Fi node has no radio: it talks to the Pi over Wi-Fi (wifi_link.h).
+  Serial.println(F("[BOOT] Wi-Fi node: no radio."));
+  wifi_link_begin();
+#else
   pinMode(RFM69_RST, OUTPUT);
   digitalWrite(RFM69_RST, LOW);
   digitalWrite(RFM69_RST, HIGH);
@@ -72,6 +78,7 @@ void setup() {
     rf69.setEncryptionKey((uint8_t *)RADIO_ENCRYPT_KEY);
     rf69.setTxPower(20, true); // RFM69HCW maximum, same as the Pi and Pico
   }
+#endif
 
   init_sensors();
   clock_begin();
@@ -108,13 +115,32 @@ void loop() {
     }
   }
 
+#ifdef NODE_LINK_WIFI
+  // ── Wi-Fi commands from the Pi (replies go back over the same link) ───
+  JsonDocument wifi_command;
+  if (wifi_link_poll(wifi_command)) {
+    long new_interval_ms = dispatch_command(wifi_command, wifi_sender(), rf69, NODE_ID);
+    if (new_interval_ms > 0) {
+      sense_interval_ms = new_interval_ms;
+    }
+  }
+#endif
+
   // ── USB commands (replies go back over USB, not the radio) ────────────
   JsonDocument usb_command;
   if (check_for_usb_command(usb_command)) {
     if (usb_command["n"].isNull()) usb_command["n"] = NODE_ID;  // over a cable, it can only be for us
-    long new_interval_ms = dispatch_command(usb_command, usb_sender, rf69, NODE_ID);
-    if (new_interval_ms > 0) {
-      sense_interval_ms = new_interval_ms;
+#ifdef NODE_LINK_WIFI
+    // Wi-Fi settings are only ever taken over the cable.
+    if (strcmp(usb_command["t"] | "", "wifi_config") == 0) {
+      handle_wifi_config(usb_command, usb_sender);
+    } else
+#endif
+    {
+      long new_interval_ms = dispatch_command(usb_command, usb_sender, rf69, NODE_ID);
+      if (new_interval_ms > 0) {
+        sense_interval_ms = new_interval_ms;
+      }
     }
   }
 
