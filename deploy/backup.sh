@@ -8,7 +8,7 @@
 #
 # Use --stop when moving to a new card, so no readings arrive after the
 # snapshot and get left behind on the old card. Bring the services back
-# with: sudo systemctl start garden-sensor garden-api
+# with: sudo systemctl start garden-sensor garden-api garden-wifi
 #
 # Writes ~/garden_backup_<date>.tar.gz containing:
 #   data/        sensors.db (a consistent .backup snapshot), node_info.json,
@@ -34,7 +34,7 @@ trap 'sudo rm -rf "$WORK"' EXIT
 
 if [ "$1" = "--stop" ]; then
     echo "== Stopping services (they stay stopped)"
-    sudo systemctl stop garden-sensor garden-api
+    sudo systemctl stop garden-sensor garden-api garden-wifi 2>/dev/null || true
 fi
 
 echo "== Data"

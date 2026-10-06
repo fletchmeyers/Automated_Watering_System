@@ -1,0 +1,18 @@
+[Unit]
+Description=Garden Wi-Fi nodes (polls nodes on Wi-Fi instead of the radio)
+After=network.target
+
+[Service]
+Type=simple
+User=<username>
+WorkingDirectory=/home/<username>/Automated_Watering_System/raspberrypi
+# Write each print() to the journal immediately, so journalctl shows when it
+# actually happened rather than when Python's output buffer next filled.
+Environment=PYTHONUNBUFFERED=1
+# No hardware access needed, so the system Python (not the radio venv).
+ExecStart=/usr/bin/python3 /home/<username>/Automated_Watering_System/raspberrypi/wifi_nodes.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -25,7 +25,7 @@ from communication_indoor import (
 )
 
 import db
-from nodes import load_nodes, sleep_windows, sync_node_ids
+from nodes import load_nodes, radio_node_ids, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Nodes come from nodes.json at the repo root (add a node there, then restart).
@@ -33,7 +33,7 @@ from nodes import load_nodes, sleep_windows, sync_node_ids
 # node logs a reading every 5 minutes while asleep and the next day's sync
 # collects them. Nodes with "storage": "none" keep no log, so aren't synced.
 NODES         = load_nodes(skip_invalid=True)   # a broken entry is skipped, not fatal
-NODE_IDS      = list(NODES)
+NODE_IDS      = radio_node_ids(NODES)   # Wi-Fi nodes are polled by wifi_nodes.py
 SLEEP_WINDOWS = sleep_windows(NODES)
 SYNC_NODE_IDS = sync_node_ids(NODES)
 

@@ -68,7 +68,7 @@ fi
 # ── 2. System packages, SPI and I2C ──────────────────────────────────────────
 step "System packages"
 sudo apt-get update -q
-sudo apt-get install -y -q git sqlite3 swig liblgpio-dev python3-dev python3-venv python3-pip i2c-tools exfatprogs python3-serial
+sudo apt-get install -y -q git sqlite3 swig liblgpio-dev python3-dev python3-venv python3-pip i2c-tools exfatprogs python3-serial tmux
 
 step "Interfaces"
 # 0 means "enable" for raspi-config's non-interactive mode. SPI is for the
@@ -92,7 +92,7 @@ pip install -q --user flask flask-cors requests gunicorn --break-system-packages
 CF_DIR=""
 if [ -n "$RESTORE" ]; then
     step "Restoring $RESTORE"
-    sudo systemctl stop garden-sensor garden-api 2>/dev/null || true
+    sudo systemctl stop garden-sensor garden-api garden-wifi 2>/dev/null || true
     BUNDLE=$(mktemp -d)
     trap 'sudo rm -rf "$BUNDLE"' EXIT
     sudo tar -xzf "$RESTORE" -C "$BUNDLE"

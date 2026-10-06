@@ -153,8 +153,19 @@ bool parse_iso(const char *ts, uint32_t *epoch);  // false if ts isn't that form
 // or an empty/null document otherwise. Non-blocking beyond `timeout_ms`.
 bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out);
 
-// The same, for commands the Pi sends over USB (usb_sync.py): one JSON
-// object per line. Never waits — returns false until a whole line is in.
+// Commands that arrive as one JSON object per line on a stream (USB serial,
+// or the Wi-Fi link's connection to the Pi). Never waits: read() returns
+// false until a whole line is in, keeping a partial line for next time.
+class LineReader {
+  public:
+    bool read(Stream &in, JsonDocument &out);
+  private:
+    char line[160];
+    size_t len = 0;
+    bool overflow = false;
+};
+
+// The same, for commands the Pi sends over USB (usb_sync.py, node_setup.py).
 bool check_for_usb_command(JsonDocument &out);
 
 // Returns a new sense-interval in ms if a set_interval command changed it,
