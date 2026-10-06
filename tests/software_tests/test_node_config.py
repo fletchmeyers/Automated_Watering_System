@@ -316,7 +316,7 @@ class Recorder:
     '''Stands in for the flashing functions and records which one run() chose.'''
     def __init__(self, monkeypatch, board, nodes):
         self.calls = []
-        monkeypatch.setattr(node_setup, "load_nodes", lambda: nodes)
+        monkeypatch.setattr(node_setup, "load_nodes", lambda *a, **k: nodes)
         monkeypatch.setattr(node_setup, "detect", lambda args: board)
         for name in ("update_circuitpython", "install_circuitpython", "flash_arduino_uf2", "update_arduino"):
             monkeypatch.setattr(node_setup, name, self._record(name))
@@ -331,7 +331,8 @@ class Recorder:
 
 def args(**kw):
     import types
-    return types.SimpleNamespace(**{"node": None, "install": False, "port": None, "dry_run": False, **kw})
+    return types.SimpleNamespace(**{"node": None, "install": False, "port": None, "dry_run": False,
+                                    "nodes": "nodes.json", **kw})
 
 
 def test_a_circuitpython_pico_set_to_arduino_is_flashed_by_uf2(monkeypatch):
@@ -383,3 +384,24 @@ def test_entering_the_bootloader_uses_the_console_or_a_1200_baud_touch(monkeypat
 def test_a_uf2_for_the_wrong_chip_is_refused(tmp_path):
     with pytest.raises(node_setup.SetupError, match="rp2350"):
         node_setup.copy_uf2("RP2350", tmp_path / "firmware.uf2", 9, rp2_node())
+
+
+# ── A bad entry, and the bench files ─────────────────────────────────────────
+
+def test_a_bad_entry_is_skipped_for_main_py_but_reported_by_default(tmp_path):
+    path = tmp_path / "nodes.json"
+    bad = dict(real()[1], board="feather_esp32s2")          # CircuitPython isn't supported there
+    path.write_text(json.dumps({"nodes": {"1": real()[1], "13": bad}}))
+    with pytest.raises(NodeConfigError, match="Node 13"):
+        load_nodes(path)
+    assert list(load_nodes(path, skip_invalid=True)) == [1]   # the radio loop keeps node 1
+
+
+def test_bench_files_are_valid_and_match_each_other():
+    from pathlib import Path
+    folder = Path(__file__).parent.parent / "hardware_tests"
+    arduino = load_nodes(folder / "bench_nodes_arduino.json")
+    circuitpython = load_nodes(folder / "bench_nodes_circuitpython.json")
+    assert list(arduino) == list(circuitpython)
+    assert all(arduino[n]["board"] == circuitpython[n]["board"] for n in arduino)
+    assert not set(arduino) & set(real())                    # no clash with real nodes

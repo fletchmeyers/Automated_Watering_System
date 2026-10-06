@@ -32,7 +32,7 @@ from nodes import load_nodes, sleep_windows, sync_node_ids
 # Sleep windows: node ID -> ("start", "end") in the Pi's local time; the
 # node logs a reading every 5 minutes while asleep and the next day's sync
 # collects them. Nodes with "storage": "none" keep no log, so aren't synced.
-NODES         = load_nodes()
+NODES         = load_nodes(skip_invalid=True)   # a broken entry is skipped, not fatal
 NODE_IDS      = list(NODES)
 SLEEP_WINDOWS = sleep_windows(NODES)
 SYNC_NODE_IDS = sync_node_ids(NODES)

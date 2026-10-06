@@ -43,7 +43,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from nodes import (
-    NodeConfigError, load_nodes, circuitpython_config, circuitpython_uf2_url,
+    NodeConfigError, NODES_FILE, load_nodes, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
 )
 
@@ -541,7 +541,8 @@ def confirm_running(node_id, framework="circuitpython", wait=8, timeout=40):
 
 
 def run(args):
-    nodes = load_nodes()
+    # Another node's mistake shouldn't stop this one being set up: skip it.
+    nodes = load_nodes(args.nodes, skip_invalid=True)
     board = detect(args)
     print(f"[SETUP] Found {board}.")
 
@@ -552,7 +553,8 @@ def run(args):
     if args.node and board.node_id and args.node != board.node_id:
         print(f"[SETUP] It's currently node {board.node_id}; setting it up as node {args.node} instead.")
     if node_id not in nodes:
-        raise SetupError(f"Node {node_id} isn't in nodes.json yet — add it there first.")
+        raise SetupError(f"Node {node_id} isn't in {Path(args.nodes).name} (or was skipped above) "
+                         "— add or fix it there first.")
     node = nodes[node_id]
     target = node["framework"]
     chip = BOARDS[node["board"]]["chip"]
@@ -582,8 +584,8 @@ def run(args):
               "starts polling it: sudo systemctl restart garden-sensor")
 
 
-def list_nodes():
-    for node_id, node in load_nodes().items():
+def list_nodes(path):
+    for node_id, node in load_nodes(path, skip_invalid=True).items():
         sleep = node.get("sleep_window")
         print(f"  {node_id}: {node['name']:<24} {node['framework']:<13} {node['board']:<24} "
               f"log every {node['log_interval_s']}s to {node.get('storage', 'sd')}"
@@ -599,10 +601,13 @@ def main():
                         help=f"(re)install CircuitPython {CIRCUITPYTHON_VERSION} even if the board has it")
     parser.add_argument("--port", help="the board's serial port, if more than one is plugged in")
     parser.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
+    parser.add_argument("--nodes", default=str(NODES_FILE), metavar="FILE",
+                        help="a nodes file other than the repo's nodes.json, e.g. a bench test "
+                             "file in tests/hardware_tests/")
     args = parser.parse_args()
     try:
         if args.action == "list":
-            list_nodes()
+            list_nodes(args.nodes)
         else:
             run(args)
     except (NodeConfigError, SetupError) as e:
