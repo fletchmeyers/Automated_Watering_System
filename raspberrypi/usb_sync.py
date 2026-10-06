@@ -86,9 +86,25 @@ class UsbNode:
         return None, lines
 
 
+# USB-serial chips (WCH CH9102 on the ESP32 Feather V2, Silicon Labs CP210x,
+# FTDI) wire DTR/RTS to the board's reset circuit, so opening the port the
+# usual way restarts the board mid-conversation.
+_AUTO_RESET_VIDS = (0x1A86, 0x10C4, 0x0403)
+
+
 def open_port(path):
     import serial   # pyserial; imported here so the tests don't need it
-    return serial.Serial(path, 115200, timeout=0.2)
+    from serial.tools import list_ports
+    vid = next((p.vid for p in list_ports.comports() if p.device == path), None)
+    port = serial.Serial()
+    port.port, port.baudrate, port.timeout = path, 115200, 0.2
+    if vid in _AUTO_RESET_VIDS:
+        # Held off before opening, so the board keeps running. (Native-USB
+        # boards are left alone: an Arduino Pico only sends while DTR is on.)
+        port.dtr = False
+        port.rts = False
+    port.open()
+    return port
 
 
 def find_node(paths, quiet=False):

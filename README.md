@@ -298,15 +298,19 @@ shows its bootloader drive by itself; otherwise hold BOOTSEL (Pico) or BOOT
 (Feather RP2040) as you plug it in.
 
 Boards (`"board"` in `nodes.json`): `pico`, `picow`, `pico2`, `pico2w` and
-`feather_rp2040_adalogger` run either framework; `feather_m0` is Arduino
-only. ESP32 boards (`feather_esp32s2`, `feather_esp32_v2`) are listed but
-not set up yet. On the RP2 boards the radio uses the board's default SPI
-pins unless `spi_sck`/`spi_mosi`/`spi_miso` say otherwise, and an SD card
-on its own bus (the Adalogger's slot: `sd_sck` 18, `sd_mosi` 19,
-`sd_miso` 20, `sd_cs` 23) goes on the second one. Arduino nodes there have
-no RTC unless `"rtc": "pcf8523"` is set: their clock is set by the Pi's
-polls and nothing is logged after a restart until the first poll, and a
-sleep command turns the radio off but keeps the chip awake. A board with
+`feather_rp2040_adalogger` run either framework; `feather_m0`,
+`feather_esp32s2` (ESP32-S2 Feather) and `feather_esp32_v2` (ESP32 Feather
+V2) are Arduino only. The M0 and ESP32 boards are uploaded over their
+serial port: the V2's USB-serial chip resets it for the upload; if the
+ESP32-S2 doesn't take the upload (e.g. its factory program ignores the
+reset), hold BOOT, tap RESET, release BOOT, and run the script again. On
+the RP2 and ESP32 boards the radio uses the board's default SPI pins unless
+`spi_sck`/`spi_mosi`/`spi_miso` say otherwise; an SD card on its own bus
+(the Adalogger's slot: `sd_sck` 18, `sd_mosi` 19, `sd_miso` 20, `sd_cs` 23)
+goes on the RP2 boards' second one. Arduino nodes other than the M0 have no
+RTC unless `"rtc": "pcf8523"` is set: their clock is set by the Pi's polls
+and nothing is logged after a restart until the first poll, and a sleep
+command turns the radio off but keeps the chip awake. A board with
 no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 

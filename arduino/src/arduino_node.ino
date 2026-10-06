@@ -29,6 +29,9 @@ unsigned long last_log_at = 0;
 
 void setup() {
   Serial.begin(115200);
+#ifdef BOARD_ESP32
+  board_early_init();   // power the STEMMA QT port before the sensors are probed
+#endif
   unsigned long serial_wait_start = millis();
   while (!Serial && millis() - serial_wait_start < 3000) {
     delay(10);
@@ -47,11 +50,14 @@ void setup() {
   digitalWrite(RFM69_RST, LOW);
   delay(10);
 
-#if defined(BOARD_RP2) && defined(RADIO_SPI_SCK)
+#if defined(RADIO_SPI_SCK) && defined(BOARD_RP2)
   // Radio on other pins than the board's default SPI ones (nodes.json).
   SPI.setSCK(RADIO_SPI_SCK);
   SPI.setTX(RADIO_SPI_MOSI);
   SPI.setRX(RADIO_SPI_MISO);
+#elif defined(RADIO_SPI_SCK) && defined(BOARD_ESP32)
+  // The radio library's own SPI.begin() then leaves these pins in place.
+  SPI.begin(RADIO_SPI_SCK, RADIO_SPI_MISO, RADIO_SPI_MOSI);
 #endif
 
   // Without a radio (a board on the bench) the node still runs and answers
