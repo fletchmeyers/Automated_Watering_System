@@ -160,7 +160,10 @@ class LineReader {
   public:
     bool read(Stream &in, JsonDocument &out);
   private:
-    char line[160];
+    // Room for the longest command: Wi-Fi settings, whose network name (up
+    // to 32 bytes) and password (up to 63) can each grow several times over
+    // once escaped in JSON.
+    char line[768];
     size_t len = 0;
     bool overflow = false;
 };

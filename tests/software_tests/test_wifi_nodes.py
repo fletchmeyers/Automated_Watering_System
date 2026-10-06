@@ -236,3 +236,18 @@ def test_wifi_settings_are_not_sent_to_a_different_node(monkeypatch):
     monkeypatch.setattr(usb_sync, "open_port", lambda path: OtherNode())
     monkeypatch.setattr(node_setup, "serial_ports", lambda: ["/dev/ttyACM0"])
     assert not node_setup.send_wifi_config(14, {"s": "x", "p": "y"}, answer_within=1)
+
+
+def test_the_longest_wifi_settings_line_fits_the_firmwares_command_buffer():
+    '''The firmware drops a command line longer than LineReader's buffer.
+    The longest Wi-Fi settings line: a 32-byte network name of control
+    characters (each escaped to \\u00XX) and a 63-character password of
+    quote marks (each escaped to \\").'''
+    import re
+    from pathlib import Path
+    header = (Path(__file__).parents[2] / "arduino" / "src" / "packet_protocol.h").read_text()
+    buffer = int(re.search(r"char line\[(\d+)\]", header).group(1))
+    worst = {"t": "wifi_config", "s": "\x01" * 32, "p": '"' * 63,
+             "h": "255.255.255.255", "hn": "a-long-hostname-for-the-pi", "port": 65535}
+    line = json.dumps(worst, separators=(",", ":"))   # exactly what UsbNode.send() writes
+    assert len(line) < buffer, (len(line), buffer)

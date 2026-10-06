@@ -46,6 +46,7 @@ class UsbNode:
     def __init__(self, port):
         self.port = port
         self._partial = b""   # a line cut off by the port's read timeout, waiting for the rest
+        self.chatter = []     # the board's last few non-packet lines (its debug output)
 
     def send(self, command):
         self.port.write(json.dumps(command, separators=(",", ":")).encode() + b"\n")
@@ -64,7 +65,11 @@ class UsbNode:
                 continue
             raw, self._partial = (self._partial + raw).strip(), b""
             if raw[:1] != b"{":
-                continue                      # the M0's debug output
+                # An Arduino board's debug output: kept (the last few lines)
+                # so a failure can show what the board said about it.
+                if raw:
+                    self.chatter = (self.chatter + [raw.decode(errors="replace")])[-20:]
+                continue
             try:
                 packet = json.loads(raw)
             except ValueError:

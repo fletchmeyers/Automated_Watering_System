@@ -207,6 +207,9 @@ bool LineReader::read(Stream &in, JsonDocument &out) {
     if (c == '\n' || c == '\r') {
       bool complete = len > 0 && !overflow && line[0] == '{';
       size_t n = len;
+      if (overflow && line[0] == '{') {
+        Serial.println(F("[CMD] Dropped a command line too long for the buffer (LineReader::line)."));
+      }
       len = 0;
       overflow = false;
       if (!complete) continue;
