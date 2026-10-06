@@ -77,6 +77,8 @@
   <div class="overlay-toggle" id="ts-overlay-toggle">
     <button id="raw-toggle-btn" class="overlay-btn active" onclick="toggleOverlay('raw')" type="button">Raw</button>
     <button id="smoothed-toggle-btn" class="overlay-btn active" onclick="toggleOverlay('smoothed')" type="button">Smoothed</button>
+    <button id="share-axes-btn" class="overlay-btn active" onclick="toggleShareAxes()" type="button" title="Fields with the same unit share one axis">Shared axes</button>
+    <button id="zoom-btn" class="overlay-btn" onclick="toggleZoom()" type="button" style="display:none" title="Let dragging on the plot zoom (otherwise it scrolls the page)">Zoom</button>
   </div>
   <div id="scatter-field-picker" class="scatter-field-row" style="display:none;">
     <div class="scatter-axis-row">
