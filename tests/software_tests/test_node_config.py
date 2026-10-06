@@ -330,7 +330,7 @@ class Recorder:
 
 def args(**kw):
     import types
-    return types.SimpleNamespace(**{"node": None, "install": False, "port": None, "dry_run": False,
+    return types.SimpleNamespace(**{"node": None, "install": False, "port": None, "dry_run": False, "wifi_only": False,
                                     "nodes": "nodes.json", **kw})
 
 

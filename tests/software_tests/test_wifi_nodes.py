@@ -177,3 +177,62 @@ def test_no_store_mode_polls_without_saving(service, capsys):
     assert conn.execute("SELECT COUNT(*) FROM readings").fetchone()[0] == 0
     assert not (tmp_path / "data.txt").exists()
     assert '"tmp": 21.5' in capsys.readouterr().out          # printed instead
+
+
+def test_wifi_settings_reach_a_board_that_reset_when_its_port_opened(monkeypatch):
+    '''The ESP32 V2 can reset as its port opens: the first question goes
+    unanswered while it boots. Keep asking on the same open port, then send
+    the settings there too, rather than reopening (and resetting it again).'''
+    import usb_sync
+    opened, received = [], []
+
+    class BootingV2:
+        def __init__(self):
+            self.replies, self.ignored = [], 0
+        def write(self, data):
+            command = json.loads(data)
+            received.append(command)
+            if command["t"] == "info" and self.ignored == 0:
+                self.ignored += 1                         # still booting: lost
+                return
+            reply = ({"t": "info", "q": 1, "n": 14, "ub": 0, "fb": 0, "tb": 0}
+                     if command["t"] == "info" else {"t": "wifi_config_ack", "q": 2, "n": 14, "ok": 1})
+            self.replies.append((json.dumps(reply) + "\n").encode())
+        def readline(self):
+            return self.replies.pop(0) if self.replies else b""
+        def close(self):
+            pass
+
+    def fake_open(path):
+        opened.append(path)
+        return BootingV2()
+
+    monkeypatch.setattr(usb_sync, "open_port", fake_open)
+    monkeypatch.setattr(node_setup, "serial_ports", lambda: ["/dev/ttyACM0"])
+    real_ask = usb_sync.UsbNode.ask
+    monkeypatch.setattr(usb_sync.UsbNode, "ask",
+                        lambda self, cmd, kind, timeout=1: real_ask(self, cmd, kind, timeout=0.2))
+
+    settings = {"s": "Garden", "p": "pw", "h": "192.168.1.191", "hn": "pi", "port": 5006}
+    assert node_setup.send_wifi_config(14, settings, answer_within=3)
+    assert opened == ["/dev/ttyACM0"]                       # one port session only
+    assert [c["t"] for c in received] == ["info", "info", "wifi_config"]
+    assert received[-1]["s"] == "Garden" and received[-1]["p"] == "pw"
+
+
+def test_wifi_settings_are_not_sent_to_a_different_node(monkeypatch):
+    import usb_sync
+
+    class OtherNode:
+        def __init__(self):
+            self.replies = []
+        def write(self, data):
+            self.replies.append(b'{"t":"info","q":1,"n":9}\n')
+        def readline(self):
+            return self.replies.pop(0) if self.replies else b""
+        def close(self):
+            pass
+
+    monkeypatch.setattr(usb_sync, "open_port", lambda path: OtherNode())
+    monkeypatch.setattr(node_setup, "serial_ports", lambda: ["/dev/ttyACM0"])
+    assert not node_setup.send_wifi_config(14, {"s": "x", "p": "y"}, answer_within=1)
