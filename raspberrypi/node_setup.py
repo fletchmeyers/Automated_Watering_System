@@ -10,6 +10,7 @@ repo and its settings from nodes.json:
                                          (add node 3 to nodes.json first), or to
                                          change a board's ID
     python3 node_setup.py --install    — reinstall CircuitPython itself too
+    python3 node_setup.py --wifi-only  — just re-send a Wi-Fi node its Wi-Fi settings
     python3 node_setup.py list         — show the nodes in nodes.json
 
 nodes.json says what the node should be; this works out what the board is
@@ -582,24 +583,46 @@ def wifi_settings():
     }
 
 
+def send_wifi_config(node_id, settings, answer_within=15):
+    '''
+    Find the node on a USB port and send it the Wi-Fi settings, all in one
+    port session. On a board with a USB-serial chip (the ESP32 V2), opening
+    or closing the port can reset it, so it may spend a few seconds booting
+    before it answers: keep asking on the same open port rather than closing
+    and reopening (which could reset it again). True once it confirms.
+    '''
+    from usb_sync import UsbNode, open_port
+    for path in serial_ports():
+        try:
+            node = UsbNode(open_port(path))
+        except Exception:
+            continue
+        try:
+            deadline = time.monotonic() + answer_within
+            info = None
+            while time.monotonic() < deadline:
+                info, _ = node.ask({"t": "info"}, "info", timeout=3)
+                if info is not None:
+                    break
+            if info is None or info.get("n") != node_id:
+                continue
+            ack, _ = node.ask({"t": "wifi_config", **settings}, "wifi_config_ack", timeout=10)
+            return bool(ack and ack.get("ok"))
+        finally:
+            node.port.close()
+    return False
+
+
 def setup_wifi(node_id, timeout=60):
     '''Send a freshly flashed Wi-Fi node the network settings over USB (they
     never touch git or the terminal), then wait for it to reach garden-wifi.'''
-    from usb_sync import UsbNode, open_port
     from wifi_nodes import STATUS_FILE
     settings = wifi_settings()
-    _, port = ask_node(serial_ports(), quiet=True)
-    if port is None:
-        raise SetupError("Couldn't reach the node over USB to give it the Wi-Fi settings.")
     print(f"[SETUP] Sending node {node_id} the Wi-Fi settings for \"{settings['s']}\" "
           f"(Pi at {settings['h']}:{settings['port']})...")
-    node = UsbNode(open_port(port))
-    try:
-        ack, _ = node.ask({"t": "wifi_config", **settings}, "wifi_config_ack", timeout=10)
-    finally:
-        node.port.close()
-    if ack is None or not ack.get("ok"):
-        raise SetupError("The node didn't confirm the Wi-Fi settings.")
+    if not send_wifi_config(node_id, settings):
+        raise SetupError("Couldn't give the node its Wi-Fi settings over USB: it didn't answer, "
+                         "or didn't confirm them. Run node_setup.py again to retry.")
 
     print(f"[SETUP] Waiting for node {node_id} to connect over Wi-Fi (up to {timeout}s)...")
     def connected():
@@ -637,6 +660,15 @@ def run(args):
     target = node["framework"]
     chip = BOARDS[node["board"]]["chip"]
     print(f"[SETUP] Node {node_id}: {node['name']} ({target} on {node['board']})")
+
+    if args.wifi_only:
+        # Already running its firmware: just (re)send the Wi-Fi settings, e.g.
+        # after the Wi-Fi password or the Pi's address changed.
+        if link_of(node) != "wifi":
+            raise SetupError(f"Node {node_id} isn't a Wi-Fi node, so it has no Wi-Fi settings.")
+        if not args.dry_run:
+            setup_wifi(node_id)
+        return
 
     if target == "circuitpython":
         if board.framework == "circuitpython" and not args.install:
@@ -681,6 +713,8 @@ def main():
     parser.add_argument("--node", type=int, help="node ID to set the board up as")
     parser.add_argument("--install", action="store_true",
                         help=f"(re)install CircuitPython {CIRCUITPYTHON_VERSION} even if the board has it")
+    parser.add_argument("--wifi-only", action="store_true",
+                        help="don't flash anything: just (re)send a Wi-Fi node its Wi-Fi settings")
     parser.add_argument("--port", help="the board's serial port, if more than one is plugged in")
     parser.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
     parser.add_argument("--nodes", default=str(NODES_FILE), metavar="FILE",
