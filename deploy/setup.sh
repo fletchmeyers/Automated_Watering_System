@@ -213,7 +213,12 @@ if [ $PLATFORMIO = 1 ]; then
     fi
     # Uploading needs the board's serial port, which belongs to "dialout".
     sudo usermod -aG dialout "$USER_NAME"
-    echo "   pio: $HOME/.platformio/penv/bin/pio (the first build downloads the compiler)"
+    # Fetch every board's platform, compiler and libraries now (a long
+    # download, especially RadioHead's), so a first node_setup.py for any
+    # board only has to compile. Safe to run again: it skips what's there.
+    echo "   Downloading compilers and libraries for every board (can take 20+ minutes)..."
+    "$HOME/.platformio/penv/bin/pio" pkg install -d "$REPO/arduino"
+    echo "   pio: $HOME/.platformio/penv/bin/pio"
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────

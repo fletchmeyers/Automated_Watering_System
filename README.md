@@ -331,10 +331,13 @@ Flashing Arduino boards needs PlatformIO on the Pi, a one-time install
 ```bash
 curl -fsSL -o get-platformio.py https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
 python3 get-platformio.py && rm get-platformio.py
+~/.platformio/penv/bin/pio pkg install -d ~/Automated_Watering_System/arduino
 ```
 
-The first Arduino build then downloads the compiler (a few hundred MB) and
-takes several minutes on a Pi 3B; later builds take a minute or two.
+The last line downloads every board's compiler and libraries up front (20+
+minutes, mostly RadioHead from its author's slow site), so setting up a
+node only has to compile: a few minutes for the first build of each board
+type on a Pi 3B, a minute or two after that.
 
 ---
 
