@@ -589,7 +589,8 @@ def send_wifi_config(node_id, settings, answer_within=15):
     port session. On a board with a USB-serial chip (the ESP32 V2), opening
     or closing the port can reset it, so it may spend a few seconds booting
     before it answers: keep asking on the same open port rather than closing
-    and reopening (which could reset it again). True once it confirms.
+    and reopening (which could reset it again). True once it confirms;
+    otherwise says which step failed and what the board printed meanwhile.
     '''
     from usb_sync import UsbNode, open_port
     for path in serial_ports():
@@ -607,9 +608,15 @@ def send_wifi_config(node_id, settings, answer_within=15):
             if info is None or info.get("n") != node_id:
                 continue
             ack, _ = node.ask({"t": "wifi_config", **settings}, "wifi_config_ack", timeout=10)
-            return bool(ack and ack.get("ok"))
+            if ack and ack.get("ok"):
+                return True
+            print(f"[SETUP] Node {node_id} answered on {path} but didn't confirm the Wi-Fi settings.")
+            if node.chatter:
+                print("[SETUP] What it printed:\n          " + "\n          ".join(node.chatter))
+            return False
         finally:
             node.port.close()
+    print(f"[SETUP] Node {node_id} didn't answer on {', '.join(serial_ports()) or 'any USB port'}.")
     return False
 
 
