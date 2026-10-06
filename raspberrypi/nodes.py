@@ -36,8 +36,8 @@ BOARDS = {
                                  "arduino": "feather_rp2040_adalogger"},
     # ESP32 boards are Arduino-only here: CircuitPython on them needs the
     # TinyUF2 bootloader installed first (not on every board as shipped).
-    "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": None,                       "arduino": None},
-    "feather_esp32_v2": {"chip": "esp32",   "circuitpython": None,                       "arduino": None},
+    "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": None,                       "arduino": "feather_esp32s2"},
+    "feather_esp32_v2": {"chip": "esp32",   "circuitpython": None,                       "arduino": "feather_esp32_v2"},
     "feather_m0":       {"chip": "samd21",  "circuitpython": None,                       "arduino": "feather_m0"},
 }
 
@@ -59,6 +59,7 @@ REQUIRED_PINS = {
 OPTIONAL_PINS = ("spi_sck", "spi_mosi", "spi_miso",
                  "sd_cs", "sd_sck", "sd_mosi", "sd_miso", "i2c_scl", "i2c_sda")
 RP2_CHIPS = ("rp2040", "rp2350")   # boards flashed by copying a UF2 to their bootloader drive
+ESP32_CHIPS = ("esp32", "esp32s2")
 RTCS = ("pcf8523",)
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -169,8 +170,10 @@ def check_node(node_id, node):
     if framework == "arduino":
         if radio_bus and len(radio_bus) != 3:
             fail('give all of "spi_sck", "spi_mosi", "spi_miso", or none (the board\'s default SPI pins)')
-        if (radio_bus or sd_bus) and board["chip"] not in RP2_CHIPS:
-            fail("custom SPI pins are only supported on RP2040/RP2350 Arduino boards")
+        if radio_bus and board["chip"] not in RP2_CHIPS + ESP32_CHIPS:
+            fail("custom radio SPI pins are only supported on RP2040/RP2350 and ESP32 boards")
+        if sd_bus and board["chip"] not in RP2_CHIPS:
+            fail("a separate SD SPI bus is only supported on RP2040/RP2350 boards")
 
     window = node.get("sleep_window")
     if window is not None:

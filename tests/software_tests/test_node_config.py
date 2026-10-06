@@ -46,7 +46,6 @@ def test_flash_storage_has_no_sd_pin_flag():
 @pytest.mark.parametrize("change, message", [
     (lambda n: n.update(framework="micropython"), "framework must be one of"),
     (lambda n: n.update(board="esp32"), "unknown board"),
-    (lambda n: n.update(board="feather_esp32_v2"), "arduino on feather_esp32_v2 isn.t supported yet"),
     (lambda n: n.update(color="pink"), "color must look like"),
     (lambda n: n.update(battery="pw0"), "battery must be"),
     (lambda n: n["pins"].update(sd_sck=1), "all of"),
@@ -402,6 +401,6 @@ def test_bench_files_are_valid_and_match_each_other():
     folder = Path(__file__).parent.parent / "hardware_tests"
     arduino = load_nodes(folder / "bench_nodes_arduino.json")
     circuitpython = load_nodes(folder / "bench_nodes_circuitpython.json")
-    assert list(arduino) == list(circuitpython)
-    assert all(arduino[n]["board"] == circuitpython[n]["board"] for n in arduino)
+    assert set(circuitpython) <= set(arduino)                # ESP32 boards are Arduino only
+    assert all(arduino[n]["board"] == circuitpython[n]["board"] for n in circuitpython)
     assert not set(arduino) & set(real())                    # no clash with real nodes

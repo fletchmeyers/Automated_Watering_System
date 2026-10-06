@@ -1,5 +1,5 @@
 {
-  "_about": "Bench test boards (no radio, no sensors) set up as Arduino nodes. Use with: python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_arduino.json. bench_nodes_circuitpython.json has the same boards and IDs as CircuitPython nodes, so a board can be switched back and forth. Not read by main.py.",
+  "_about": "Bench test boards (no radio, no sensors) set up as Arduino nodes. Use with: python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_arduino.json. bench_nodes_circuitpython.json has the same RP2 boards and IDs (9-12) as CircuitPython nodes, so a board can be switched back and forth; 13-14 are the ESP32 boards, Arduino only. Not read by main.py.",
 
   "nodes": {
     "9": {
@@ -22,6 +22,16 @@
       "sense_interval_s": 3, "log_interval_s": 60, "storage": "sd",
       "pins": {"radio_cs": 10, "radio_irq": 6, "radio_rst": 11,
                "sd_cs": 23, "sd_sck": 18, "sd_mosi": 19, "sd_miso": 20}
+    },
+    "13": {
+      "name": "Bench ESP32-S2", "framework": "arduino", "board": "feather_esp32s2",
+      "sense_interval_s": 3, "log_interval_s": 60, "storage": "none",
+      "pins": {"radio_cs": 10, "radio_irq": 6, "radio_rst": 11}
+    },
+    "14": {
+      "name": "Bench ESP32 V2", "framework": "arduino", "board": "feather_esp32_v2",
+      "sense_interval_s": 3, "log_interval_s": 60, "storage": "none",
+      "pins": {"radio_cs": 33, "radio_irq": 27, "radio_rst": 15}
     }
   }
 }

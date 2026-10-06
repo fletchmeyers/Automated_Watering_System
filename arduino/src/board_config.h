@@ -14,8 +14,10 @@
   #include "board_config_feather_m0.h"
 #elif defined(BOARD_RP2)
   #include "board_config_rp2.h"
+#elif defined(BOARD_ESP32)
+  #include "board_config_esp32.h"
 #else
-  #error "No board selected — set BOARD_FEATHER_M0 or BOARD_RP2 via build_flags in platformio.ini"
+  #error "No board selected — set BOARD_FEATHER_M0, BOARD_RP2 or BOARD_ESP32 via build_flags in platformio.ini"
 #endif
 
 #endif
