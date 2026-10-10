@@ -615,7 +615,7 @@ function statusDot(state) {
 }
 
 // One chip per node in the header: its own status dot and time since its
-// last packet.
+// last packet. Clicking one opens (or closes) that node's details row.
 function renderNodeStatus(byNode) {
   document.getElementById('node-status').innerHTML = knownNodeIds(Object.keys(byNode)).map(n => {
     const info = nodeInfo(n);
@@ -623,10 +623,12 @@ function renderNodeStatus(byNode) {
     const asleep = sleepUntil(n);
     const ago = lastTs ? (minutesAgo(lastTs) || lastTs) : 'no data';
     const text = asleep ? `asleep · wakes ${asleep.slice(11, 16)}` : ago;
-    return `<span class="node-chip" style="--node-color:${info.color}"
-                  title="${info.name} — last packet ${lastTs || 'none in the last 6 hours'}">
+    const open = openNodePanels.includes(String(n));
+    return `<button type="button" class="node-chip${open ? ' open' : ''}" style="--node-color:${info.color}"
+                  onclick="toggleNodePanel(${n})" aria-expanded="${open}"
+                  title="${info.name} — last packet ${lastTs || 'none in the last 6 hours'}. Click for details.">
       ${statusDot(asleep ? 'asleep' : freshness(lastTs))}<span class="node-chip-name">${info.short}</span>${text}
-    </span>`;
+    </button>`;
   }).join('');
 }
 
@@ -648,18 +650,74 @@ function batteryReading(p) {
   return v;
 }
 
-// The "Nodes" card: per node, when it last reported, its battery, and how
-// much logged data is waiting on it for the next sync.
-function renderNodesCard(byNode) {
-  const card = document.getElementById('card-nodes');
-  if (!card) return;
-  cardBody(card).innerHTML = knownNodeIds(Object.keys(byNode)).map(n => {
+// ── Node details rows ─────────────────────────────────────────────────────────
+// Opened from a node's chip in the header: a full-width row under it with
+// when the node last reported, its battery, how much logged data is waiting
+// for the next sync, its radio/system readout and its sensor health. Rows
+// stack in the order they were opened; which are open is remembered per
+// browser.
+
+const OPEN_NODES_KEY = 'gardenDashboardOpenNodes';
+let openNodePanels = (function () {
+  try {
+    const saved = JSON.parse(localStorage.getItem(OPEN_NODES_KEY));
+    return Array.isArray(saved) ? saved.map(String) : [];
+  } catch (e) { return []; }
+})();
+let lastByNode = {};   // the latest render's packets per node, to redraw a row opened between refreshes
+
+function toggleNodePanel(n) {
+  const id = String(n);
+  const i = openNodePanels.indexOf(id);
+  if (i >= 0) openNodePanels.splice(i, 1); else openNodePanels.push(id);
+  try { localStorage.setItem(OPEN_NODES_KEY, JSON.stringify(openNodePanels)); } catch (e) { /* non-fatal */ }
+  renderNodeStatus(lastByNode);
+  renderNodePanels(lastByNode);
+}
+
+function nodePanelSection(id, title, chip) {
+  return `<div class="node-panel-section" id="${id}">
+    <div class="card-header">
+      <span class="card-title">${title}</span>
+      ${chip}
+    </div>
+    <div class="card-body"></div>
+  </div>`;
+}
+
+function renderNodePanels(byNode) {
+  const box = document.getElementById('node-panels');
+  if (!box) return;
+  box.querySelectorAll(':scope > .node-panel').forEach(p => {
+    if (!openNodePanels.includes(p.dataset.node)) p.remove();
+  });
+  for (const id of openNodePanels) {
+    const n = Number(id);
     const info = nodeInfo(n);
     const np = byNode[n] || [];
-    const lastTs = getLastTs(np);
-    const battery = info.battery || DEFAULT_BATTERY;
-    const store = nodeStorage[String(n)];
+    let panel = document.getElementById(`node-panel-${n}`);
+    if (!panel) {
+      const wifi = info.link === 'wifi';
+      panel = document.createElement('section');
+      panel.className = 'panel node-card node-panel';
+      panel.id = `node-panel-${n}`;
+      panel.dataset.node = id;
+      panel.innerHTML = `
+        <div class="node-panel-head"></div>
+        <div class="node-panel-body">
+          <div class="node-panel-section node-panel-summary"></div>
+          ${nodePanelSection(`node-panel-${n}-system`, wifi ? 'Wi-Fi &amp; System' : 'Radio &amp; System',
+                             `<span class="node-badge">${wifi ? 'Wi-Fi' : 'RFM69'}</span>`)}
+          ${nodePanelSection(`node-panel-${n}-health`, 'Sensor Health', '<span class="card-badge badge-gray">–</span>')}
+        </div>`;
+    }
+    box.appendChild(panel);   // keeps the rows in the order they were opened
+    panel.style.setProperty('--node-color', info.color);
 
+    const lastTs = getLastTs(np);
+    const asleep = sleepUntil(n);
+    const battery = info.battery || DEFAULT_BATTERY;
+    const store = nodeStorage[id];
     const metrics = [
       ['LAST PACKET', lastTs ? lastTs.replace('T', ' ') : 'none in 6h'],
       [battery.label, batteryReading(getLatest(np, battery.type))],
@@ -667,26 +725,52 @@ function renderNodesCard(byNode) {
       ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
     ];
     const reported = store?.at ? `storage reported ${minutesAgo(store.at) || store.at}` : 'no storage report yet';
-    const asleep = sleepUntil(n);
     const note = asleep
       ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)} — logging to storage, radio off · ${reported}`
       : reported;
 
-    return `<div class="node-row" style="--node-color:${info.color}">
-      <div class="node-row-head">
-        ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
-        <span class="node-row-name">${info.name}</span>
-        <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : ''}</span>
-      </div>
+    panel.querySelector('.node-panel-head').innerHTML = `
+      ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
+      <span class="node-row-name">${info.name}</span>
+      <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : 'no data in 6h'}</span>
+      <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>`;
+    panel.querySelector('.node-panel-summary').innerHTML = `
       <div class="node-metrics">
         ${metrics.map(([label, value]) => `<div>
           <div class="mini-label">${label}</div>
           <div class="node-metric-value">${value}</div>
         </div>`).join('')}
       </div>
-      <div class="node-row-note">${note}</div>
-    </div>`;
-  }).join('') || '<div class="no-data">No nodes yet</div>';
+      <div class="node-row-note">${note}</div>`;
+
+    let seq = null;
+    for (let i = np.length - 1; i >= 0; i--) if ('q' in np[i]) { seq = np[i].q; break; }
+    renderSystem(document.getElementById(`node-panel-${n}-system`), getLatest(np, 'rt'), lastTs, seq);
+    renderHealth(document.getElementById(`node-panel-${n}-health`), np);
+  }
+}
+
+// ── Weather row ──
+// Folded away by clicking its title; remembered per browser.
+const WEATHER_FOLDED_KEY = 'gardenDashboardWeatherFolded';
+
+function setWeatherFolded(folded) {
+  const panel = document.getElementById('weather-panel');
+  if (!panel) return;
+  panel.classList.toggle('collapsed', folded);
+  document.getElementById('weather-toggle')?.setAttribute('aria-expanded', String(!folded));
+}
+
+function toggleWeatherPanel() {
+  const folded = !document.getElementById('weather-panel').classList.contains('collapsed');
+  setWeatherFolded(folded);
+  try { localStorage.setItem(WEATHER_FOLDED_KEY, folded ? '1' : ''); } catch (e) { /* non-fatal */ }
+}
+
+function initWeatherToggle() {
+  let folded = false;
+  try { folded = localStorage.getItem(WEATHER_FOLDED_KEY) === '1'; } catch (e) { /* non-fatal */ }
+  setWeatherFolded(folded);
 }
 
 // ── Sensor cards ──────────────────────────────────────────────────────────────
@@ -701,9 +785,9 @@ const SENSOR_CARDS = [
   { kind: 'uv',     title: 'UV & Light',             types: ['uv'],                       label: 'LTR390' },
   { kind: 'soil',   title: 'Soil Sensors',           types: ['s0', 's1', 's2'],           label: 'Seesaw' },
   { kind: 'power',  title: 'Battery',                types: ['pw0', 'pw1', 'pw2', 'pw3'], badge: true },
-  { kind: 'health', title: 'Sensor Health',          types: null,                         badge: true },
-  { kind: 'system', title: 'Radio & System',         types: null,                         label: 'RFM69' },
 ];
+// Sensor health and radio/system aren't cards: they're in each node's details
+// row (renderNodePanels).
 
 function sensorCardId(kind, node) { return `card-${kind}-n${node}`; }
 
@@ -757,13 +841,6 @@ function renderSensorCard(el, kind, np) {
       }
       return renderPower(el, powerData);
     }
-    case 'health':
-      return renderHealth(el, np);
-    case 'system': {
-      let seq = null;
-      for (let i = np.length - 1; i >= 0; i--) if ('q' in np[i]) { seq = np[i].q; break; }
-      return renderSystem(el, getLatest(np, 'rt'), getLastTs(np), seq);
-    }
   }
 }
 
@@ -778,13 +855,14 @@ function renderAll(packets) {
   document.getElementById('packets-count').textContent = packets.length;
 
   const byNode = groupByNode(packets);
+  lastByNode = byNode;
   renderNodeStatus(byNode);
-  renderNodesCard(byNode);
+  renderNodePanels(byNode);
 
   for (const node of Object.keys(byNode).map(Number).sort((a, b) => a - b)) {
     const np = byNode[node];
     for (const spec of SENSOR_CARDS) {
-      if (spec.types && !np.some(p => spec.types.includes(p.t))) continue;
+      if (!np.some(p => spec.types.includes(p.t))) continue;
       renderSensorCard(ensureSensorCard(spec, node), spec.kind, np);
     }
   }
@@ -965,10 +1043,13 @@ async function runPingTest() {
 // name cards that aren't on the page yet (a node that hasn't reported this
 // session); they slot into place when they appear.
 
-const STATIC_CARD_LABELS = { 'card-nodes': 'Nodes', 'card-weather': 'Weather Forecast' };
 // v2: cards became per-node, so a layout saved under the old single-card IDs
 // doesn't carry over.
 const CARD_PREFS_KEY = 'gardenDashboardCardPrefs.v2';
+// Cards that have since left the grid (the Nodes and Weather cards became
+// rows above it; health and radio/system went into the node rows): dropped
+// from a saved layout as it loads.
+const RETIRED_CARD = /^card-(nodes|weather|health-n\d+|system-n\d+)$/;
 
 function cardKind(id) {
   const m = /^card-(\w+)-n(\d+)$/.exec(id);
@@ -981,9 +1062,10 @@ function cardNode(id) {
 function kindSpec(kind) { return SENSOR_CARDS.find(s => s.kind === kind); }
 
 function cardLabel(id) {
-  if (STATIC_CARD_LABELS[id]) return STATIC_CARD_LABELS[id];
   const group = cardPrefs.groups.find(g => g.id === id);
   if (group) return group.members.map(cardLabel).join(' + ');
+  const el = document.getElementById(id);
+  if (el && isGroup(el)) return Array.from(groupMembersEl(el).children).map(c => cardLabel(c.id)).join(' + ');
   const spec = kindSpec(cardKind(id));
   return spec ? `${spec.title} · ${nodeInfo(cardNode(id)).short}` : id;
 }
@@ -1003,12 +1085,14 @@ function loadCardPrefs() {
     const raw = localStorage.getItem(CARD_PREFS_KEY);
     if (!raw) return empty;
     const parsed = JSON.parse(raw);
+    const current = ids => (Array.isArray(ids) ? ids : []).filter(id => !RETIRED_CARD.test(id));
     return {
-      order:  Array.isArray(parsed.order)  ? parsed.order  : [],
-      hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [],
-      groups: Array.isArray(parsed.groups)
-        ? parsed.groups.filter(g => g && typeof g.id === 'string' && Array.isArray(g.members))
-        : [],
+      order:  current(parsed.order),
+      hidden: current(parsed.hidden),
+      groups: (Array.isArray(parsed.groups) ? parsed.groups : [])
+        .filter(g => g && typeof g.id === 'string' && Array.isArray(g.members))
+        .map(g => ({ id: g.id, members: current(g.members) }))
+        .filter(g => g.members.length >= 2),
     };
   } catch (e) {
     console.warn('[cards] failed to load saved layout, using default', e);
@@ -1235,13 +1319,12 @@ function tidyGroups() {
   cardPrefs.groups = groups;
 }
 
-// A newly created sensor card goes in just ahead of the weather card by
-// default (or into its saved combined card), then picks up its saved
-// position and hidden state, if any.
+// A newly created sensor card goes at the end of the grid by default (or
+// into its saved combined card), then picks up its saved position and
+// hidden state, if any.
 function addCardToLayout(card) {
   const grid = document.getElementById('grid');
-  const weather = document.getElementById('card-weather');
-  grid.insertBefore(card, weather && weather.parentNode === grid ? weather : null);
+  grid.appendChild(card);
   buildCardControls(card);
   const group = cardPrefs.groups.find(g => g.members.includes(card.id));
   if (group) placeInGroup(card, group);
@@ -1263,11 +1346,6 @@ function setDrop(target, action) {
   dropTarget = target;
   dropAction = action;
   if (target) target.classList.add(action === 'combine' ? 'merge-target' : `drop-${action}`);
-}
-
-// Only sensor cards combine: not the Nodes or Weather card.
-function canCombine(a, b) {
-  return !STATIC_CARD_LABELS[a.id] && !STATIC_CARD_LABELS[b.id];
 }
 
 function initCardDragAndDrop() {
@@ -1296,7 +1374,7 @@ function initCardDragAndDrop() {
     const middle = fx > 0.25 && fx < 0.75 && fy > 0.15 && fy < 0.85;
     // Over its own combined card, a display can only be taken out (to
     // either side), not combined back in.
-    if (middle && !over.contains(dragEl) && canCombine(dragEl, over)) setDrop(over, 'combine');
+    if (middle && !over.contains(dragEl)) setDrop(over, 'combine');
     else if (middle && over.contains(dragEl)) setDrop(null, null);
     else setDrop(over, fx < 0.5 ? 'before' : 'after');
   });

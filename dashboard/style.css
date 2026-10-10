@@ -133,6 +133,77 @@
     white-space: nowrap;
   }
   .node-chip-name { color: var(--node-color); }
+  button.node-chip { cursor: pointer; line-height: inherit; }
+  button.node-chip:hover { border-color: var(--node-color); color: var(--text); }
+  .node-chip.open {
+    border-color: var(--node-color);
+    box-shadow: inset 0 0 0 1px var(--node-color);
+    color: var(--text);
+  }
+
+  /* Full-width rows between the header and the cards: a node's details,
+     and the weather forecast */
+  .panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .node-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .node-panel-head .node-row-ago { margin-left: 4px; }
+  .panel-close {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .panel-close:hover { color: var(--text); border-color: var(--text); }
+  .node-panel-body {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px 24px;
+  }
+  .node-panel-section + .node-panel-section {
+    border-left: 1px solid var(--border);
+    padding-left: 24px;
+  }
+  .node-panel-section .card-header { margin-bottom: 10px; }
+  @media (max-width: 900px) {
+    .node-panel-body { grid-template-columns: minmax(0, 1fr); }
+    .node-panel-section + .node-panel-section {
+      border-left: none;
+      padding-left: 0;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+  }
+  .panel-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .panel-toggle:hover .card-title { color: var(--text); }
+  .panel-caret { font-size: 14px; line-height: 1; transition: transform 0.15s; }
+  #weather-panel.collapsed .panel-caret { transform: rotate(-90deg); }
+  #weather-panel.collapsed #weather-body { display: none; }
+  #weather-panel.collapsed .card-header { margin-bottom: 0; }
 
   .node-card {
     background: color-mix(in srgb, var(--node-color) 7%, var(--bg2));
@@ -577,8 +648,10 @@
     gap: 12px;
   }
 
+  /* Tinted with the node's color, so a combined card's gauges are easy to
+     tell apart */
   .soil-card {
-    background: var(--bg3);
+    background: color-mix(in srgb, var(--node-color, var(--bg3)) 13%, var(--bg3));
     border-radius: 8px;
     padding: 12px;
     text-align: center;
