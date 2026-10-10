@@ -13,7 +13,8 @@ Two-tier access model:
   - Public (no login), rate-limited by cooldown, not auth:
         GET  /api/health
         GET  /api/nodes           (names/colors from the Pi's nodes.json; no pins)
-        POST /api/poll
+        POST /api/poll            ({"node_id": N}: radio nodes through main.py,
+        POST /api/ping_test        Wi-Fi nodes through garden-wifi)
   - Gated behind Cloudflare Access (configured in the Zero Trust dashboard,
     not in this file):
         POST /api/set_interval
@@ -38,7 +39,8 @@ import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from nodes import NodeConfigError, load_nodes, public_nodes
+from nodes import NodeConfigError, link_of, load_nodes, public_nodes
+from wifi_nodes import ask_wifi_service
 
 from sync_indoor import (
     request_poll,
@@ -95,7 +97,7 @@ app = Flask(__name__)
 CORS(app, origins=[ALLOWED_ORIGIN])
 
 _poll_lock = threading.Lock()
-_last_poll = {"ts": 0.0, "result": None}
+_last_poll = {}   # node ID -> {"ts", "result"}
 
 _health_lock = threading.Lock()
 _last_health = {"ts": 0.0, "result": None}
@@ -120,27 +122,51 @@ def api_health():
     return jsonify({**report, "cached": False})
 
 
+def is_wifi_node(node_id):
+    '''A Wi-Fi node is reached through garden-wifi (wifi_nodes.py), not main.py's radio.'''
+    try:
+        node = load_nodes(skip_invalid=True).get(node_id)
+    except NodeConfigError:
+        return False
+    return node is not None and link_of(node) == "wifi"
+
+
+def requested_node():
+    body = request.get_json(silent=True) or {}
+    try:
+        return int(body.get("node_id", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 @app.route("/api/poll", methods=["POST"])
 def api_poll():
+    # Poll one node now (body: {"node_id": N}, default 1) and return what it sent.
+    node_id = requested_node()
     now = time.monotonic()
     with _poll_lock:
-        elapsed = now - _last_poll["ts"]
-        if _last_poll["result"] is not None and elapsed < POLL_COOLDOWN:
+        state = _last_poll.setdefault(node_id, {"ts": 0.0, "result": None})
+        elapsed = now - state["ts"]
+        if state["result"] is not None and elapsed < POLL_COOLDOWN:
             return jsonify({
                 "status": "cooldown",
                 "retry_after": round(POLL_COOLDOWN - elapsed, 1),
-                "last_result": _last_poll["result"],
+                "last_result": state["result"],
             }), 429
 
-        request_poll()
-        packets = wait_for_poll_result(timeout=90)
-        result = {
-            "status":  "ok" if packets else "timeout",
-            "packets": packets or [],
-        }
+        if is_wifi_node(node_id):
+            reply = ask_wifi_service({"t": "poll", "n": node_id}, timeout=30)
+            result = {"status": reply.get("status", "error"), "packets": reply.get("packets", [])}
+        else:
+            request_poll(node_id)
+            packets = wait_for_poll_result(timeout=90)
+            result = {
+                "status":  "ok" if packets else "timeout",
+                "packets": packets or [],
+            }
 
-        _last_poll["ts"]     = time.monotonic()
-        _last_poll["result"] = result
+        state["ts"]     = time.monotonic()
+        state["result"] = result
 
     return jsonify(result)
 
@@ -176,8 +202,7 @@ def api_nodes():
 
 @app.route("/api/ping_test", methods=["POST"])
 def api_ping_test():
-    body = request.get_json(silent=True) or {}
-    node_id = body.get("node_id", 1)
+    node_id = requested_node()
 
     now = time.monotonic()
     with _ping_lock:
@@ -190,10 +215,14 @@ def api_ping_test():
                 "last_result": state["result"],
             }), 429
 
-        request_ping_test(node_id=node_id, count=10)
-        result = wait_for_ping_result(node_id=node_id, timeout=70)
-
-        response = {"status": "timeout"} if result is None else {"status": "ok", **result}
+        if is_wifi_node(node_id):
+            # Over Wi-Fi: the same test, through garden-wifi. "offline" (not
+            # connected) or "unavailable" (service down) come back as is.
+            response = ask_wifi_service({"t": "ping", "n": node_id, "count": 10}, timeout=60)
+        else:
+            request_ping_test(node_id=node_id, count=10)
+            result = wait_for_ping_result(node_id=node_id, timeout=70)
+            response = {"status": "timeout"} if result is None else {"status": "ok", **result}
 
         state["ts"]     = time.monotonic()
         state["result"] = response

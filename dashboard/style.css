@@ -264,6 +264,33 @@
     opacity: 0.4;
   }
 
+  /* Dropping here combines the dragged card with this one */
+  .card.merge-target {
+    outline: 2px dashed var(--green);
+    outline-offset: -6px;
+  }
+
+  /* A combined card: its displays (ordinary cards) side by side, each keeping
+     its own heading, node colour, handle and hide button. */
+  .card-group {
+    padding: 36px 12px 44px 12px;
+  }
+  .group-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  /* Side by side while there's room, one under the other when there isn't;
+     a display that needs the width (three soil sensors) asks for twice as much. */
+  .card-group .card {
+    flex: 1 1 240px;
+    min-width: 0;
+    padding: 16px 16px 40px 16px;
+  }
+  .card-group .card.card-wide {
+    flex: 2 1 420px;
+  }
+
   .card-drag-handle {
     position: absolute;
     top: 10px;
