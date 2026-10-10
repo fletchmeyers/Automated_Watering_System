@@ -10,6 +10,9 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
     python3 node_setup.py add          — add a node to the list (questions with
                                          defaults), then set up the board
     python3 node_setup.py remove 3     — take node 3 off the list
+    python3 node_setup.py calibrate 3 s1 dry — set soil sensor s1's dry (or wet)
+                                         reading from its recent readings; see
+                                         soil_calibration.py
     python3 node_setup.py prefer 3 wifi — for a node with Wi-Fi and the radio:
                                          use Wi-Fi first (or radio), from the
                                          next poll on; no re-flash or restart
@@ -58,6 +61,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import node_wizard
+import soil_calibration
 from db import DB_FILE
 from nodes import (
     NodeConfigError, NODES_FILE, load_nodes, storage_of, links_of, circuitpython_config, circuitpython_uf2_url,
@@ -797,11 +801,17 @@ def list_nodes(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("action", nargs="?", choices=["update", "add", "remove", "list", "prefer"],
-                        default="update")
-    parser.add_argument("node_id", nargs="?", type=int, help="for remove and prefer: which node")
-    parser.add_argument("link", nargs="?", choices=["wifi", "radio"],
-                        help="for prefer: the link to use first")
+    parser.add_argument("action", nargs="?",
+                        choices=["update", "add", "remove", "list", "prefer", "calibrate"], default="update")
+    parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer and calibrate: which node")
+    parser.add_argument("what", nargs="*",
+                        help="for prefer: wifi or radio (the link to use first); "
+                             "for calibrate: a soil sensor (s0, s1, s2) and dry, wet or clear")
+    parser.add_argument("--minutes", type=int, default=60,
+                        help="for calibrate: how many minutes of readings to take the median of (default 60)")
+    parser.add_argument("--until", help="for calibrate: the window ends here (18:30, or "
+                                        "2026-10-10T18:30) instead of now")
+    parser.add_argument("--value", type=int, help="for calibrate: use this raw reading instead")
     parser.add_argument("--node", type=int, help="node ID to set the board up as")
     parser.add_argument("--install", action="store_true",
                         help=f"(re)install CircuitPython {CIRCUITPYTHON_VERSION} even if the board has it")
@@ -825,11 +835,19 @@ def main():
                 print("[SETUP] Restart the Pi's radio loop so it stops polling it: "
                       "sudo systemctl restart garden-sensor")
         elif args.action == "prefer":
-            if args.node_id is None or args.link is None:
+            if args.node_id is None or len(args.what) != 1 or args.what[0] not in ("wifi", "radio"):
                 parser.error("say which node and link: node_setup.py prefer N wifi (or radio)")
-            order = node_wizard.prefer_link(args.nodes, args.node_id, args.link)
+            order = node_wizard.prefer_link(args.nodes, args.node_id, args.what[0])
             print(f"[SETUP] Node {args.node_id} now uses {' first, then '.join(order)}. "
                   "The Pi switches within a minute.")
+        elif args.action == "calibrate":
+            if (args.node_id is None or len(args.what) != 2
+                    or args.what[1] not in ("dry", "wet", "clear")):
+                parser.error("say which node, sensor and point: node_setup.py calibrate 3 s1 dry "
+                             "(or wet, or clear)")
+            soil_calibration.calibrate(args.nodes, args.node_id, args.what[0], args.what[1],
+                                       node_wizard.Wizard(), DB_FILE, minutes=args.minutes,
+                                       until=args.until, value=args.value)
         else:
             run(args)
     except (NodeConfigError, SetupError) as e:

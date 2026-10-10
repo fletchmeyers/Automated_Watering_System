@@ -372,6 +372,25 @@ twice. To switch which comes first, with no re-flash or restart:
 
 The ping test menu on the dashboard shows which link is in use now.
 
+**Calibrating soil sensors** — out of the box the dashboard shows every
+soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
+few pots. Calibrate a sensor with two readings in its own soil: "dry" while
+the plant is due for watering, and "wet" 30-60 minutes after watering:
+
+    python3 node_setup.py calibrate 3 s1 dry                 # median of the last hour
+    python3 node_setup.py calibrate 3 s1 wet --minutes 20
+    python3 node_setup.py calibrate 3 s1 dry --until 18:30   # the hour before 18:30
+    python3 node_setup.py calibrate 3 s1 dry --value 940     # a reading you already know
+    python3 node_setup.py calibrate 3 s1 clear               # back to the fixed scale
+
+It shows the readings it found (how many, the median and how spread out
+they are) and asks before saving them to nodes.json (`"soil": {"s1": {"dry":
+940, "wet": 610}}`); the dashboard then shows that sensor's dry reading as
+0% and its wet one as 100%. An uncalibrated sensor's label has a `*`, and
+hovering over it shows the raw reading. Each reading the nodes send is
+already the middle of 9 quick ones, so a noisy USB charger's spikes are
+thrown out.
+
 **Bench testing** — don't add test boards to `nodes.json` (`main.py` would
 start polling them). `tests/hardware_tests/` has bench files with the same
 board IDs (9–12) as Arduino or CircuitPython nodes; point the script at one:

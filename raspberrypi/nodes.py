@@ -87,6 +87,14 @@ ESP32_CHIPS = ("esp32", "esp32s2")
 RTCS = ("pcf8523",)
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+# Soil sensor calibration, per sensor ("s0", "s1", ...): the raw reading in
+# dry soil and in just-watered soil, which the dashboard shows as 0% and
+# 100%. Set with node_setup.py calibrate; either may be missing until it's
+# measured (the dashboard's usual scale fills in). The seesaw sensor reads
+# 0-1023ish, higher when wetter, but either way round works.
+SOIL_SENSOR = re.compile(r"^s\d$")
+SOIL_POINTS = ("dry", "wet")
+
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -267,6 +275,20 @@ def check_node(node_id, node):
         if sd_bus and board["chip"] not in RP2_CHIPS:
             fail("a separate SD SPI bus is only supported on RP2040/RP2350 boards")
 
+    soil = node.get("soil")
+    if soil is not None:
+        if not isinstance(soil, dict):
+            fail('soil must be {"s0": {"dry": <raw>, "wet": <raw>}, ...}')
+        for sensor, points in soil.items():
+            if not SOIL_SENSOR.match(sensor):
+                fail(f'soil sensors are named "s0", "s1", ..., not "{sensor}"')
+            if not isinstance(points, dict) or not set(points) <= set(SOIL_POINTS) or not all(
+                    isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 65535
+                    for v in points.values()):
+                fail(f'soil "{sensor}" must be {{"dry": <raw reading>, "wet": <raw reading>}}')
+            if points.get("dry") is not None and points.get("dry") == points.get("wet"):
+                fail(f'soil "{sensor}": dry and wet must be different readings')
+
     window = node.get("sleep_window")
     if window is not None:
         if (not isinstance(window, list) or len(window) != 2
@@ -323,7 +345,7 @@ def next_free_id(taken):
 
 # ── What the dashboard needs (flask_api.py's /api/nodes) ─────────────────────
 
-PUBLIC_FIELDS = ("name", "short", "color", "battery", "board", "framework")
+PUBLIC_FIELDS = ("name", "short", "color", "battery", "board", "framework", "soil")
 
 
 def public_nodes(nodes):
