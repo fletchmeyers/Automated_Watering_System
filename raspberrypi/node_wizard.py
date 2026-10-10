@@ -25,7 +25,7 @@ October 2026
 
 import sqlite3
 
-from nodes import (NodeConfigError, BOARDS, ESP32_CHIPS, REQUIRED_PINS, check_node,
+from nodes import (NodeConfigError, BOARDS, REQUIRED_PINS, check_node, wifi_able,
                    next_free_id, read_node_file, save_node_file)
 
 # Each board's usual wiring, per framework: an RFM69 FeatherWing / breakout
@@ -191,11 +191,8 @@ def _steps(w, nodes, boards, taken_ids):
         able = [f for f in FRAMEWORK_NAMES if BOARDS[a["board"]][f]]
         return w.choose("Framework", [(f, FRAMEWORK_NAMES[f]) for f in able], a.get("framework", able[0]))
 
-    def wifi_able(a):
-        return a["framework"] == "arduino" and BOARDS[a["board"]]["chip"] in ESP32_CHIPS
-
     def link(a):
-        if not wifi_able(a):
+        if not wifi_able(a["board"], a["framework"]):
             return w.choose("How it reaches the Pi", [("radio", LINK_NAMES["radio"])], "radio")
         return w.choose("How it reaches the Pi",
                         [("wifi", "Wi-Fi (no radio needed; the Pi gives it the Wi-Fi settings)"),

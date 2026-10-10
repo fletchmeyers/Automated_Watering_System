@@ -653,7 +653,8 @@ def send_wifi_config(node_id, settings, answer_within=15):
             ack, _ = node.ask({"t": "wifi_config", **settings}, "wifi_config_ack", timeout=10)
             if ack and ack.get("ok"):
                 return True
-            print(f"[SETUP] Node {node_id} answered on {path} but didn't confirm the Wi-Fi settings.")
+            print(f"[SETUP] Node {node_id} answered on {path} but didn't confirm the Wi-Fi settings"
+                  + (f": {ack['e']}." if ack and ack.get("e") else "."))
             if node.chatter:
                 print("[SETUP] What it printed:\n          " + "\n          ".join(node.chatter))
             return False

@@ -111,6 +111,21 @@ def test_an_esp32_v2_defaults_to_a_wifi_node_with_the_next_free_id(pi_list):
     assert "Board: ESP32 V2 Feather (feather_esp32_v2)" in [s.strip() for s in t.said]
 
 
+def test_an_arduino_pico_w_is_offered_wifi_but_a_plain_pico_isnt(pi_list):
+    # framework, link (Wi-Fi by default), ID, name, short, storage, sense, RTC, save
+    t = Typing("arduino", *[""] * 8)
+    node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), boards=["picow"])
+    added = load_nodes()[node_id]
+    assert (added["board"], added["link"], added["storage"]) == ("picow", "wifi", "none")
+    assert "pins" not in added
+
+    t = Typing("arduino", *[""] * 9)   # as above, but radio: pins (accepted) instead of a link question
+    node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), boards=["pico"])
+    added = load_nodes()[node_id]
+    assert added.get("link", "radio") == "radio"
+    assert "  How it reaches the Pi: RFM69 radio" in t.said
+
+
 def test_an_id_with_old_readings_is_skipped(pi_list):
     db_file = pi_list / "sensors.db"
     conn = sqlite3.connect(db_file)
