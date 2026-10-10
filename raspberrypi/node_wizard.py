@@ -320,12 +320,15 @@ def new_node(nodes, wizard, boards=None, taken_ids=()):
           "question, or q to stop.")
     a = {}
 
-    def ask_from(i, only_one=False):
+    really_asked = set()   # steps that put a question (not one with only one choice)
+
+    def ask_from(i, only_one=False, history=None):
         '''Ask steps[i:] in order (just steps[i] if only_one), with b going
-        back to the last question that was really asked, or to the review
-        when changing one answer from there.'''
+        back to the last question that was really asked (from history, the
+        ones before steps[i]), or to the review when changing one answer
+        from there.'''
         editing = only_one
-        history = []
+        history = list(history or [])
         while i < len(steps):
             step = steps[i]
             if not step.applies(a):
@@ -345,6 +348,7 @@ def new_node(nodes, wizard, boards=None, taken_ids=()):
                 continue
             if w.asked > asked_before:
                 history.append(i)
+                really_asked.add(i)
             if only_one and not step.redo_after:
                 return
             only_one = False
@@ -359,7 +363,11 @@ def new_node(nodes, wizard, boards=None, taken_ids=()):
         try:
             line = w.text("Press Enter to save it, type a number to change that answer, or q to stop")
         except Back:
-            line = str(len(shown))
+            # Back through the questions from the last one, as if the review
+            # hadn't been reached yet.
+            asked = [i for i in sorted(really_asked) if steps[i].applies(a)]
+            ask_from(asked[-1], history=asked[:-1])
+            continue
         if not line:
             node = _build(nodes, a)
             try:
