@@ -17,6 +17,8 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
                                          use Wi-Fi first (or radio), from the
                                          next poll on; no re-flash or restart
     python3 node_setup.py list         — show the nodes in the list
+    python3 node_setup.py check        — check the plugged-in node's sensors (also
+                                         run after every setup); see sensor_check.py
     python3 node_setup.py --dry-run    — show what would change, change nothing
     python3 node_setup.py --node 3     — set the board up as node 3 (one already
                                          in the list), e.g. to change its ID
@@ -61,6 +63,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import node_wizard
+import sensor_check
 import soil_calibration
 from db import DB_FILE
 from nodes import (
@@ -703,6 +706,36 @@ def interactive():
     return sys.stdin.isatty()
 
 
+def check_sensors(path, expected_id=None, polls=3):
+    '''The hardware check (sensor_check.py) on the node plugged in: list its
+    sensors and what looks wrong, then (asked at a terminal) offer to
+    calibrate its soil sensors from live readings.'''
+    from usb_sync import find_node   # needs pyserial
+    usb_node, info = find_node(serial_ports(), quiet=True)
+    if usb_node is None:
+        print("[CHECK] No node answered over USB, so its sensors can't be checked.")
+        return None
+    try:
+        node_id = info["n"]
+        if expected_id is not None and node_id != expected_id:
+            print(f"[CHECK] The node on USB says it's node {node_id}, not {expected_id}; not checking it.")
+            return None
+        node = load_nodes(path, skip_invalid=True).get(node_id)
+        gap = node["sense_interval_s"] if node else 3   # new readings only come every sense interval
+        print(f"[CHECK] Node {node_id}'s sensors ({polls} readings, {gap} s apart):")
+        readings = sensor_check.take_readings(usb_node, node_id, polls, gap)
+        found = sensor_check.report(readings)
+        if node is not None and interactive():
+            try:
+                sensor_check.offer_soil_calibration(path, node_id, usb_node, readings,
+                                                    node_wizard.Wizard(), DB_FILE, gap=gap)
+            except (node_wizard.Cancelled, node_wizard.Back, EOFError, KeyboardInterrupt):
+                print("[CHECK] Calibration skipped.")
+        return found
+    finally:
+        usb_node.port.close()
+
+
 def run(args, board=None):
     # Another node's mistake shouldn't stop this one being set up: skip it.
     nodes = load_nodes(args.nodes, skip_invalid=True)
@@ -765,6 +798,8 @@ def run(args, board=None):
     if "radio" in links_of(node) and not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-sensor")
+    if running:
+        check_sensors(args.nodes, node_id)
 
 
 def add(args):
@@ -802,7 +837,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?",
-                        choices=["update", "add", "remove", "list", "prefer", "calibrate"], default="update")
+                        choices=["update", "add", "remove", "list", "prefer", "calibrate", "check"],
+                        default="update")
     parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer and calibrate: which node")
     parser.add_argument("what", nargs="*",
                         help="for prefer: wifi or radio (the link to use first); "
@@ -840,6 +876,8 @@ def main():
             order = node_wizard.prefer_link(args.nodes, args.node_id, args.what[0])
             print(f"[SETUP] Node {args.node_id} now uses {' first, then '.join(order)}. "
                   "The Pi switches within a minute.")
+        elif args.action == "check":
+            check_sensors(args.nodes)
         elif args.action == "calibrate":
             if (args.node_id is None or len(args.what) != 2
                     or args.what[1] not in ("dry", "wet", "clear")):
