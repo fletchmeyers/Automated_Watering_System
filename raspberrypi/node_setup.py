@@ -47,6 +47,10 @@ import subprocess
 import sys
 import time
 import urllib.request
+try:
+    import readline   # arrow keys and backspace work when typing answers to node_wizard's questions
+except ImportError:   # not on Windows
+    pass
 from contextlib import contextmanager
 from pathlib import Path
 

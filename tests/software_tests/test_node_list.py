@@ -100,7 +100,7 @@ class Typing:
 
 
 def test_an_esp32_v2_defaults_to_a_wifi_node_with_the_next_free_id(pi_list):
-    t = Typing(*[""] * 9)   # link, ID, name, short, storage, sense, log, RTC, save
+    t = Typing(*[""] * 8)   # link, ID, name, short, storage, sense, RTC, save (no log: nothing to log to)
     node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), boards=["feather_esp32_v2"])
     assert node_id == 3
     added = load_nodes()[3]
@@ -118,7 +118,7 @@ def test_an_id_with_old_readings_is_skipped(pi_list):
     conn.executemany("INSERT INTO readings VALUES ('t', ?, 's', 'k', 1)", [(3,), (4,)])
     conn.commit()
     conn.close()
-    t = Typing("", "3", "", *[""] * 7)   # tries ID 3 (refused), then takes the default (5)
+    t = Typing("", "3", "", *[""] * 6)   # tries ID 3 (refused), then takes the default (5)
     node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"], db_file)
     assert node_id == 5
     assert any("old readings" in s for s in t.said)
@@ -167,11 +167,53 @@ def test_q_stops_without_saving(pi_list):
     assert read_node_file() == before
 
 
-def test_answering_no_to_save_saves_nothing(pi_list):
+def test_q_at_the_review_saves_nothing(pi_list):
     before = read_node_file()
-    t = Typing(*[""] * 8, "n")
+    t = Typing(*[""] * 7, "q")
     assert node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"]) is None
     assert read_node_file() == before
+
+
+def test_b_goes_back_a_question_keeping_the_answers_as_defaults(pi_list):
+    t = Typing(
+        "",          # link: Wi-Fi
+        "",          # ID 3
+        "Kitchen",   # name
+        "b",         # (short name) back to the name...
+        "",          # ...which now defaults to "Kitchen"
+        "b", "b",    # (short name) back to the name, back to the ID
+        "7",         # ID
+        "", "",      # name (still Kitchen), short
+        "", "", "", "")   # storage, sense, RTC, save
+    node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"])
+    assert node_id == 7
+    assert load_nodes()[7]["name"] == "Kitchen"
+    assert "  Name (shown on the dashboard) [Kitchen]: " in t.prompts
+
+
+def test_b_at_the_first_question_stays_there(pi_list):
+    t = Typing("b", *[""] * 8)
+    assert node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"]) == 3
+    assert any("first question" in s for s in t.said)
+
+
+def test_changing_one_answer_at_the_review(pi_list):
+    t = Typing(*[""] * 7,
+               "4", "9",   # at the review: change answer 4 (the node ID) to 9
+               "")         # back at the review: save
+    assert node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"]) == 9
+    assert load_nodes()[9]["name"] == "ESP32 V2 Feather 3"   # the name was already answered
+
+
+def test_changing_where_it_logs_asks_the_questions_that_depend_on_it(pi_list):
+    t = Typing(*[""] * 7,
+               "7", "1",   # at the review: change answer 7 (where it logs) to the SD card...
+               "4",        # ...which needs an SD pin
+               "", "120", "",   # sense, log interval (now asked), RTC
+               "")         # save
+    node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"])
+    added = load_nodes()[node_id]
+    assert added["storage"] == "sd" and added["pins"] == {"sd_cs": 4} and added["log_interval_s"] == 120
 
 
 def test_removing_a_node(pi_list):

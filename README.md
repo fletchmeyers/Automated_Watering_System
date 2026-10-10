@@ -279,8 +279,11 @@ It asks about the node, with a default for each question (press Enter to
 take it): board (skipped when it can tell from what's plugged in),
 framework, Wi-Fi or radio, node ID (the lowest one that's free and has no
 old readings in the database), name, where it logs, pins (the board's usual
-wiring, or your own), intervals, RTC and sleep window. Then it saves the
-node and offers to set the board up as it. Plain `python3 node_setup.py`
+wiring, or your own), how often it reads its sensors, how often it logs
+(only with somewhere to log to), RTC and sleep window. Type `b` to go back
+a question. At the end it lists every answer with a number: type one to
+change it, or press Enter to save. Then it offers to set the board up as
+the new node. Plain `python3 node_setup.py`
 offers the same questions for a board that isn't a node yet. To take a
 node off the list (its readings stay): `python3 node_setup.py remove 3`.
 Anything the questions don't cover (a `battery` label for the Nodes card,
