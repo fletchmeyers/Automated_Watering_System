@@ -372,6 +372,7 @@ function setCardWide(el, wide) {
 
 function renderSoil(el, soilData) {
   const present = [0, 1, 2].filter(id => soilData[id]);
+  const node = nodeInfo(el.dataset.node).short;   // shown on each gauge in a combined card
 
   // Wide only once all 3 slots are actually in use — 1 or 2 arcs fit
   // comfortably in a single-width card, matching how many columns the
@@ -394,6 +395,7 @@ function renderSoil(el, soilData) {
         <div class="soil-pct" style="color:${color}">${pct}%</div>
       </div>
       <div class="soil-label">SENSOR ${id}</div>
+      <div class="soil-node">${node} · ${id}</div>
       <div class="soil-temp">${formatTemp(d.tmp).toFixed(1)}${tempUnitLabel()}</div>
     </div>`;
   }
@@ -714,6 +716,7 @@ function ensureSensorCard(spec, node) {
   const el = document.createElement('div');
   el.className = 'card node-card';
   el.id = id;
+  el.dataset.node = node;
   el.style.setProperty('--node-color', info.color);
   el.innerHTML = `
     <div class="card-header">
@@ -946,12 +949,15 @@ async function runPingTest() {
 // panel's Phase 2 "drag-and-drop multi-card" idea; this is only about the
 // live sensor-reading cards at the top of the dashboard.
 //
-// Dragging a card near the top or bottom edge of another moves it there.
-// Dropping it on the middle of another sensor card (outlined while you're
-// over it) combines them into one card, each keeping its own heading and
-// handle, e.g. two nodes' soil sensors side by side. Drag one back out by
-// its handle onto the edge of any card to give it its own card again; a
-// combined card left with one display goes back to a plain card.
+// Nothing moves until you let go. While dragging, a green bar on a card's
+// left or right edge shows where the card will go; a dashed outline over
+// the middle of a sensor card means it will be combined with that one.
+// A combined card is the size of a normal card: one heading for the lot,
+// and each node's display (a chip in the heading names each, in its color).
+// Two nodes' soil sensors share one grid of gauges, each labelled with its
+// node. Drag a chip out onto the edge of any card to give that display its
+// own card again; a combined card left with one display goes back to a
+// plain card.
 //
 // Sensor cards are created as their node's data arrives (see
 // ensureSensorCard), so the layout works from whatever cards are in the grid
@@ -964,13 +970,22 @@ const STATIC_CARD_LABELS = { 'card-nodes': 'Nodes', 'card-weather': 'Weather For
 // doesn't carry over.
 const CARD_PREFS_KEY = 'gardenDashboardCardPrefs.v2';
 
+function cardKind(id) {
+  const m = /^card-(\w+)-n(\d+)$/.exec(id);
+  return m ? m[1] : null;
+}
+function cardNode(id) {
+  const m = /^card-(\w+)-n(\d+)$/.exec(id);
+  return m ? m[2] : null;
+}
+function kindSpec(kind) { return SENSOR_CARDS.find(s => s.kind === kind); }
+
 function cardLabel(id) {
   if (STATIC_CARD_LABELS[id]) return STATIC_CARD_LABELS[id];
   const group = cardPrefs.groups.find(g => g.id === id);
   if (group) return group.members.map(cardLabel).join(' + ');
-  const m = /^card-(\w+)-n(\d+)$/.exec(id);
-  const spec = m && SENSOR_CARDS.find(s => s.kind === m[1]);
-  return spec ? `${spec.title} · ${nodeInfo(m[2]).short}` : id;
+  const spec = kindSpec(cardKind(id));
+  return spec ? `${spec.title} · ${nodeInfo(cardNode(id)).short}` : id;
 }
 
 // Cards directly in the grid (combined cards count as one), and every card
@@ -1028,6 +1043,7 @@ function applyCardVisibility() {
   });
   updateGroupWidths();
   renderHiddenCardsBar();
+  sizeAllCards();
 }
 
 function renderHiddenCardsBar() {
@@ -1064,10 +1080,7 @@ function buildCardControls(card) {
   // Native drag-and-drop drags the whole element it's set on; arming
   // `draggable` only while the handle is actively pressed keeps the rest
   // of the card (text, values) normally selectable the rest of the time.
-  handle.addEventListener('mousedown', (e) => {
-    e.stopPropagation();   // a display inside a combined card drags itself, not the whole card
-    card.draggable = true;
-  });
+  handle.addEventListener('mousedown', () => { card.draggable = true; });
   card.appendChild(handle);
 
   const ctrl = document.createElement('div');
@@ -1080,11 +1093,31 @@ function buildCardControls(card) {
   card.appendChild(ctrl);
 
   card.draggable = false;
+  cardSizer?.observe(card);
 }
 
+// ── Packing the grid ──
+// The grid's rows are only GRID_ROW_PX tall, and each card spans as many as
+// its own height needs, so a tall card (Nodes) doesn't stretch the rest of
+// its row: the cards beside it stack up in the space instead.
+const GRID_ROW_PX = 4;
+const GRID_GAP_PX = 16;   // the same as the grid's column gap
+
+function sizeCard(card) {
+  const inGrid = card.parentElement && card.parentElement.id === 'grid';
+  const h = inGrid ? card.getBoundingClientRect().height : 0;
+  card.style.gridRowEnd = h ? `span ${Math.ceil((h + GRID_GAP_PX) / GRID_ROW_PX)}` : '';
+}
+function sizeAllCards() { allCards().forEach(sizeCard); }
+
+const cardSizer = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(entries => entries.forEach(e => sizeCard(e.target)))
+  : null;
+
 // ── Combined cards ──
-// A combined card is a .card-group holding its displays (ordinary cards) in
-// .group-members. Saved as { id, members: [card IDs] }.
+// A combined card is a .card-group: a heading, then its displays (ordinary
+// cards, shown without their own frame) in .group-members. Saved as
+// { id, members: [card IDs] }.
 
 function groupMembersEl(groupEl) { return groupEl.querySelector(':scope > .group-members'); }
 function isGroup(el) { return el.classList.contains('card-group'); }
@@ -1093,9 +1126,36 @@ function createGroupEl(id) {
   const el = document.createElement('div');
   el.className = 'card card-group';
   el.id = id;
-  el.innerHTML = '<div class="group-members"></div>';
+  el.innerHTML = '<div class="card-header group-header"></div><div class="group-members"></div>';
   buildCardControls(el);
   return el;
+}
+
+// The heading: the sensor's title once (or each title, for a mix), then a
+// chip per display in its node's color. A chip is also that display's drag
+// handle, for taking it back out.
+function refreshGroup(groupEl) {
+  const members = Array.from(groupMembersEl(groupEl).children);
+  const kinds = [...new Set(members.map(m => cardKind(m.id)))];
+  const same = kinds.length === 1 ? kinds[0] : null;
+  [...groupEl.classList].filter(c => c.startsWith('kind-')).forEach(c => groupEl.classList.remove(c));
+  groupEl.classList.toggle('same-kind', !!same);
+  if (same) groupEl.classList.add(`kind-${same}`);
+
+  const spec = same && kindSpec(same);
+  const title = same ? spec.title : kinds.map(k => kindSpec(k)?.title || k).join(' · ');
+  const chips = members.map(m => {
+    const info = nodeInfo(cardNode(m.id));
+    const what = same ? '' : ` · ${kindSpec(cardKind(m.id))?.title || ''}`;
+    return `<span class="group-chip" draggable="true" data-member="${m.id}" style="--node-color:${info.color}"
+                  title="Drag onto the edge of a card to give it its own card again">⠿ ${info.short}${what}</span>`;
+  }).join('');
+  groupEl.querySelector(':scope > .group-header').innerHTML = `
+    <div class="card-heading">
+      <span class="card-title">${title}</span>
+      <div class="group-legend">${chips}</div>
+    </div>
+    ${spec && spec.label ? `<span class="node-badge">${spec.label}</span>` : ''}`;
 }
 
 // Put a newly created card into the combined card it was saved in, creating
@@ -1110,14 +1170,19 @@ function placeInGroup(card, group) {
   const rank = id => group.members.indexOf(id);
   const next = Array.from(box.children).find(c => rank(c.id) > rank(card.id));
   box.insertBefore(card, next || null);
+  refreshGroup(groupEl);
 }
 
-// Two or more displays (or one that needs the room) make a combined card
-// span two columns.
+// A combined card is one column wide, like any card, unless what's in it
+// really needs two: more than six soil gauges, or a display that would be
+// wide on its own card (e.g. two power monitors) in a mixed one.
 function updateGroupWidths() {
   document.querySelectorAll('#grid > .card-group').forEach(g => {
     const shown = Array.from(groupMembersEl(g).children).filter(c => c.style.display !== 'none');
-    g.classList.toggle('card-wide', shown.length >= 2 || shown.some(c => c.classList.contains('card-wide')));
+    const wide = g.classList.contains('kind-soil')
+      ? g.querySelectorAll('.soil-card').length > 6
+      : shown.some(c => c.classList.contains('card-wide'));
+    g.classList.toggle('card-wide', wide);
   });
 }
 
@@ -1142,6 +1207,7 @@ function combineCards(src, target) {
     }
     src.remove();
   }
+  refreshGroup(groupEl);
 }
 
 // After a drag: rebuild the saved combined cards from the page, dissolve any
@@ -1160,6 +1226,7 @@ function tidyGroups() {
       gEl.remove();
       return;
     }
+    refreshGroup(gEl);
     groups.push({ id: gEl.id, members: present.concat(absent) });
   });
   for (const g of cardPrefs.groups) {
@@ -1183,15 +1250,19 @@ function addCardToLayout(card) {
 }
 
 // Native HTML5 drag-and-drop, scoped to #grid, always active (arming happens
-// per-drag via the handle's mousedown above).
+// per-drag via the handle's mousedown above, or a combined card's chips).
+// Nothing moves during the drag: dropTarget/dropAction say what letting go
+// would do, shown by a class on the target card.
 let dragSrcId = null;
-let mergeTarget = null;
+let dropTarget = null;
+let dropAction = null;   // 'before', 'after' or 'combine'
 
-function setMergeTarget(el) {
-  if (mergeTarget === el) return;
-  if (mergeTarget) mergeTarget.classList.remove('merge-target');
-  mergeTarget = el;
-  if (el) el.classList.add('merge-target');
+function setDrop(target, action) {
+  if (dropTarget === target && dropAction === action) return;
+  if (dropTarget) dropTarget.classList.remove('drop-before', 'drop-after', 'merge-target');
+  dropTarget = target;
+  dropAction = action;
+  if (target) target.classList.add(action === 'combine' ? 'merge-target' : `drop-${action}`);
 }
 
 // Only sensor cards combine: not the Nodes or Weather card.
@@ -1203,10 +1274,12 @@ function initCardDragAndDrop() {
   const grid = document.getElementById('grid');
 
   grid.addEventListener('dragstart', (e) => {
-    const card = e.target.closest('.card');
-    if (!card || !card.draggable) return;
+    const chip = e.target.closest && e.target.closest('.group-chip');
+    const card = chip ? document.getElementById(chip.dataset.member) : e.target.closest('.card');
+    if (!card || (!chip && !card.draggable)) return;
+    e.stopPropagation();
     dragSrcId = card.id;
-    card.classList.add('dragging');
+    (chip || card).classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', card.id);   // Firefox won't start a drag without data
   });
@@ -1216,36 +1289,35 @@ function initCardDragAndDrop() {
     e.preventDefault();
     const dragEl = document.getElementById(dragSrcId);
     const over = e.target.closest('#grid > .card');
-    if (!dragEl || !over || over === dragEl) { setMergeTarget(null); return; }
+    if (!dragEl || !over || over === dragEl) { setDrop(null, null); return; }
     const rect = over.getBoundingClientRect();
     const fx = (e.clientX - rect.left) / rect.width;
     const fy = (e.clientY - rect.top) / rect.height;
+    const middle = fx > 0.25 && fx < 0.75 && fy > 0.15 && fy < 0.85;
+    // Over its own combined card, a display can only be taken out (to
+    // either side), not combined back in.
+    if (middle && !over.contains(dragEl) && canCombine(dragEl, over)) setDrop(over, 'combine');
+    else if (middle && over.contains(dragEl)) setDrop(null, null);
+    else setDrop(over, fx < 0.5 ? 'before' : 'after');
+  });
 
-    if (over.contains(dragEl)) {
-      // A display over its own combined card: only its top or bottom edge
-      // takes it out, to just before or after the combined card.
-      setMergeTarget(null);
-      if (fy < 0.15) grid.insertBefore(dragEl, over);
-      else if (fy > 0.85) grid.insertBefore(dragEl, over.nextSibling);
-      return;
-    }
-    const middle = fx > 0.2 && fx < 0.8 && fy > 0.2 && fy < 0.8;
-    if (middle && canCombine(dragEl, over)) { setMergeTarget(over); return; }
-    setMergeTarget(null);
-    grid.insertBefore(dragEl, fy < 0.5 ? over : over.nextSibling);
+  grid.addEventListener('dragleave', (e) => {
+    if (dropTarget && !grid.contains(e.relatedTarget)) setDrop(null, null);
   });
 
   grid.addEventListener('drop', (e) => {
     if (!dragSrcId) return;
     e.preventDefault();
     const dragEl = document.getElementById(dragSrcId);
-    if (dragEl && mergeTarget) combineCards(dragEl, mergeTarget);
+    if (!dragEl || !dropTarget) return;
+    if (dropAction === 'combine') combineCards(dragEl, dropTarget);
+    else grid.insertBefore(dragEl, dropAction === 'before' ? dropTarget : dropTarget.nextSibling);
   });
 
-  grid.addEventListener('dragend', (e) => {
-    const card = e.target.closest('.card');
-    if (card) { card.classList.remove('dragging'); card.draggable = false; }
-    setMergeTarget(null);
+  grid.addEventListener('dragend', () => {
+    grid.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+    allCards().forEach(card => { card.draggable = false; });
+    setDrop(null, null);
     if (dragSrcId) {
       tidyGroups();
       // Keep saved positions of cards that aren't on the page right now,
@@ -1264,6 +1336,8 @@ function initCardDragAndDrop() {
     if (dragSrcId) return; // an actual drag is in progress; dragend will handle it
     allCards().forEach(card => { card.draggable = false; });
   });
+
+  window.addEventListener('resize', sizeAllCards);
 }
 
 function initCardCustomization() {

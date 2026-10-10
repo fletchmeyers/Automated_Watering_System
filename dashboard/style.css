@@ -186,8 +186,8 @@
 
   .node-metrics {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    gap: 10px 16px;
+    grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+    gap: 10px 12px;
   }
   .node-metric-value {
     font-family: var(--font-mono);
@@ -264,31 +264,76 @@
     opacity: 0.4;
   }
 
-  /* Dropping here combines the dragged card with this one */
+  /* While dragging: where the card will go if dropped here */
   .card.merge-target {
     outline: 2px dashed var(--green);
     outline-offset: -6px;
   }
+  .card.drop-before { box-shadow: -9px 0 0 -5px var(--green); }
+  .card.drop-after  { box-shadow:  9px 0 0 -5px var(--green); }
 
-  /* A combined card: its displays (ordinary cards) side by side, each keeping
-     its own heading, node colour, handle and hide button. */
-  .card-group {
-    padding: 36px 12px 44px 12px;
-  }
-  .group-members {
+  /* A combined card: one heading (the sensor's title, a chip per node), then
+     each node's display without its own frame, title or controls. */
+  .group-legend {
     display: flex;
     flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .group-chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--node-color);
+    border: 1px solid color-mix(in srgb, var(--node-color) 45%, var(--border));
+    border-radius: 999px;
+    padding: 1px 8px;
+    cursor: grab;
+    user-select: none;
+  }
+  .group-chip.dragging { opacity: 0.4; }
+  .group-members {
+    display: flex;
+    flex-direction: column;
     gap: 12px;
   }
-  /* Side by side while there's room, one under the other when there isn't;
-     a display that needs the width (three soil sensors) asks for twice as much. */
-  .card-group .card {
-    flex: 1 1 240px;
-    min-width: 0;
-    padding: 16px 16px 40px 16px;
+  .card-group .group-members > .card {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    overflow: visible;
   }
-  .card-group .card.card-wide {
-    flex: 2 1 420px;
+  .card-group .group-members > .card + .card {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .card-group .group-members > .card::before,
+  .card-group .group-members > .card > .card-drag-handle,
+  .card-group .group-members > .card > .card-controls { display: none; }
+  .card-group .group-members > .card > .card-header { margin-bottom: 8px; }
+  /* All the same sensor: the title and chip label are in the heading already */
+  .card-group.same-kind .group-members > .card .card-title,
+  .card-group.same-kind .group-members > .card .node-badge { display: none; }
+
+  /* Soil: every node's gauges in one grid, each labelled with its node */
+  .card-group.kind-soil .group-members {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 10px;
+  }
+  .card-group.kind-soil .group-members > .card,
+  .card-group.kind-soil .group-members > .card > .card-body,
+  .card-group.kind-soil .soil-grid { display: contents; }
+  .card-group.kind-soil .group-members > .card > .card-header { display: none; }
+  .card-group.kind-soil .group-members > .card + .card { border: none; padding: 0; }
+  .soil-node { display: none; }
+  .card-group .soil-label { display: none; }
+  .card-group .soil-node {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--node-color);
   }
 
   .card-drag-handle {
@@ -359,10 +404,15 @@
   }
   .hidden-card-chip button:hover { color: var(--text); background: var(--bg3); }
 
+  /* Rows are only 4px: each card spans as many as its height needs (sizeCard
+     in dashboard.js, GRID_ROW_PX), so a tall card doesn't stretch its row and
+     the cards beside it fill the space under each other. */
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 16px;
+    grid-auto-rows: 4px;
+    column-gap: 16px;
+    align-items: start;
   }
 
   .card {
