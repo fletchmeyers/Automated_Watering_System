@@ -184,6 +184,40 @@
     column-gap: 20px;
   }
   .node-panel-section .health-row:last-child { border-bottom: 1px solid var(--border); }
+  .node-panel-tools {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  /* The node's color, as a swatch that opens a color picker */
+  .node-color {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .node-color input {
+    width: 40px;
+    height: 40px;
+    margin: -9px;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+  }
+  .node-color-reset {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .node-color-reset[hidden] { display: none; }
   .panel-close {
     margin-left: auto;
     background: none;
@@ -234,10 +268,17 @@
   #weather-panel { padding-bottom: 20px; }
   .weather-row {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     gap: 12px 24px;
   }
+  .weather-title {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  #weather-panel.collapsed #weather-source-select { display: none; }
   #weather-body {
     display: flex;
     flex-wrap: wrap;
@@ -246,8 +287,8 @@
     min-width: 0;
   }
   @media (max-width: 900px) {
-    .weather-row { grid-template-columns: minmax(0, 1fr) auto; }
-    #weather-body { grid-column: 1 / -1; grid-row: 2; }
+    .weather-row { grid-template-columns: minmax(0, 1fr); }
+    .weather-title { flex-direction: row; align-items: center; justify-content: space-between; }
   }
   /* Today: icon, then temperature and "feels like" with humidity, wind and
      precipitation in a line under them */
@@ -1081,11 +1122,38 @@
     min-width: 120px;
   }
 
-  .field-chip .swatch {
-    width: 8px; height: 8px;
+  .field-chip label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  /* A picked field's color: a dot that opens a color picker. Unpicked
+     fields have no color yet, so no dot. */
+  .field-chip .swatch-picker {
+    width: 12px;
+    height: 12px;
+    padding: 0;
+    border: none;
     border-radius: 50%;
-    background: var(--field-color, var(--teal));
+    background: var(--field-color);
+    cursor: pointer;
     flex-shrink: 0;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  .field-chip .swatch-picker::-webkit-color-swatch-wrapper { padding: 0; }
+  .field-chip .swatch-picker::-webkit-color-swatch { border: none; border-radius: 50%; }
+  .field-chip .swatch-picker::-moz-color-swatch { border: none; border-radius: 50%; }
+  .field-chip:not(.checked) .swatch-picker { display: none; }
+  .field-clear-btn { align-self: center; }
+
+  /* Shared axes sits next to Plot, at the right end of the range row */
+  .plot-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
   }
 
   .overlay-toggle {
@@ -1246,7 +1314,6 @@
     padding: 6px 16px;
     border-radius: 6px;
     cursor: pointer;
-    margin-left: auto;
     transition: background 0.15s;
   }
 
@@ -1267,6 +1334,7 @@
 
   @media (max-width: 700px) {
     .time-range-row { flex-direction: column; align-items: stretch; }
-    #plot-btn { margin-left: 0; }
+    .plot-actions { margin-left: 0; }
+    .plot-actions #plot-btn { flex: 1; }
     .custom-range { flex-wrap: wrap; }
   }

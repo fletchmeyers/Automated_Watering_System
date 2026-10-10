@@ -51,38 +51,60 @@ let analysisFields = [];
 
 function fieldById(id) { return analysisFields.find(f => f.id === id); }
 
-// Line color per field, keyed off its sensor definition plus its node (not
-// its position in the currently-available list) so a field's color stays
-// stable regardless of which other fields have data. Node identity is shown
-// by the checkbox grouping and the "· Pico"/"· M0" in every label instead.
+// A field only gets a color once it's picked: the first of FIELD_COLORS no
+// other picked field is using (or the color the user chose for it before).
+// Picking or dropping another field never changes a color already given, so
+// a line keeps its color while the selection changes. A picked field's
+// swatch opens a color picker; that choice is kept in this browser.
+// Swatch, line, axis and legend always agree.
+const FIELD_COLORS_KEY = 'gardenAnalysisFieldColors';
+let chosenFieldColors = (function () {
+  try { return JSON.parse(localStorage.getItem(FIELD_COLORS_KEY)) || {}; } catch (e) { return {}; }
+})();
+let pickedColors = new Map();   // field id -> color, for the picked fields
+
+// For a field picked in a dropdown (scatter, day/day) rather than a chip.
 function baseFieldColor(f) { return FIELD_COLORS[(f.def + f.node * 3) % FIELD_COLORS.length]; }
 
-// With 8 colors and dozens of fields, two checked fields can share a base
-// color — and the colors are how lines are told apart (on a phone the legend
-// is the only key). So the checked fields pick colors together: each keeps
-// its own unless an earlier checked field already has it, then takes the
-// next free one. Their checkbox swatches follow, so swatch, line, axis and
-// legend always agree.
-let checkedColors = new Map();
+function fieldColor(f) { return pickedColors.get(f.id) || chosenFieldColors[f.id] || baseFieldColor(f); }
 
-function fieldColor(f) { return checkedColors.get(f.id) || baseFieldColor(f); }
-
+// Give every picked field without a color one; drop colors of fields no
+// longer picked.
 function assignCheckedColors() {
-  checkedColors = new Map();
-  const used = new Set();
+  for (const id of [...pickedColors.keys()]) if (!tsSelectedFields.has(id)) pickedColors.delete(id);
   for (const f of analysisFields) {
-    if (!tsSelectedFields.has(f.id)) continue;
-    let i = FIELD_COLORS.indexOf(baseFieldColor(f));
-    for (let tries = 0; tries < FIELD_COLORS.length && used.has(FIELD_COLORS[i]); tries++) {
-      i = (i + 1) % FIELD_COLORS.length;
-    }
-    checkedColors.set(f.id, FIELD_COLORS[i]);
-    used.add(FIELD_COLORS[i]);
+    if (!tsSelectedFields.has(f.id) || pickedColors.has(f.id)) continue;
+    const used = new Set(pickedColors.values());
+    const color = chosenFieldColors[f.id] || FIELD_COLORS.find(c => !used.has(c))
+      || FIELD_COLORS[pickedColors.size % FIELD_COLORS.length];
+    pickedColors.set(f.id, color);
   }
   document.querySelectorAll('.field-chip').forEach(chip => {
     const f = fieldById(chip.dataset.field);
-    if (f) chip.style.setProperty('--field-color', fieldColor(f));
+    if (!f) return;
+    const color = pickedColors.get(f.id);
+    chip.style.setProperty('--field-color', color || 'transparent');
+    const picker = chip.querySelector('.swatch-picker');
+    if (picker && color) picker.value = color;
   });
+}
+
+function setFieldColor(id, color) {
+  pickedColors.set(id, color);
+  chosenFieldColors[id] = color;
+  try { localStorage.setItem(FIELD_COLORS_KEY, JSON.stringify(chosenFieldColors)); } catch (e) { /* non-fatal */ }
+  assignCheckedColors();
+  if (lastMultiAxis && analysisMode !== 'correlation' && analysisMode !== 'gaps') runAnalysisPlot();
+}
+
+function clearFields() {
+  tsSelectedFields.clear();
+  document.querySelectorAll('.field-chip').forEach(chip => {
+    chip.classList.remove('checked');
+    const box = chip.querySelector('input[type="checkbox"]');
+    if (box) box.checked = false;
+  });
+  assignCheckedColors();
 }
 
 // Every field whose raw key is "tmp" is a temperature reading (soil ×3,
@@ -240,6 +262,7 @@ function setAnalysisMode(mode) {
   // apply to every multi-axis mode.
   const multiAxis = mode === 'timeseries' || mode === 'trend' || mode === 'rate';
   document.getElementById('ts-overlay-toggle').style.display = multiAxis ? 'flex' : 'none';
+  document.getElementById('share-axes-btn').style.display = multiAxis ? '' : 'none';
   for (const id of ['raw-toggle-btn', 'smoothed-toggle-btn']) {
     document.getElementById(id).style.display = mode === 'timeseries' ? '' : 'none';
   }
@@ -303,17 +326,24 @@ function buildFieldPicker() {
   const nodes = [...new Set(fields.map(f => f.node))];
   wrap.innerHTML = nodes.map(node => {
     const info = nodeInfo(node);
+    // The swatch (a picked field's color, which opens a color picker) sits
+    // outside the label so clicking it doesn't also untick the field.
     const chips = fields.filter(f => f.node === node).map(f => {
       const checked = tsSelectedFields.has(f.id);
-      return `<label class="field-chip${checked ? ' checked' : ''}" style="--field-color:${fieldColor(f)}" data-field="${f.id}">
-        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleField('${f.id}', this.checked)">
-        <span class="swatch"></span>${chipLabel(f)}
-      </label>`;
+      const color = pickedColors.get(f.id);
+      return `<span class="field-chip${checked ? ' checked' : ''}" style="--field-color:${color || 'transparent'}" data-field="${f.id}">
+        <label>
+          <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleField('${f.id}', this.checked)">
+          ${chipLabel(f)}
+        </label>
+        <input type="color" class="swatch-picker" value="${color || '#888888'}" title="Change this line's color"
+               onchange="setFieldColor('${f.id}', this.value)">
+      </span>`;
     }).join('');
     return `<div class="field-group" style="--node-color:${info.color}">
       <span class="field-group-name">${info.name}</span>${chips}
     </div>`;
-  }).join('');
+  }).join('') + `<button type="button" class="overlay-btn field-clear-btn" onclick="clearFields()">Clear selection</button>`;
 
   const opts = fields.map(f => `<option value="${f.id}">${fieldLabel(f)}</option>`).join('');
   const xSel = document.getElementById('scatter-x-select');

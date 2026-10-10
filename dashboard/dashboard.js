@@ -52,6 +52,40 @@ async function loadNodes(timeoutMs = 4000) {
   } catch (e) {
     console.warn(`Couldn't load ${NODES_URL}, using the built-in node list:`, e);
   }
+  // Remember the list's own colors (to go back to), then apply this
+  // browser's picks.
+  piNodeColors = Object.fromEntries(Object.entries(NODES).map(([id, n]) => [id, n.color]));
+  for (const [id, color] of Object.entries(nodeColorOverrides)) {
+    if (NODES[id]) NODES[id].color = color;
+  }
+}
+
+// ── Node colors picked on this page ──
+// A node's color comes from the Pi's node list unless it's been changed with
+// the color picker in its details row; that choice is kept in this browser
+// (it doesn't change nodes.json). Everything tinted by the node follows.
+const NODE_COLORS_KEY = 'gardenDashboardNodeColors';
+let nodeColorOverrides = (function () {
+  try { return JSON.parse(localStorage.getItem(NODE_COLORS_KEY)) || {}; } catch (e) { return {}; }
+})();
+let piNodeColors = {};   // the Pi's own color for each node, to go back to
+
+function setNodeColor(n, color, save = true) {
+  const id = String(n);
+  if (!NODES[id]) return;
+  NODES[id].color = color || piNodeColors[id] || NODES[id].color;
+  if (save) {
+    if (color) nodeColorOverrides[id] = color; else delete nodeColorOverrides[id];
+    try { localStorage.setItem(NODE_COLORS_KEY, JSON.stringify(nodeColorOverrides)); } catch (e) { /* non-fatal */ }
+  }
+  const c = NODES[id].color;
+  document.querySelectorAll(`[data-node="${id}"]`).forEach(el => el.style.setProperty('--node-color', c));
+  renderNodeStatus(lastByNode);
+  document.querySelectorAll('#grid > .card-group').forEach(refreshGroup);
+  const picker = document.querySelector(`#node-panel-${id} .node-color-picker`);
+  if (picker && picker.value !== c) picker.value = c;
+  document.querySelector(`#node-panel-${id} .node-color-reset`)?.toggleAttribute('hidden', !(id in nodeColorOverrides));
+  if (typeof buildFieldPicker === 'function') buildFieldPicker();
 }
 const DEFAULT_BATTERY = { type: 'batt', label: 'BATTERY' };
 const NODE_FALLBACK_COLORS = ['#d2a8ff', '#ffa657', '#a5d6ff', '#7ee787'];
@@ -702,8 +736,22 @@ function renderNodePanels(byNode) {
       panel.className = 'panel node-card node-panel';
       panel.id = `node-panel-${n}`;
       panel.dataset.node = id;
+      // The title and readings are redrawn every refresh; the color picker
+      // and close button are made once, so an open color picker isn't lost.
       panel.innerHTML = `
-        <div class="node-panel-head"></div>
+        <div class="node-panel-head">
+          <div class="node-panel-title"></div>
+          <div class="node-metrics"></div>
+          <div class="node-panel-tools">
+            <label class="node-color" title="This node's color on the dashboard (kept in this browser)">
+              <input type="color" class="node-color-picker" value="${info.color}"
+                     oninput="setNodeColor(${n}, this.value, false)" onchange="setNodeColor(${n}, this.value)">
+            </label>
+            <button type="button" class="node-color-reset" onclick="setNodeColor(${n}, null)"
+                    title="Back to the color from the node list"${id in nodeColorOverrides ? '' : ' hidden'}>↺</button>
+            <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>
+          </div>
+        </div>
         <div class="node-panel-body">
           ${nodePanelSection(`node-panel-${n}-system`, wifi ? 'Wi-Fi &amp; System' : 'Radio &amp; System',
                              `<span class="node-badge">${wifi ? 'Wi-Fi' : 'RFM69'}</span>`)}
@@ -728,22 +776,18 @@ function renderNodePanels(byNode) {
       ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)} — logging to storage, radio off · ${reported}`
       : reported;
 
-    // The node's name, battery and storage share the top line with the close
-    // button; radio/system and sensor health sit side by side under it.
-    panel.querySelector('.node-panel-head').innerHTML = `
-      <div class="node-panel-title">
-        ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
-        <span class="node-row-name">${info.name}</span>
-        <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : 'no data in 6h'}</span>
-        <div class="node-row-note">${note}</div>
-      </div>
-      <div class="node-metrics">
-        ${metrics.map(([label, value]) => `<div>
-          <div class="mini-label">${label}</div>
-          <div class="node-metric-value">${value}</div>
-        </div>`).join('')}
-      </div>
-      <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>`;
+    // The node's name, battery and storage share the top line with its color
+    // picker and close button; radio/system and sensor health sit side by
+    // side under it.
+    panel.querySelector('.node-panel-title').innerHTML = `
+      ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
+      <span class="node-row-name">${info.name}</span>
+      <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : 'no data in 6h'}</span>
+      <div class="node-row-note">${note}</div>`;
+    panel.querySelector('.node-metrics').innerHTML = metrics.map(([label, value]) => `<div>
+      <div class="mini-label">${label}</div>
+      <div class="node-metric-value">${value}</div>
+    </div>`).join('');
 
     let seq = null;
     for (let i = np.length - 1; i >= 0; i--) if ('q' in np[i]) { seq = np[i].q; break; }
