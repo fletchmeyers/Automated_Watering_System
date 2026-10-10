@@ -254,13 +254,38 @@ require credentials for.
 
 ## Adding or updating a node
 
-Every node's settings live in **`nodes.json`** at the repo root: name,
-framework (`circuitpython` or `arduino`), board, sense and log intervals,
-storage (`sd`, `flash` for Arduino SAMD boards, or `none`), pins, and an
-optional `sleep_window`. `main.py` takes its node list from it (restart
-`garden-sensor` after changing it), and `node_setup.py` builds each node's
-settings from it. Sensors aren't listed: both firmwares look for every
-sensor they know at boot and use whichever answer.
+Every node's settings live in the Pi's node list,
+**`raspberrypi/nodes.json`**: name, framework (`circuitpython` or
+`arduino`), board, Wi-Fi or radio, sense and log intervals, storage (`sd`,
+`flash` for Arduino SAMD boards, or `none`), pins, and an optional
+`sleep_window`. It's the Pi's own file, not in git (so adding a node never
+needs a commit), and it's in both backups (`deploy/backup.sh` and the
+nightly USB stick). A fresh Pi starts it from `nodes.example.json`, the two
+garden nodes. `main.py` takes its node list from it (restart
+`garden-sensor` after changing it), `wifi_nodes.py` which nodes may connect
+over Wi-Fi, the dashboard names and colors (through `/api/nodes`), and
+`node_setup.py` builds each node's settings from it. Sensors aren't
+listed: both firmwares look for every sensor they know at boot and use
+whichever answer.
+
+**Adding a node** — plug the board into the Pi and run:
+
+```bash
+cd ~/Automated_Watering_System/raspberrypi
+python3 node_setup.py add
+```
+
+It asks about the node, with a default for each question (press Enter to
+take it): board (skipped when it can tell from what's plugged in),
+framework, Wi-Fi or radio, node ID (the lowest one that's free and has no
+old readings in the database), name, where it logs, pins (the board's usual
+wiring, or your own), intervals, RTC and sleep window. Then it saves the
+node and offers to set the board up as it. Plain `python3 node_setup.py`
+offers the same questions for a board that isn't a node yet. To take a
+node off the list (its readings stay): `python3 node_setup.py remove 3`.
+Anything the questions don't cover (a `battery` label for the Nodes card,
+a different `color`) can be edited in `nodes.json` with `nano`; it's
+checked every time it's read.
 
 To update a node to the latest code, plug it into the Pi by USB and run:
 
@@ -268,19 +293,19 @@ To update a node to the latest code, plug it into the Pi by USB and run:
 cd ~/Automated_Watering_System/raspberrypi
 python3 node_setup.py --dry-run     # see what would change first
 python3 node_setup.py               # update it
-python3 node_setup.py list          # the nodes in nodes.json
+python3 node_setup.py list          # the nodes in the list
 ```
 
 It works out which node is plugged in and what it runs. A CircuitPython
 board gets the changed files from `circuitpython/` plus the libraries they
 use, and a `node_config.py` written from `nodes.json` (and is restarted
 from its console if `boot.py` changed). An Arduino board is built with its
-settings and flashed. For a board that isn't a node yet, add it to
-`nodes.json` first and pass `--node N`. The library `.mpy` files in
+settings and flashed. The library `.mpy` files in
 `circuitpython/lib` must match the board's CircuitPython major version.
 
-**A new board, or switching a board's framework** — set it up in
-`nodes.json` (`"framework"`: `circuitpython` or `arduino`), plug it in, and:
+**Switching a board's framework, or giving it another node's ID** — change
+`"framework"` in `nodes.json` (`circuitpython` or `arduino`) if needed,
+plug it in, and:
 
 ```bash
 python3 node_setup.py --node 3
@@ -315,7 +340,7 @@ no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 
 **Wi-Fi nodes** — an ESP32 board indoors can skip the radio (and the SD
-card): give it `"link": "wifi"` in `nodes.json` and no `pins` at all. It
+card): answer Wi-Fi when `node_setup.py add` asks (`"link": "wifi"`, no `pins`). It
 joins the Pi's own Wi-Fi network and connects to the `garden-wifi` service
 (`raspberrypi/wifi_nodes.py`, installed by `deploy/install.sh`), which
 polls it every minute and stores its readings like a radio node's. The
@@ -339,9 +364,11 @@ python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_arduino.json -
 A node with a mistake in `nodes.json` is skipped (with a warning) rather
 than stopping `main.py` or `node_setup.py` from running for the others.
 
-The dashboard reads node names, colors and battery labels from
-`nodes.json` too, so a new node needs no other edits: restart
-`garden-sensor` on the Pi so it starts polling it.
+The dashboard reads node names, colors and battery labels from the Pi's
+list too (`/api/nodes`; its built-in list is only used if the Pi can't be
+reached), so a new node needs no other edits: restart `garden-sensor` on
+the Pi so it starts polling a radio node (a Wi-Fi node is picked up by
+itself).
 
 Flashing Arduino boards needs PlatformIO on the Pi, a one-time install
 (`deploy/setup.sh --platformio` does the same):

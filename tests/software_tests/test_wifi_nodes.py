@@ -45,8 +45,8 @@ def test_wifi_node_mistakes_are_reported(node, message):
 
 
 def test_radio_loop_and_wifi_service_split_the_nodes(tmp_path):
-    from nodes import NODES_FILE
-    data = json.loads(NODES_FILE.read_text())
+    from nodes import EXAMPLE_FILE
+    data = json.loads(EXAMPLE_FILE.read_text())
     data["nodes"]["20"] = wifi_node()
     path = tmp_path / "nodes.json"
     path.write_text(json.dumps(data))
@@ -61,8 +61,8 @@ def test_radio_loop_and_wifi_service_split_the_nodes(tmp_path):
 @pytest.fixture
 def service(tmp_path, monkeypatch):
     monkeypatch.setattr(communication_indoor, "ARCHIVE_DIR", tmp_path)
-    from nodes import NODES_FILE
-    data = json.loads(NODES_FILE.read_text())
+    from nodes import EXAMPLE_FILE
+    data = json.loads(EXAMPLE_FILE.read_text())
     data["nodes"]["20"] = wifi_node()
     nodes_file = tmp_path / "nodes.json"
     nodes_file.write_text(json.dumps(data))

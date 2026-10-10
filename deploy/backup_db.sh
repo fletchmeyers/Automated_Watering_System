@@ -1,5 +1,6 @@
 #!/bin/sh
-# deploy/backup_db.sh — copy sensors.db to the backup USB stick.
+# deploy/backup_db.sh — copy sensors.db and the node list (nodes.json) to
+# the backup USB stick.
 #
 # Run nightly as root by garden-backup.timer (see deploy/install.sh). To run
 # one now and see the result:
@@ -78,11 +79,19 @@ cp "$SNAP.gz" "$DEST/.sensors_$TODAY.db.gz.part"
 mv "$DEST/.sensors_$TODAY.db.gz.part" "$DEST/sensors_$TODAY.db.gz"
 echo "Backed up $ROWS readings to $DEST/sensors_$TODAY.db.gz ($(du -h "$DEST/sensors_$TODAY.db.gz" | cut -f1))"
 
-# Retention.
+# The node list too (tiny): a new card needs it to know its nodes.
+NODES="$(dirname "$DB")/nodes.json"
+if [ -f "$NODES" ]; then
+    cp "$NODES" "$DEST/.nodes_$TODAY.json.part"
+    mv "$DEST/.nodes_$TODAY.json.part" "$DEST/nodes_$TODAY.json"
+    echo "Backed up the node list to $DEST/nodes_$TODAY.json"
+fi
+
+# Retention (the same for both kinds of file).
 NOW=$(date +%s)
-for f in "$DEST"/sensors_????-??-??.db.gz; do
+for f in "$DEST"/sensors_????-??-??.db.gz "$DEST"/nodes_????-??-??.json; do
     [ -e "$f" ] || continue
-    d=$(basename "$f" | sed 's/^sensors_\(....-..-..\)\.db\.gz$/\1/')
+    d=$(basename "$f" | sed 's/^[a-z]*_\(....-..-..\)\..*$/\1/')
     age=$(( (NOW - $(date -d "$d" +%s)) / 86400 ))
     if [ "$age" -lt $KEEP_DAILY ]; then
         continue
@@ -93,7 +102,7 @@ for f in "$DEST"/sensors_????-??-??.db.gz; do
     rm -f "$f"
     echo "Removed old backup $(basename "$f")"
 done
-rm -f "$DEST"/.sensors_*.part
+rm -f "$DEST"/.sensors_*.part "$DEST"/.nodes_*.part
 
 COUNT=$(ls "$DEST"/sensors_*.db.gz | wc -l)
 echo "$COUNT backups on the stick, $(df -Ph "$MOUNT" | awk 'NR==2 {print $4}') free"

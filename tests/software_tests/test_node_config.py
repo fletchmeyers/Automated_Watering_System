@@ -8,17 +8,17 @@ import sys
 import pytest
 
 import node_setup
-from nodes import (NodeConfigError, load_nodes, check_node, sleep_windows, sync_node_ids,
+from nodes import (NodeConfigError, EXAMPLE_FILE, load_nodes, check_node, sleep_windows, sync_node_ids,
                    circuitpython_config, arduino_build_flags, arduino_env)
 
 
 def real():
-    return load_nodes()
+    return load_nodes(EXAMPLE_FILE)   # what a fresh Pi's list starts as: the two garden nodes
 
 
 # ── nodes.json ───────────────────────────────────────────────────────────────
 
-def test_repo_nodes_json_matches_the_running_setup():
+def test_example_nodes_json_matches_the_running_setup():
     n = real()
     assert list(n) == [1, 2]
     assert sleep_windows(n) == {2: ("19:00", "07:00")}

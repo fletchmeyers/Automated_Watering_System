@@ -126,7 +126,7 @@
 <script>
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
-// Node names and colors come from nodes.json; everything else waits for them
+// Node names and colors come from the Pi (/api/nodes); everything else waits for them
 // (a few seconds at most — loadNodes() falls back to its built-in list).
 loadNodes().then(() => {
   initUnitToggle();

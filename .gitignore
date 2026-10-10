@@ -10,4 +10,9 @@ data_from_pico.txt
 raspberrypi/data_from_pico.txt
 raspberrypi/archive/
 raspberrypi/sensors.db*
+
+# The node list is the Pi's own (node_setup.py add); nodes.example.json is
+# what a fresh Pi starts it from.
+raspberrypi/nodes.json
+/nodes.json
 circuitpython/node_config.py
