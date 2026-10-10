@@ -76,7 +76,8 @@ def test_the_dashboard_gets_names_and_colors_but_no_pins():
     shown = public_nodes(load_nodes(nodes.EXAMPLE_FILE))
     assert shown[1] == {"name": "Pico (CircuitPython)", "short": "Pico", "color": "#79c0ff",
                         "battery": {"type": "pw0", "label": "CAR BATTERY"},
-                        "board": "pico2w", "framework": "circuitpython", "link": "radio"}
+                        "board": "pico2w", "framework": "circuitpython", "link": "radio",
+                        "links": ["radio"]}
     assert "pins" not in shown[2]
 
 

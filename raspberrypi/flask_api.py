@@ -39,7 +39,8 @@ import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from nodes import NodeConfigError, link_of, load_nodes, public_nodes
+from links import active_link
+from nodes import NodeConfigError, load_nodes, public_nodes
 from wifi_nodes import ask_wifi_service
 
 from sync_indoor import (
@@ -123,12 +124,14 @@ def api_health():
 
 
 def is_wifi_node(node_id):
-    '''A Wi-Fi node is reached through garden-wifi (wifi_nodes.py), not main.py's radio.'''
+    '''Whether node_id is reached through garden-wifi (wifi_nodes.py) right
+    now rather than main.py's radio: a Wi-Fi node, or one with both whose
+    Wi-Fi is the link in use (links.py).'''
     try:
         node = load_nodes(skip_invalid=True).get(node_id)
     except NodeConfigError:
         return False
-    return node is not None and link_of(node) == "wifi"
+    return node is not None and active_link(node_id, node) == "wifi"
 
 
 def requested_node():
@@ -192,12 +195,16 @@ def api_node_info():
 def api_nodes():
     # How the dashboard shows each node (name, short name, color, battery
     # label, link) — read fresh each time, so a node added with
-    # node_setup.py shows up on the next page load.
+    # node_setup.py shows up on the next page load. "link" is the one in
+    # use right now; "links" all it has, in order of preference.
     try:
         nodes = load_nodes(skip_invalid=True)
     except NodeConfigError as e:
         return jsonify({"status": "error", "error": str(e)}), 500
-    return jsonify({"status": "ok", "nodes": {str(n): v for n, v in public_nodes(nodes).items()}})
+    shown = public_nodes(nodes)
+    for n, node in nodes.items():
+        shown[n]["link"] = active_link(n, node)
+    return jsonify({"status": "ok", "nodes": {str(n): v for n, v in shown.items()}})
 
 
 @app.route("/api/ping_test", methods=["POST"])

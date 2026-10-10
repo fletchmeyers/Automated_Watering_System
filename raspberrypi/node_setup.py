@@ -10,6 +10,9 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
     python3 node_setup.py add          — add a node to the list (questions with
                                          defaults), then set up the board
     python3 node_setup.py remove 3     — take node 3 off the list
+    python3 node_setup.py prefer 3 wifi — for a node with Wi-Fi and the radio:
+                                         use Wi-Fi first (or radio), from the
+                                         next poll on; no re-flash or restart
     python3 node_setup.py list         — show the nodes in the list
     python3 node_setup.py --dry-run    — show what would change, change nothing
     python3 node_setup.py --node 3     — set the board up as node 3 (one already
@@ -27,7 +30,7 @@ gets it there, switching frameworks if needed:
   - Arduino on an RP2040/RP2350 board: builds a UF2 with this node's settings
     and copies it to the board's bootloader drive.
   - Arduino on the Feather M0 or an ESP32: builds and uploads over its serial
-    port. A Wi-Fi node ("link": "wifi") is then sent the Pi's Wi-Fi network,
+    port. A node with Wi-Fi ("link": "wifi" or both) is then sent the Pi's Wi-Fi network,
     password and address over USB, and checked for connecting to garden-wifi.
 To reach the bootloader, a CircuitPython board is restarted from its console
 and an Arduino one with a 1200-baud touch; a blank Pico is already there.
@@ -57,7 +60,7 @@ from pathlib import Path
 import node_wizard
 from db import DB_FILE
 from nodes import (
-    NodeConfigError, NODES_FILE, load_nodes, storage_of, link_of, circuitpython_config, circuitpython_uf2_url,
+    NodeConfigError, NODES_FILE, load_nodes, storage_of, links_of, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
 )
 
@@ -726,8 +729,8 @@ def run(args, board=None):
     if args.wifi_only:
         # Already running its firmware: just (re)send the Wi-Fi settings, e.g.
         # after the Wi-Fi password or the Pi's address changed.
-        if link_of(node) != "wifi":
-            raise SetupError(f"Node {node_id} isn't a Wi-Fi node, so it has no Wi-Fi settings.")
+        if "wifi" not in links_of(node):
+            raise SetupError(f"Node {node_id} doesn't use Wi-Fi, so it has no Wi-Fi settings.")
         if not args.dry_run:
             setup_wifi(node_id)
         return
@@ -750,12 +753,12 @@ def run(args, board=None):
         checked = update_arduino(node_id, node, board.port, args.dry_run)
 
     running = checked and confirm_running(node_id, target, wait=12 if board.framework != target else 8)
-    if link_of(node) == "wifi":
+    if "wifi" in links_of(node):
         if args.dry_run:
             print("[SETUP] Would then send it the Pi's Wi-Fi network, password and address over USB.")
         elif running:
             setup_wifi(node_id)
-    elif not args.dry_run and board.node_id != node_id:
+    if "radio" in links_of(node) and not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-sensor")
 
@@ -786,15 +789,19 @@ def list_nodes(path):
     for node_id, node in load_nodes(path, skip_invalid=True).items():
         sleep = node.get("sleep_window")
         print(f"  {node_id}: {node['name']:<24} {node['framework']:<13} {node['board']:<24} "
-              f"log every {node['log_interval_s']}s to {storage_of(node)}, over {link_of(node)}"
+              f"log every {node['log_interval_s']}s to {storage_of(node)}, over "
+              f"{' (then '.join(links_of(node))}{')' if len(links_of(node)) > 1 else ''}"
               + (f", asleep {sleep[0]}-{sleep[1]}" if sleep else ""))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("action", nargs="?", choices=["update", "add", "remove", "list"], default="update")
-    parser.add_argument("node_id", nargs="?", type=int, help="for remove: the node to take off the list")
+    parser.add_argument("action", nargs="?", choices=["update", "add", "remove", "list", "prefer"],
+                        default="update")
+    parser.add_argument("node_id", nargs="?", type=int, help="for remove and prefer: which node")
+    parser.add_argument("link", nargs="?", choices=["wifi", "radio"],
+                        help="for prefer: the link to use first")
     parser.add_argument("--node", type=int, help="node ID to set the board up as")
     parser.add_argument("--install", action="store_true",
                         help=f"(re)install CircuitPython {CIRCUITPYTHON_VERSION} even if the board has it")
@@ -817,6 +824,12 @@ def main():
             if node_wizard.remove_node(args.nodes, args.node_id, node_wizard.Wizard()):
                 print("[SETUP] Restart the Pi's radio loop so it stops polling it: "
                       "sudo systemctl restart garden-sensor")
+        elif args.action == "prefer":
+            if args.node_id is None or args.link is None:
+                parser.error("say which node and link: node_setup.py prefer N wifi (or radio)")
+            order = node_wizard.prefer_link(args.nodes, args.node_id, args.link)
+            print(f"[SETUP] Node {args.node_id} now uses {' first, then '.join(order)}. "
+                  "The Pi switches within a minute.")
         else:
             run(args)
     except (NodeConfigError, SetupError) as e:
