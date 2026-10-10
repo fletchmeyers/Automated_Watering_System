@@ -785,6 +785,7 @@ function renderAll(packets) {
       renderSensorCard(ensureSensorCard(spec, node), spec.kind, np);
     }
   }
+  updateGroupWidths();   // a display that just grew (more soil sensors) can widen its combined card
 }
 
 async function refresh() {
@@ -799,6 +800,12 @@ async function refresh() {
 }
 
 // ── Manual refresh (live poll via Flask API, falls back to static reload) ────
+
+// The node picked in the header, which Refresh polls and the ping test tests.
+function selectedNode() {
+  const sel = document.getElementById('ping-node-select');
+  return sel && sel.value ? parseInt(sel.value, 10) : 1;
+}
 
 async function triggerRefresh() {
   const btn = document.getElementById('refresh-btn');
@@ -816,7 +823,11 @@ async function triggerRefresh() {
 
   btn.textContent = '↺ polling...';
   try {
-    const resp = await fetch(`${API_BASE}/api/poll`, { method: 'POST' });
+    const resp = await fetch(`${API_BASE}/api/poll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: selectedNode() }),
+    });
     const data = await resp.json();
 
     if (resp.status === 429) {
@@ -859,8 +870,7 @@ async function triggerRefresh() {
 async function runPingTest() {
   const btn = document.getElementById('ping-btn');
   const resultEl = document.getElementById('ping-result');
-  const nodeSelect = document.getElementById('ping-node-select');
-  const nodeId = nodeSelect ? parseInt(nodeSelect.value, 10) : 1;
+  const nodeId = selectedNode();
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⇄ pinging...';
@@ -902,7 +912,11 @@ async function runPingTest() {
       resultEl.textContent = `wait ${wait}s`;
       resultEl.style.color = 'var(--amber)';
     } else if (data.status !== 'ok') {
-      resultEl.textContent = data.status === 'timeout' ? 'no response' : 'test failed';
+      resultEl.textContent = {
+        timeout: 'no response',
+        offline: 'not connected to Wi-Fi',
+        unavailable: 'Wi-Fi service not running',
+      }[data.status] || 'test failed';
       resultEl.style.color = 'var(--red)';
     } else {
       const pct = Math.round((data.hits / data.count) * 100);
@@ -921,22 +935,29 @@ async function runPingTest() {
   btn.textContent = original;
   btn.disabled = false;
 }
-// ── Live card customization (hide/show + reorder) ──────────────────────────
+// ── Live card customization (hide/show, reorder, combine) ──────────────────
 // Real deployed site, not an Artifact, so localStorage is fair game here —
 // persists per-browser across visits. Always on — no separate "customize
 // mode" to step into first. Every card gets a drag handle (top-left) and a
-// hide button (top-right), both low-opacity until hovered so they don't
+// hide button (bottom-right), both low-opacity until hovered so they don't
 // clutter normal viewing. Hidden cards disappear from the grid entirely and
 // collapse into a small "hidden: ..." chip bar below it, so there's always
 // a way back without needing a mode toggle. Separate from the analysis
 // panel's Phase 2 "drag-and-drop multi-card" idea; this is only about the
 // live sensor-reading cards at the top of the dashboard.
 //
+// Dragging a card near the top or bottom edge of another moves it there.
+// Dropping it on the middle of another sensor card (outlined while you're
+// over it) combines them into one card, each keeping its own heading and
+// handle, e.g. two nodes' soil sensors side by side. Drag one back out by
+// its handle onto the edge of any card to give it its own card again; a
+// combined card left with one display goes back to a plain card.
+//
 // Sensor cards are created as their node's data arrives (see
 // ensureSensorCard), so the layout works from whatever cards are in the grid
-// right now rather than a fixed list. A saved order can name cards that
-// aren't on the page yet (a node that hasn't reported this session); they
-// slot into place when they appear.
+// right now rather than a fixed list. A saved order or combined card can
+// name cards that aren't on the page yet (a node that hasn't reported this
+// session); they slot into place when they appear.
 
 const STATIC_CARD_LABELS = { 'card-nodes': 'Nodes', 'card-weather': 'Weather Forecast' };
 // v2: cards became per-node, so a layout saved under the old single-card IDs
@@ -945,27 +966,38 @@ const CARD_PREFS_KEY = 'gardenDashboardCardPrefs.v2';
 
 function cardLabel(id) {
   if (STATIC_CARD_LABELS[id]) return STATIC_CARD_LABELS[id];
+  const group = cardPrefs.groups.find(g => g.id === id);
+  if (group) return group.members.map(cardLabel).join(' + ');
   const m = /^card-(\w+)-n(\d+)$/.exec(id);
   const spec = m && SENSOR_CARDS.find(s => s.kind === m[1]);
   return spec ? `${spec.title} · ${nodeInfo(m[2]).short}` : id;
 }
 
+// Cards directly in the grid (combined cards count as one), and every card
+// including the ones inside combined cards.
 function gridCards() {
   return Array.from(document.getElementById('grid').querySelectorAll(':scope > .card'));
 }
+function allCards() {
+  return Array.from(document.getElementById('grid').querySelectorAll('.card'));
+}
 
 function loadCardPrefs() {
+  const empty = { order: [], hidden: [], groups: [] };
   try {
     const raw = localStorage.getItem(CARD_PREFS_KEY);
-    if (!raw) return { order: [], hidden: [] };
+    if (!raw) return empty;
     const parsed = JSON.parse(raw);
     return {
       order:  Array.isArray(parsed.order)  ? parsed.order  : [],
       hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [],
+      groups: Array.isArray(parsed.groups)
+        ? parsed.groups.filter(g => g && typeof g.id === 'string' && Array.isArray(g.members))
+        : [],
     };
   } catch (e) {
     console.warn('[cards] failed to load saved layout, using default', e);
-    return { order: [], hidden: [] };
+    return empty;
   }
 }
 
@@ -991,9 +1023,10 @@ function applyCardOrder() {
 }
 
 function applyCardVisibility() {
-  gridCards().forEach(card => {
+  allCards().forEach(card => {
     card.style.display = cardPrefs.hidden.includes(card.id) ? 'none' : '';
   });
+  updateGroupWidths();
   renderHiddenCardsBar();
 }
 
@@ -1022,16 +1055,19 @@ function toggleCardHidden(id) {
 }
 
 function buildCardControls(card) {
-  if (card.querySelector('.card-controls')) return; // built once, reused
+  if (card.querySelector(':scope > .card-controls')) return; // built once, reused
 
   const handle = document.createElement('div');
   handle.className = 'card-drag-handle';
   handle.textContent = '⠿';
-  handle.title = 'Drag to reorder';
+  handle.title = 'Drag to move; drop on the middle of another card to combine them';
   // Native drag-and-drop drags the whole element it's set on; arming
   // `draggable` only while the handle is actively pressed keeps the rest
   // of the card (text, values) normally selectable the rest of the time.
-  handle.addEventListener('mousedown', () => { card.draggable = true; });
+  handle.addEventListener('mousedown', (e) => {
+    e.stopPropagation();   // a display inside a combined card drags itself, not the whole card
+    card.draggable = true;
+  });
   card.appendChild(handle);
 
   const ctrl = document.createElement('div');
@@ -1046,13 +1082,102 @@ function buildCardControls(card) {
   card.draggable = false;
 }
 
+// ── Combined cards ──
+// A combined card is a .card-group holding its displays (ordinary cards) in
+// .group-members. Saved as { id, members: [card IDs] }.
+
+function groupMembersEl(groupEl) { return groupEl.querySelector(':scope > .group-members'); }
+function isGroup(el) { return el.classList.contains('card-group'); }
+
+function createGroupEl(id) {
+  const el = document.createElement('div');
+  el.className = 'card card-group';
+  el.id = id;
+  el.innerHTML = '<div class="group-members"></div>';
+  buildCardControls(el);
+  return el;
+}
+
+// Put a newly created card into the combined card it was saved in, creating
+// that where the card is now if it isn't on the page yet.
+function placeInGroup(card, group) {
+  let groupEl = document.getElementById(group.id);
+  if (!groupEl) {
+    groupEl = createGroupEl(group.id);
+    card.parentNode.insertBefore(groupEl, card);
+  }
+  const box = groupMembersEl(groupEl);
+  const rank = id => group.members.indexOf(id);
+  const next = Array.from(box.children).find(c => rank(c.id) > rank(card.id));
+  box.insertBefore(card, next || null);
+}
+
+// Two or more displays (or one that needs the room) make a combined card
+// span two columns.
+function updateGroupWidths() {
+  document.querySelectorAll('#grid > .card-group').forEach(g => {
+    const shown = Array.from(groupMembersEl(g).children).filter(c => c.style.display !== 'none');
+    g.classList.toggle('card-wide', shown.length >= 2 || shown.some(c => c.classList.contains('card-wide')));
+  });
+}
+
+function combineCards(src, target) {
+  const onPage = new Set(allCards().map(c => c.id));
+  let groupEl = target;
+  if (!isGroup(target)) {
+    groupEl = createGroupEl(`card-group-${Date.now().toString(36)}`);
+    target.parentNode.insertBefore(groupEl, target);
+    groupMembersEl(groupEl).appendChild(target);
+  }
+  const moving = isGroup(src) ? Array.from(groupMembersEl(src).children) : [src];
+  moving.forEach(m => groupMembersEl(groupEl).appendChild(m));
+  if (isGroup(src)) {
+    // Displays saved in src that aren't on the page right now go along too.
+    const saved = cardPrefs.groups.find(g => g.id === src.id);
+    const absent = saved ? saved.members.filter(id => !onPage.has(id)) : [];
+    if (absent.length) {
+      let entry = cardPrefs.groups.find(g => g.id === groupEl.id);
+      if (!entry) cardPrefs.groups.push(entry = { id: groupEl.id, members: [] });
+      entry.members.push(...absent);
+    }
+    src.remove();
+  }
+}
+
+// After a drag: rebuild the saved combined cards from the page, dissolve any
+// left with fewer than two displays, and keep saved ones that have nothing
+// on the page right now.
+function tidyGroups() {
+  const onPage = new Set(allCards().map(c => c.id));
+  const groups = [];
+  document.querySelectorAll('#grid > .card-group').forEach(gEl => {
+    const present = Array.from(groupMembersEl(gEl).children).map(c => c.id);
+    const saved = cardPrefs.groups.find(g => g.id === gEl.id);
+    const absent = saved ? saved.members.filter(id => !onPage.has(id)) : [];
+    if (present.length + absent.length < 2) {
+      present.forEach(id => gEl.parentNode.insertBefore(document.getElementById(id), gEl));
+      cardPrefs.hidden = cardPrefs.hidden.filter(h => h !== gEl.id);
+      gEl.remove();
+      return;
+    }
+    groups.push({ id: gEl.id, members: present.concat(absent) });
+  });
+  for (const g of cardPrefs.groups) {
+    if (!document.getElementById(g.id) && g.members.every(id => !onPage.has(id))) groups.push(g);
+  }
+  cardPrefs.groups = groups;
+}
+
 // A newly created sensor card goes in just ahead of the weather card by
-// default, then picks up its saved position and hidden state, if any.
+// default (or into its saved combined card), then picks up its saved
+// position and hidden state, if any.
 function addCardToLayout(card) {
   const grid = document.getElementById('grid');
   const weather = document.getElementById('card-weather');
   grid.insertBefore(card, weather && weather.parentNode === grid ? weather : null);
   buildCardControls(card);
+  const group = cardPrefs.groups.find(g => g.members.includes(card.id));
+  if (group) placeInGroup(card, group);
   applyCardOrder();
   applyCardVisibility();
 }
@@ -1060,6 +1185,19 @@ function addCardToLayout(card) {
 // Native HTML5 drag-and-drop, scoped to #grid, always active (arming happens
 // per-drag via the handle's mousedown above).
 let dragSrcId = null;
+let mergeTarget = null;
+
+function setMergeTarget(el) {
+  if (mergeTarget === el) return;
+  if (mergeTarget) mergeTarget.classList.remove('merge-target');
+  mergeTarget = el;
+  if (el) el.classList.add('merge-target');
+}
+
+// Only sensor cards combine: not the Nodes or Weather card.
+function canCombine(a, b) {
+  return !STATIC_CARD_LABELS[a.id] && !STATIC_CARD_LABELS[b.id];
+}
 
 function initCardDragAndDrop() {
   const grid = document.getElementById('grid');
@@ -1070,29 +1208,52 @@ function initCardDragAndDrop() {
     dragSrcId = card.id;
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.id);   // Firefox won't start a drag without data
   });
 
   grid.addEventListener('dragover', (e) => {
     if (!dragSrcId) return;
     e.preventDefault();
-    const card = e.target.closest('.card');
-    if (!card || card.id === dragSrcId) return;
     const dragEl = document.getElementById(dragSrcId);
-    if (!dragEl) return;
-    const rect = card.getBoundingClientRect();
-    const before = (e.clientY - rect.top) < rect.height / 2;
-    grid.insertBefore(dragEl, before ? card : card.nextSibling);
+    const over = e.target.closest('#grid > .card');
+    if (!dragEl || !over || over === dragEl) { setMergeTarget(null); return; }
+    const rect = over.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+
+    if (over.contains(dragEl)) {
+      // A display over its own combined card: only its top or bottom edge
+      // takes it out, to just before or after the combined card.
+      setMergeTarget(null);
+      if (fy < 0.15) grid.insertBefore(dragEl, over);
+      else if (fy > 0.85) grid.insertBefore(dragEl, over.nextSibling);
+      return;
+    }
+    const middle = fx > 0.2 && fx < 0.8 && fy > 0.2 && fy < 0.8;
+    if (middle && canCombine(dragEl, over)) { setMergeTarget(over); return; }
+    setMergeTarget(null);
+    grid.insertBefore(dragEl, fy < 0.5 ? over : over.nextSibling);
+  });
+
+  grid.addEventListener('drop', (e) => {
+    if (!dragSrcId) return;
+    e.preventDefault();
+    const dragEl = document.getElementById(dragSrcId);
+    if (dragEl && mergeTarget) combineCards(dragEl, mergeTarget);
   });
 
   grid.addEventListener('dragend', (e) => {
     const card = e.target.closest('.card');
     if (card) { card.classList.remove('dragging'); card.draggable = false; }
+    setMergeTarget(null);
     if (dragSrcId) {
+      tidyGroups();
       // Keep saved positions of cards that aren't on the page right now,
       // after the ones that are.
       const onPage = gridCards().map(el => el.id);
       cardPrefs.order = onPage.concat(cardPrefs.order.filter(id => !onPage.includes(id)));
       saveCardPrefs();
+      applyCardVisibility();
     }
     dragSrcId = null;
   });
@@ -1101,7 +1262,7 @@ function initCardDragAndDrop() {
   // starting (a click, essentially), un-arm draggable so it doesn't linger.
   document.addEventListener('mouseup', () => {
     if (dragSrcId) return; // an actual drag is in progress; dragend will handle it
-    gridCards().forEach(card => { card.draggable = false; });
+    allCards().forEach(card => { card.draggable = false; });
   });
 }
 
@@ -1112,11 +1273,14 @@ function initCardCustomization() {
   initCardDragAndDrop();
 }
 
-// The ping test's node picker, built from NODES so a new node shows up there
-// too. Radio nodes only: the ping test measures the radio link.
+// The node picker for Refresh and the ping test, built from NODES so a new
+// node shows up there too. A Wi-Fi node is reached through the Pi's Wi-Fi
+// service, a radio node over the radio; the label says which.
 function buildPingNodeSelect() {
   const sel = document.getElementById('ping-node-select');
   if (!sel) return;
-  const radio = knownNodeIds().filter(n => (nodeInfo(n).link || 'radio') === 'radio');
-  sel.innerHTML = radio.map(n => `<option value="${n}">${nodeInfo(n).name}</option>`).join('');
+  sel.innerHTML = knownNodeIds().map(n => {
+    const info = nodeInfo(n);
+    return `<option value="${n}">${info.name} · ${info.link === 'wifi' ? 'Wi-Fi' : 'radio'}</option>`;
+  }).join('');
 }

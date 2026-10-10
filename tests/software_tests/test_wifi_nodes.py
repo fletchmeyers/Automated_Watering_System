@@ -251,3 +251,97 @@ def test_the_longest_wifi_settings_line_fits_the_firmwares_command_buffer():
              "h": "255.255.255.255", "hn": "a-long-hostname-for-the-pi", "port": 65535}
     line = json.dumps(worst, separators=(",", ":"))   # exactly what UsbNode.send() writes
     assert len(line) < buffer, (len(line), buffer)
+
+
+# ── The dashboard's Refresh and ping test, through the control port ──────────
+
+async def answering_node(port, node_id, drop_pings=()):
+    '''A node that stays connected, answering polls and pings until closed.'''
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write((json.dumps({"t": "hello", "q": 0, "n": node_id}) + "\n").encode())
+    await writer.drain()
+    q = 1
+    try:
+        while line := await reader.readline():
+            command = json.loads(line)
+            if command["t"] == "poll":
+                replies = [{"t": "ts", "v": command["ts"]}, {"t": "sht", "tmp": 21.5, "rh": 40.0},
+                           {"t": "batch_end", "exp": 1, "snt": 1}]
+            elif command["t"] == "ping" and command["q"] not in drop_pings:
+                replies = [{"t": "pong", "pq": command["q"]}]
+            else:
+                replies = []
+            for packet in replies:
+                packet.update(q=q, n=node_id)
+                q += 1
+                writer.write((json.dumps(packet) + "\n").encode())
+            await writer.drain()
+    finally:
+        writer.close()
+
+
+def run_with_node(svc, requests, drop_pings=()):
+    '''Connect a fake node, then send each request through the control port.'''
+    svc.poll_interval = 60    # the scheduled poll happens once, at connect
+
+    async def scenario():
+        server = await asyncio.start_server(svc.handle, "127.0.0.1", 0)
+        control = await asyncio.start_server(svc.control, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        control_port = control.sockets[0].getsockname()[1]
+        node = asyncio.create_task(answering_node(port, 20, drop_pings))
+        while 20 not in svc.links:
+            await asyncio.sleep(0.02)
+        replies = []
+        for request in requests:
+            # ask_wifi_service blocks, as it does in flask_api.py's threads.
+            replies.append(await asyncio.to_thread(wifi_nodes.ask_wifi_service, request, 10, control_port))
+        node.cancel()
+        server.close()
+        control.close()
+        return replies
+
+    return asyncio.run(scenario())
+
+
+def test_refresh_polls_a_wifi_node_and_returns_its_reading(service):
+    svc, conn, tmp_path = service
+    [reply] = run_with_node(svc, [{"t": "poll", "n": 20}])
+    assert reply["status"] == "ok"
+    assert [p["t"] for p in reply["packets"]] == ["sht"] and reply["packets"][0]["tmp"] == 21.5
+    # Stored like any poll: one row per value, from the scheduled poll and this one.
+    assert conn.execute("SELECT COUNT(*) FROM readings WHERE key = 'tmp'").fetchone()[0] == 2
+
+
+def test_ping_test_over_wifi_counts_pongs(service, tmp_path):
+    svc, conn, _ = service
+    progress = tmp_path / "progress.json"
+    original = wifi_nodes.WifiNodes.ping
+
+    async def ping(self, node_id, count=10, timeout=wifi_nodes.PING_TIMEOUT, progress_file=None):
+        return await original(self, node_id, count, timeout=0.3, progress_file=progress)
+
+    wifi_nodes.WifiNodes.ping = ping
+    try:
+        [reply] = run_with_node(svc, [{"t": "ping", "n": 20, "count": 5}], drop_pings={1, 3})
+    finally:
+        wifi_nodes.WifiNodes.ping = original
+    assert reply["status"] == "ok" and reply["node_id"] == 20
+    assert (reply["count"], reply["hits"], reply["misses"]) == (5, 3, 2)
+    assert [r["ok"] for r in reply["results"]] == [True, False, True, False, True]
+    assert reply["avg_rtt_ms"] is not None
+    assert json.loads(progress.read_text()) == {"done": 5, "count": 5, "hits": 3}
+
+
+def test_a_node_that_isnt_connected_is_reported_offline(service):
+    svc, conn, tmp_path = service
+    replies = run_with_node(svc, [{"t": "poll", "n": 99}, {"t": "ping", "n": 99}, {"t": "reboot", "n": 20}])
+    assert [r["status"] for r in replies] == ["offline", "offline", "error"]
+
+
+def test_no_wifi_service_running():
+    import socket
+    with socket.socket() as s:            # a port nothing is listening on
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    assert wifi_nodes.ask_wifi_service({"t": "poll", "n": 3}, timeout=2, port=free) == {"status": "unavailable"}
