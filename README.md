@@ -342,8 +342,9 @@ command turns the radio off but keeps the chip awake. A board with
 no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 
-**Wi-Fi nodes** — an ESP32 board indoors can skip the radio (and the SD
-card): answer Wi-Fi when `node_setup.py add` asks (`"link": "wifi"`, no `pins`). It
+**Wi-Fi nodes** — a board with a Wi-Fi chip running Arduino (an ESP32
+Feather, a Pico W or a Pico 2 W) can skip the radio (and the SD card):
+answer Wi-Fi when `node_setup.py add` asks (`"link": "wifi"`, no `pins`). It
 joins the Pi's own Wi-Fi network and connects to the `garden-wifi` service
 (`raspberrypi/wifi_nodes.py`, installed by `deploy/install.sh`), which
 polls it every minute and stores its readings like a radio node's. The
@@ -351,10 +352,12 @@ Pi stays in charge: the node only answers. `node_setup.py` sends the
 network name, password and the Pi's address to the board over USB after
 flashing it — they never go through git or the terminal — and the board
 keeps them in its own flash, so re-run `node_setup.py` if the Wi-Fi
-password or the Pi's address changes (it also looks the Pi up by name,
-`pi.local`, if the address moved). A Wi-Fi node has no log to sync, so
-readings from while the Pi or the Wi-Fi was down are lost. Check the
-service with `sudo journalctl -u garden-wifi -f`.
+password or the Pi's address changes (if the address moved, it also looks
+the Pi up by name: an ESP32 as `pi.local`, a Pico W through the router's
+DNS). While it can't join the network, the node says why on USB every
+30 s. A Wi-Fi node has no log to sync, so readings from while the Pi or
+the Wi-Fi was down are lost. Check the service with
+`sudo journalctl -u garden-wifi -f`.
 
 **Bench testing** — don't add test boards to `nodes.json` (`main.py` would
 start polling them). `tests/hardware_tests/` has bench files with the same

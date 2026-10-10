@@ -33,9 +33,15 @@ def test_a_wifi_node_needs_no_pins_or_storage_and_builds_without_a_radio():
     assert not any("RFM69" in f for f in flags)
 
 
+@pytest.mark.parametrize("board", ["picow", "pico2w", "feather_esp32s2", "feather_esp32_v2"])
+def test_every_board_with_a_wifi_chip_can_be_an_arduino_wifi_node(board):
+    check_node(20, wifi_node(board=board))
+
+
 @pytest.mark.parametrize("node, message", [
-    (wifi_node(board="pico"), "ESP32"),
-    (wifi_node(board="picow", framework="circuitpython"), "ESP32"),
+    (wifi_node(board="pico"), "can't use Wi-Fi"),                  # no Wi-Fi chip
+    (wifi_node(board="feather_m0"), "can't use Wi-Fi"),
+    (wifi_node(board="picow", framework="circuitpython"), "circuitpython on picow can't use Wi-Fi"),
     (wifi_node(sleep_window=["19:00", "07:00"]), "doesn't sleep"),
     (wifi_node(link="lora"), "link must be one of"),
 ])

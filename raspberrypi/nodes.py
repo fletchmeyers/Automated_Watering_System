@@ -35,8 +35,11 @@ STORAGE    = ("sd", "flash", "none")
 # How a node talks to the Pi: the RFM69 radio (main.py), or Wi-Fi to the
 # garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins, keep
 # no log by default (nothing to sync once the Pi is reachable again), and
-# don't sleep. So far Wi-Fi means Arduino on an ESP32 board.
+# don't sleep. Wi-Fi needs a board with a Wi-Fi chip (WIFI_BOARDS), running
+# a framework whose firmware has Wi-Fi so far (WIFI_FRAMEWORKS).
 LINKS = ("radio", "wifi")
+WIFI_BOARDS = ("picow", "pico2w", "feather_esp32s2", "feather_esp32_v2")
+WIFI_FRAMEWORKS = ("arduino",)   # CircuitPython Wi-Fi isn't written yet
 
 # Boards a node can be, by the "board" value in nodes.json:
 #   chip          — which UF2 bootloader drive it shows (BOOTLOADER_DRIVES)
@@ -214,8 +217,9 @@ def check_node(node_id, node):
     if link not in LINKS:
         fail(f'link must be one of {", ".join(LINKS)}, not "{link}"')
     if link == "wifi":
-        if framework != "arduino" or board["chip"] not in ESP32_CHIPS:
-            fail("Wi-Fi nodes are Arduino on an ESP32 board so far")
+        if not wifi_able(node["board"], framework):
+            fail(f"{framework} on {node['board']} can't use Wi-Fi (so far Wi-Fi is "
+                 f"{' or '.join(WIFI_FRAMEWORKS)} on {', '.join(WIFI_BOARDS)})")
         if node.get("sleep_window"):
             fail("a Wi-Fi node doesn't sleep (sleep_window is for radio nodes)")
 
@@ -262,6 +266,11 @@ def check_node(node_id, node):
         if (not isinstance(window, list) or len(window) != 2
                 or not all(isinstance(t, str) and _HHMM.match(t) for t in window)):
             fail('sleep_window must be ["HH:MM", "HH:MM"]')
+
+
+def wifi_able(board, framework):
+    '''Whether a node on this board and framework can be a Wi-Fi node.'''
+    return board in WIFI_BOARDS and framework in WIFI_FRAMEWORKS
 
 
 def link_of(node):
