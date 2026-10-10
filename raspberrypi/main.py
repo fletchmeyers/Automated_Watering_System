@@ -28,7 +28,7 @@ import db
 from nodes import load_nodes, radio_node_ids, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Nodes come from nodes.json at the repo root (add a node there, then restart).
+# Nodes come from the Pi's nodes.json (python3 node_setup.py add, then restart).
 # Sleep windows: node ID -> ("start", "end") in the Pi's local time; the
 # node logs a reading every 5 minutes while asleep and the next day's sync
 # collects them. Nodes with "storage": "none" keep no log, so aren't synced.

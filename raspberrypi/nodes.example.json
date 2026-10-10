@@ -1,5 +1,5 @@
 {
-  "_about": "Every radio node, in one place. The Pi (main.py) reads its node list, sleep windows and sync list from here; the dashboard its names, colors and battery labels; and raspberrypi/node_setup.py builds each node's settings from it when setting up or updating a node over USB. See README 'Adding or updating a node'.",
+  "_about": "Every node, in one place. This is the Pi's own copy (raspberrypi/nodes.json, not in git; started from nodes.example.json). main.py reads its node list, sleep windows and sync list from here; wifi_nodes.py which nodes may connect over Wi-Fi; the dashboard (through /api/nodes) names, colors and battery labels; and node_setup.py builds each node's settings from it. Add nodes with: python3 node_setup.py add. See README 'Adding or updating a node'.",
 
   "nodes": {
     "1": {

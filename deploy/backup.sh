@@ -11,7 +11,8 @@
 # with: sudo systemctl start garden-sensor garden-api garden-wifi
 #
 # Writes ~/garden_backup_<date>.tar.gz containing:
-#   data/        sensors.db (a consistent .backup snapshot), node_info.json,
+#   data/        sensors.db (a consistent .backup snapshot), nodes.json (the
+#                node list), node_info.json,
 #                data_from_pico.txt, archive/
 #   etc/         /etc/garden-api.env (weather API keys)
 #   cloudflared/ /etc/cloudflared/ and ~/.cloudflared/ (tunnel credentials)
@@ -45,7 +46,7 @@ if [ -e "$DATA/sensors.db" ]; then
     sqlite3 "$DATA/sensors.db" ".backup '$WORK/data/sensors.db'"
     echo "   sensors.db ($(du -h "$WORK/data/sensors.db" | cut -f1))"
 fi
-for name in node_info.json data_from_pico.txt archive; do
+for name in nodes.json node_info.json data_from_pico.txt archive; do
     if [ -e "$DATA/$name" ]; then
         cp -a "$DATA/$name" "$WORK/data/"
         echo "   $name ($(du -sh "$DATA/$name" | cut -f1))"

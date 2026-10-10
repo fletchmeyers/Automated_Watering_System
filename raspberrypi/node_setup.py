@@ -2,16 +2,20 @@
 Python 3 running on Raspberry Pi 3B
 
 Set up or update a node plugged into the Pi by USB, with the code in this
-repo and its settings from nodes.json:
+repo and its settings from the Pi's node list (raspberrypi/nodes.json):
 
-    python3 node_setup.py              — update whichever node is plugged in
+    python3 node_setup.py              — update whichever node is plugged in; a
+                                         board that isn't a node yet is offered
+                                         the questions to add it
+    python3 node_setup.py add          — add a node to the list (questions with
+                                         defaults), then set up the board
+    python3 node_setup.py remove 3     — take node 3 off the list
+    python3 node_setup.py list         — show the nodes in the list
     python3 node_setup.py --dry-run    — show what would change, change nothing
-    python3 node_setup.py --node 3     — set the board up as node 3: a new board
-                                         (add node 3 to nodes.json first), or to
-                                         change a board's ID
+    python3 node_setup.py --node 3     — set the board up as node 3 (one already
+                                         in the list), e.g. to change its ID
     python3 node_setup.py --install    — reinstall CircuitPython itself too
     python3 node_setup.py --wifi-only  — just re-send a Wi-Fi node its Wi-Fi settings
-    python3 node_setup.py list         — show the nodes in nodes.json
 
 nodes.json says what the node should be; this works out what the board is
 now (a bootloader drive, CircuitPython, or Arduino on a serial port) and
@@ -46,6 +50,8 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
+import node_wizard
+from db import DB_FILE
 from nodes import (
     NodeConfigError, NODES_FILE, load_nodes, storage_of, link_of, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
@@ -471,9 +477,11 @@ def flash_arduino_uf2(node_id, node, board, dry_run):
 
 class Board:
     '''What's plugged in: framework is "circuitpython", "arduino" (anything on
-    a serial port) or "bootloader"; node_id is the node it says it is.'''
-    def __init__(self, framework, node_id=None, port=None, label=None):
+    a serial port) or "bootloader"; node_id is the node it says it is;
+    boards, which BOARDS it could be (when that can be told).'''
+    def __init__(self, framework, node_id=None, port=None, label=None, boards=None):
         self.framework, self.node_id, self.port, self.label = framework, node_id, port, label
+        self.boards = boards
 
     def __str__(self):
         if self.framework == "bootloader":
@@ -497,14 +505,45 @@ def ask_node(paths, quiet=False):
     return info["n"], node.port.port
 
 
+def boards_with(chip=None, circuitpython=None):
+    return [name for name, b in BOARDS.items()
+            if (chip is None or b["chip"] == chip)
+            and (circuitpython is None or b["circuitpython"] == circuitpython)] or None
+
+
+def circuitpython_board(drive):
+    '''The board ID CircuitPython reports in boot_out.txt, e.g. "raspberry_pi_pico2".'''
+    try:
+        match = re.search(r"Board ID:\s*(\S+)", (Path(drive) / "boot_out.txt").read_text(errors="replace"))
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+# USB vendor IDs that give away an Arduino board: the ESP32-S2's own USB, and
+# the ESP32 V2's CH9102 USB-serial chip.
+_BOARDS_BY_VID = {0x303A: ["feather_esp32s2"], 0x1A86: ["feather_esp32_v2"]}
+
+
+def boards_on_port(path):
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return None
+    vid = next((p.vid for p in list_ports.comports() if p.device == path), None)
+    return _BOARDS_BY_VID.get(vid)
+
+
 def detect(args):
     '''Work out what's plugged in.'''
     label = bootloader_drive()
     if label:
-        return Board("bootloader", label=label)
+        return Board("bootloader", label=label, boards=boards_with(chip=BOOTLOADER_DRIVES[label]))
     if Path(device(CIRCUITPY_LABEL)).exists():
         with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT, read_only=True) as drive:
-            return Board("circuitpython", node_id_on_drive(drive))
+            cp_board = circuitpython_board(drive)
+            return Board("circuitpython", node_id_on_drive(drive),
+                         boards=boards_with(circuitpython=cp_board) if cp_board else None)
     ports = [args.port] if args.port else serial_ports()
     if not ports:
         raise SetupError("Nothing plugged in: no bootloader drive, no CIRCUITPY drive and "
@@ -514,7 +553,7 @@ def detect(args):
         if not args.port and len(ports) > 1:
             raise SetupError(f"No node answered on {', '.join(ports)}; name the board's port with --port.")
         port = ports[0]
-    return Board("arduino", detected, port)
+    return Board("arduino", detected, port, boards=boards_on_port(port))
 
 
 def confirm_running(node_id, framework="circuitpython", wait=8, timeout=40):
@@ -648,21 +687,32 @@ def setup_wifi(node_id, timeout=60):
               "          python3 -m serial.tools.miniterm /dev/ttyACM0 115200")
 
 
-def run(args):
+def interactive():
+    return sys.stdin.isatty()
+
+
+def run(args, board=None):
     # Another node's mistake shouldn't stop this one being set up: skip it.
     nodes = load_nodes(args.nodes, skip_invalid=True)
-    board = detect(args)
+    board = board or detect(args)
     print(f"[SETUP] Found {board}.")
 
     node_id = args.node or board.node_id
     if node_id is None:
-        raise SetupError("Which node should this board be? Say with --node N "
-                         "(add it to nodes.json first).")
+        if not interactive():
+            raise SetupError("Which node should this board be? Say with --node N, or run "
+                             "node_setup.py add to add a new node.")
+        if not node_wizard.Wizard().yes("It isn't a node yet. Add it to the node list as a new node?"):
+            raise SetupError("Nothing done. To set it up as a node already in the list: --node N")
+        node_id = node_wizard.add_node(args.nodes, node_wizard.Wizard(), board.boards, DB_FILE)
+        if node_id is None:
+            return
+        nodes = load_nodes(args.nodes, skip_invalid=True)
     if args.node and board.node_id and args.node != board.node_id:
         print(f"[SETUP] It's currently node {board.node_id}; setting it up as node {args.node} instead.")
     if node_id not in nodes:
-        raise SetupError(f"Node {node_id} isn't in {Path(args.nodes).name} (or was skipped above) "
-                         "— add or fix it there first.")
+        raise SetupError(f"Node {node_id} isn't in {args.nodes} (or was skipped above). "
+                         "Add it with: python3 node_setup.py add")
     node = nodes[node_id]
     target = node["framework"]
     chip = BOARDS[node["board"]]["chip"]
@@ -705,7 +755,29 @@ def run(args):
               "starts polling it: sudo systemctl restart garden-sensor")
 
 
+def add(args):
+    '''Add a node to the list; then, if a board is plugged in, set it up as it.'''
+    try:
+        board = detect(args)
+    except SetupError:
+        board = None
+    if board is not None and board.node_id is not None:
+        print(f"[SETUP] Plugged in: {board}. Adding a new node to the list anyway.")
+    node_id = node_wizard.add_node(args.nodes, node_wizard.Wizard(),
+                                   board.boards if board else None, DB_FILE)
+    if node_id is None:
+        return
+    if board is None:
+        print(f"[SETUP] Plug the board in and run: python3 node_setup.py --node {node_id}")
+    elif node_wizard.Wizard().yes(f"Set up the plugged-in board as node {node_id} now?"):
+        args.node = node_id
+        run(args, board)
+    else:
+        print(f"[SETUP] Later, with the board plugged in: python3 node_setup.py --node {node_id}")
+
+
 def list_nodes(path):
+    print(f"Nodes in {path}:")
     for node_id, node in load_nodes(path, skip_invalid=True).items():
         sleep = node.get("sleep_window")
         print(f"  {node_id}: {node['name']:<24} {node['framework']:<13} {node['board']:<24} "
@@ -716,7 +788,8 @@ def list_nodes(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("action", nargs="?", choices=["update", "list"], default="update")
+    parser.add_argument("action", nargs="?", choices=["update", "add", "remove", "list"], default="update")
+    parser.add_argument("node_id", nargs="?", type=int, help="for remove: the node to take off the list")
     parser.add_argument("--node", type=int, help="node ID to set the board up as")
     parser.add_argument("--install", action="store_true",
                         help=f"(re)install CircuitPython {CIRCUITPYTHON_VERSION} even if the board has it")
@@ -725,12 +798,20 @@ def main():
     parser.add_argument("--port", help="the board's serial port, if more than one is plugged in")
     parser.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
     parser.add_argument("--nodes", default=str(NODES_FILE), metavar="FILE",
-                        help="a nodes file other than the repo's nodes.json, e.g. a bench test "
+                        help="a nodes file other than the Pi's own list, e.g. a bench test "
                              "file in tests/hardware_tests/")
     args = parser.parse_args()
     try:
         if args.action == "list":
             list_nodes(args.nodes)
+        elif args.action == "add":
+            add(args)
+        elif args.action == "remove":
+            if args.node_id is None:
+                parser.error("say which node: node_setup.py remove N")
+            if node_wizard.remove_node(args.nodes, args.node_id, node_wizard.Wizard()):
+                print("[SETUP] Restart the Pi's radio loop so it stops polling it: "
+                      "sudo systemctl restart garden-sensor")
         else:
             run(args)
     except (NodeConfigError, SetupError) as e:

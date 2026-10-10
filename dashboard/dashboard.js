@@ -6,9 +6,10 @@ const REFRESH_MS = 10000;
 const API_BASE = "https://api.fletchermeyers.com";
 
 // ── Nodes ─────────────────────────────────────────────────────────────────────
-// Display name, short name (used in plot labels) and color for each radio
-// node ID, read from nodes.json at the repo root by loadNodes() — add a node
-// there, not here. The list below is only used if that file can't be loaded.
+// Display name, short name (used in plot labels) and color for each
+// node ID, read from the Pi's node list (/api/nodes) by loadNodes() — add a
+// node on the Pi with node_setup.py, not here. The list below is only used
+// if the Pi can't be reached.
 // A node that isn't listed still shows up, as "Node N" in one of the
 // fallback colors. Colors stay clear of the green/amber/red used for status
 // so a node never reads as a warning. Shared with analysis.js (loaded after
@@ -23,9 +24,9 @@ const NODES = {
        battery: { type: 'pw0', label: 'CAR BATTERY' } },
   2: { name: 'M0 (Arduino)',         short: 'M0',   color: '#f778ba' },
 };
-const NODES_URL = '../nodes.json';   // the repo root, next to dashboard/ on GitHub Pages
+const NODES_URL = `${API_BASE}/api/nodes`;
 
-// Replace NODES with what nodes.json says. Never throws: on any problem the
+// Replace NODES with the Pi's list. Never throws: on any problem the
 // built-in list above stays, so the dashboard still starts.
 async function loadNodes(timeoutMs = 4000) {
   try {
@@ -44,6 +45,7 @@ async function loadNodes(timeoutMs = 4000) {
         name: n.name || `Node ${id}`,
         short: n.short || `N${id}`,
         color: n.color || nodeInfo.fallbackColor(id),
+        link: n.link || 'radio',
         ...(n.battery ? { battery: n.battery } : {}),
       };
     }
@@ -1110,9 +1112,11 @@ function initCardCustomization() {
   initCardDragAndDrop();
 }
 
-// The ping test's node picker, built from NODES so a new node shows up there too.
+// The ping test's node picker, built from NODES so a new node shows up there
+// too. Radio nodes only: the ping test measures the radio link.
 function buildPingNodeSelect() {
   const sel = document.getElementById('ping-node-select');
   if (!sel) return;
-  sel.innerHTML = knownNodeIds().map(n => `<option value="${n}">${nodeInfo(n).name}</option>`).join('');
+  const radio = knownNodeIds().filter(n => (nodeInfo(n).link || 'radio') === 'radio');
+  sel.innerHTML = radio.map(n => `<option value="${n}">${nodeInfo(n).name}</option>`).join('');
 }

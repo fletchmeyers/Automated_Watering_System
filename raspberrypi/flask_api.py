@@ -12,6 +12,7 @@ via garden-sensor.service) is what actually forwards commands over the radio.
 Two-tier access model:
   - Public (no login), rate-limited by cooldown, not auth:
         GET  /api/health
+        GET  /api/nodes           (names/colors from the Pi's nodes.json; no pins)
         POST /api/poll
   - Gated behind Cloudflare Access (configured in the Zero Trust dashboard,
     not in this file):
@@ -36,6 +37,8 @@ import requests
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+from nodes import NodeConfigError, load_nodes, public_nodes
 
 from sync_indoor import (
     request_poll,
@@ -157,6 +160,18 @@ def api_node_info():
     # Each node's last storage report (bytes used/free/total and when it was
     # reported) — just a file read, main.py refreshes it hourly.
     return jsonify({"status": "ok", "nodes": get_node_info()})
+
+
+@app.route("/api/nodes", methods=["GET"])
+def api_nodes():
+    # How the dashboard shows each node (name, short name, color, battery
+    # label, link) — read fresh each time, so a node added with
+    # node_setup.py shows up on the next page load.
+    try:
+        nodes = load_nodes(skip_invalid=True)
+    except NodeConfigError as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+    return jsonify({"status": "ok", "nodes": {str(n): v for n, v in public_nodes(nodes).items()}})
 
 
 @app.route("/api/ping_test", methods=["POST"])

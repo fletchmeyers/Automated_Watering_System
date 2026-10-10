@@ -99,7 +99,7 @@ if [ -n "$RESTORE" ]; then
     sudo chown -R "$USER_NAME:" "$BUNDLE"
 
     DATA="$REPO/raspberrypi"
-    for name in sensors.db node_info.json data_from_pico.txt archive; do
+    for name in sensors.db nodes.json node_info.json data_from_pico.txt archive; do
         [ -e "$BUNDLE/data/$name" ] || continue
         if [ -e "$DATA/$name" ]; then
             echo "   $name already exists here, keeping it (delete it and re-run to restore)"

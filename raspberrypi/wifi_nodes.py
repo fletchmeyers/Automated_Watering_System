@@ -187,7 +187,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Poll the nodes that are on Wi-Fi.")
     parser.add_argument("--nodes", default=str(NODES_FILE), metavar="FILE",
-                        help="node list to accept (default: the repo's nodes.json)")
+                        help="node list to accept (default: the Pi's own, raspberrypi/nodes.json)")
     parser.add_argument("--port", type=int, default=WIFI_PORT)
     parser.add_argument("--no-store", action="store_true",
                         help="print readings instead of saving them (bench tests)")

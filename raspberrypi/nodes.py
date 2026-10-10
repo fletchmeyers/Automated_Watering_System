@@ -1,10 +1,17 @@
 '''
 Python 3 running on Raspberry Pi 3B
 
-nodes.json (at the repo root) is the one list of radio nodes and their
-settings. This module loads and checks it, and turns a node's entry into
-what each side needs:
+nodes.json is the one list of nodes and their settings. It lives on the
+Pi only (raspberrypi/nodes.json, next to sensors.db; never in git, but in
+the backups), and `python3 node_setup.py add` adds to it. The first time
+it's needed it's started from the nodes.json that used to sit at the repo
+root if that's still there, or else from nodes.example.json.
+
+This module loads and checks it, and turns a node's entry into what each
+side needs:
   - main.py:       node IDs, sleep windows, which nodes keep a log to sync
+  - wifi_nodes.py: which nodes may connect over Wi-Fi
+  - flask_api.py:  names, colors and battery labels for the dashboard
   - CircuitPython: the node_config.py that node_setup.py puts on CIRCUITPY
   - Arduino:       -D build flags that override board_config_*.h's defaults
 
@@ -13,10 +20,14 @@ October 2026
 '''
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 
-NODES_FILE = Path(__file__).parent.parent / "nodes.json"
+NODES_FILE   = Path(__file__).parent / "nodes.json"
+EXAMPLE_FILE = Path(__file__).parent / "nodes.example.json"
+LEGACY_FILE  = Path(__file__).parent.parent / "nodes.json"   # where it was until Oct 2026
 
 FRAMEWORKS = ("circuitpython", "arduino")
 STORAGE    = ("sd", "flash", "none")
@@ -76,12 +87,67 @@ class NodeConfigError(ValueError):
     pass
 
 
-def load_nodes(path=NODES_FILE, skip_invalid=False):
+def _is_pi_list(path):
+    return Path(path).resolve() == Path(NODES_FILE).resolve()
+
+
+def start_pi_list():
+    '''Create the Pi's nodes.json if it isn't there yet: a copy of the old
+    repo-root nodes.json if one is left, otherwise of nodes.example.json.'''
+    if Path(NODES_FILE).exists():
+        return
+    source = Path(LEGACY_FILE) if Path(LEGACY_FILE).exists() else Path(EXAMPLE_FILE)
+    write_atomic(NODES_FILE, source.read_text(encoding="utf-8"))
+    print(f"[NODES] Started the node list at {NODES_FILE} from {source}.")
+
+
+def write_atomic(path, text):
+    '''Write a file so that a reader (main.py, the API) never sees it half-written.'''
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def read_node_file(path=None):
+    '''The whole file as a dict, unchecked, for editing it. A file other than
+    the Pi's own list that doesn't exist yet reads as empty.'''
+    path = Path(path or NODES_FILE)
+    if _is_pi_list(path):
+        start_pi_list()
+    elif not path.exists():
+        return {"nodes": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise NodeConfigError(f"Could not read {path}: {e}")
+    if not isinstance(data, dict) or not isinstance(data.setdefault("nodes", {}), dict):
+        raise NodeConfigError(f'{path} has no "nodes" section')
+    return data
+
+
+def save_node_file(data, path=None):
+    '''Write the whole file back, nodes in ID order.'''
+    data = dict(data)
+    data["nodes"] = {str(k): v for k, v in sorted(data["nodes"].items(), key=lambda kv: int(kv[0]))}
+    write_atomic(path or NODES_FILE, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def load_nodes(path=None, skip_invalid=False):
     '''
-    Return {node_id: settings} from nodes.json, checked; raises NodeConfigError.
-    With skip_invalid, a node with a mistake in it is left out (with a
-    warning) instead — so main.py keeps polling the others.
+    Return {node_id: settings} from nodes.json (the Pi's own list unless
+    path says otherwise), checked; raises NodeConfigError. With
+    skip_invalid, a node with a mistake in it is left out (with a warning)
+    instead — so main.py keeps polling the others.
     '''
+    path = path or NODES_FILE
+    if _is_pi_list(path):
+        start_pi_list()
     try:
         data = json.loads(Path(path).read_text())
     except (OSError, ValueError) as e:
@@ -225,6 +291,23 @@ def sleep_windows(nodes):
 def sync_node_ids(nodes):
     '''Radio nodes that keep a reading log for the Pi to pull.'''
     return [n for n in radio_node_ids(nodes) if storage_of(nodes[n]) != "none"]
+
+
+def next_free_id(taken):
+    '''The lowest node ID (1-254) not in taken, or None if they're all used.'''
+    taken = {int(n) for n in taken}
+    return next((n for n in range(1, 255) if n not in taken), None)
+
+
+# ── What the dashboard needs (flask_api.py's /api/nodes) ─────────────────────
+
+PUBLIC_FIELDS = ("name", "short", "color", "battery", "board", "framework")
+
+
+def public_nodes(nodes):
+    '''How to show each node: no pins or other wiring.'''
+    return {n: {**{k: node[k] for k in PUBLIC_FIELDS if k in node}, "link": link_of(node)}
+            for n, node in nodes.items()}
 
 
 # ── What the nodes need ──────────────────────────────────────────────────────
