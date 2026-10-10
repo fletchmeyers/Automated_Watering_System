@@ -48,6 +48,7 @@ async function loadNodes(timeoutMs = 4000) {
         link: n.link || 'radio',              // the one in use right now
         links: n.links || [n.link || 'radio'], // all it has, in order of preference
         ...(n.battery ? { battery: n.battery } : {}),
+        ...(n.soil ? { soil: n.soil } : {}),   // soil sensor calibration (node_setup.py calibrate)
       };
     }
   } catch (e) {
@@ -153,8 +154,16 @@ function initUnitToggle() {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-function soilPct(raw) {
-  return Math.round(clamp((raw - 200) / 8.23, 0, 100));
+// A soil sensor's raw reading as 0-100%. A calibrated sensor (nodes.json
+// "soil", set with node_setup.py calibrate) reads 0% at its dry reading and
+// 100% at its just-watered one; otherwise, or for an end not measured yet,
+// the seesaw's usual range (200 in air to ~1023) fills in.
+const SOIL_DRY = 200, SOIL_WET = 1023;
+function soilPct(raw, calibration) {
+  const dry = calibration?.dry ?? SOIL_DRY;
+  const wet = calibration?.wet ?? SOIL_WET;
+  if (dry === wet) return 0;
+  return Math.round(clamp((raw - dry) / (wet - dry) * 100, 0, 100));
 }
 
 // VOC: SGP40 raw resistance. Higher = cleaner. Typical range ~15000–50000.
@@ -407,7 +416,8 @@ function setCardWide(el, wide) {
 
 function renderSoil(el, soilData) {
   const present = [0, 1, 2].filter(id => soilData[id]);
-  const node = nodeInfo(el.dataset.node).short;   // shown on each gauge in a combined card
+  const info = nodeInfo(el.dataset.node);
+  const node = info.short;   // shown on each gauge in a combined card
 
   // Wide only once all 3 slots are actually in use — 1 or 2 arcs fit
   // comfortably in a single-width card, matching how many columns the
@@ -422,14 +432,15 @@ function renderSoil(el, soilData) {
   let html = `<div class="soil-grid" style="grid-template-columns:repeat(${present.length}, 1fr)">`;
   for (const id of present) {
     const d = soilData[id];
-    const pct = soilPct(d.m);
+    const calibration = info.soil?.[`s${id}`];
+    const pct = soilPct(d.m, calibration);
     const color = pct < 20 ? '#f85149' : pct < 40 ? '#d29922' : '#3fb950';
     html += `<div class="soil-card">
       <div class="soil-arc-wrap">
         ${donutArc(pct, color, '#1a2530')}
         <div class="soil-pct" style="color:${color}">${pct}%</div>
       </div>
-      <div class="soil-label">SENSOR ${id}</div>
+      <div class="soil-label" title="${calibration ? `Calibrated: dry ${calibration.dry ?? '–'}, wet ${calibration.wet ?? '–'}; raw ${d.m}` : `Not calibrated; raw ${d.m}`}">SENSOR ${id}${calibration ? '' : '<span class="soil-uncal">*</span>'}</div>
       <div class="soil-node">${node} · ${id}</div>
       <div class="soil-temp">${formatTemp(d.tmp).toFixed(1)}${tempUnitLabel()}</div>
     </div>`;

@@ -393,11 +393,20 @@ def package_ina238_data(sensor_id, sensor=None):
         "mw": round(s.power * 1000, 1),
     }
 
+SOIL_SAMPLES = 9
+
+def moisture(sensor_obj):
+    '''The middle of SOIL_SAMPLES quick reads: a few wild ones (from a noisy
+    USB charger, say) are thrown away rather than averaged in. Same as
+    soil_moisture() in the Arduino node's sensors.h.'''
+    reads = sorted(sensor_obj.moisture_read() for _ in range(SOIL_SAMPLES))
+    return reads[SOIL_SAMPLES // 2]
+
 def make_soil_fn(sensor_id, sensor_obj):
     def read():
         return {
             "t": f"s{sensor_id}",
-            "m": sensor_obj.moisture_read(),
+            "m": moisture(sensor_obj),
             "tmp": round(sensor_obj.get_temp(), 2),
         }
     return read

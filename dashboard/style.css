@@ -514,6 +514,8 @@
   .card-group.kind-soil .soil-grid { display: contents; }
   .card-group.kind-soil .group-members > .card > .card-header { display: none; }
   .card-group.kind-soil .group-members > .card + .card { border: none; padding: 0; }
+  /* An uncalibrated sensor's label gets a faint star (its tooltip says why). */
+  .soil-uncal { color: var(--muted); margin-left: 2px; }
   .soil-node { display: none; }
   .card-group .soil-label { display: none; }
   .card-group .soil-node {

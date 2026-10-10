@@ -47,21 +47,36 @@ struct SensorEntry {
   bool ok;                          // set by init_fn at startup
 };
 
+// Soil moisture is the middle of SOIL_SAMPLES quick touch reads: a few
+// wild ones (from a noisy USB charger, say) are thrown away rather than
+// averaged in. Same as moisture() in the CircuitPython node.
+#define SOIL_SAMPLES 9
+inline uint16_t soil_moisture(Adafruit_seesaw &soil) {
+  uint16_t reads[SOIL_SAMPLES];
+  for (uint8_t i = 0; i < SOIL_SAMPLES; i++) {
+    uint16_t value = soil.touchRead(0);
+    uint8_t j = i;
+    for (; j > 0 && reads[j - 1] > value; j--) reads[j] = reads[j - 1];   // keep them sorted
+    reads[j] = value;
+  }
+  return reads[SOIL_SAMPLES / 2];
+}
+
 inline bool soil_0_init() { return soil_0.begin(SOIL_ADDR_0); }
 inline void soil_0_read(JsonObject &pkt) {
-  pkt["m"]   = soil_0.touchRead(0);
+  pkt["m"]   = soil_moisture(soil_0);
   pkt["tmp"] = soil_0.getTemp();
 }
 
 inline bool soil_1_init() { return soil_1.begin(SOIL_ADDR_1); }
 inline void soil_1_read(JsonObject &pkt) {
-  pkt["m"]   = soil_1.touchRead(0);
+  pkt["m"]   = soil_moisture(soil_1);
   pkt["tmp"] = soil_1.getTemp();
 }
 
 inline bool soil_2_init() { return soil_2.begin(SOIL_ADDR_2); }
 inline void soil_2_read(JsonObject &pkt) {
-  pkt["m"]   = soil_2.touchRead(0);
+  pkt["m"]   = soil_moisture(soil_2);
   pkt["tmp"] = soil_2.getTemp();
 }
 
