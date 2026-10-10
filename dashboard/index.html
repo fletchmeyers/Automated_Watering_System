@@ -34,17 +34,17 @@
 <div id="node-panels"></div>
 
 <!-- Weather Forecast: a full-width row above the sensor cards, the forecast
-     on the same line as its title; the title folds it away -->
+     on the same line as its title (and the source picker under the title);
+     the title folds it away -->
 <section class="panel" id="weather-panel">
   <div class="weather-row">
-    <button type="button" class="panel-toggle" id="weather-toggle" onclick="toggleWeatherPanel()" aria-expanded="true">
-      <span class="panel-caret">▾</span><span class="card-title">Weather Forecast</span>
-    </button>
-    <div id="weather-body"><div class="no-data">Loading...</div></div>
-    <div class="weather-header-right">
+    <div class="weather-title">
+      <button type="button" class="panel-toggle" id="weather-toggle" onclick="toggleWeatherPanel()" aria-expanded="true">
+        <span class="panel-caret">▾</span><span class="card-title">Weather Forecast</span>
+      </button>
       <select id="weather-source-select" onchange="onWeatherSourceChange(this.value)"></select>
-      <span id="weather-badge" class="card-badge badge-gray">–</span>
     </div>
+    <div id="weather-body"><div class="no-data">Loading...</div></div>
   </div>
 </section>
 
@@ -76,7 +76,6 @@
   <div class="overlay-toggle" id="ts-overlay-toggle">
     <button id="raw-toggle-btn" class="overlay-btn active" onclick="toggleOverlay('raw')" type="button">Raw</button>
     <button id="smoothed-toggle-btn" class="overlay-btn active" onclick="toggleOverlay('smoothed')" type="button">Smoothed</button>
-    <button id="share-axes-btn" class="overlay-btn active" onclick="toggleShareAxes()" type="button" title="Fields with the same unit share one axis">Shared axes</button>
     <button id="zoom-btn" class="overlay-btn" onclick="toggleZoom()" type="button" style="display:none" title="Let dragging on the plot zoom (otherwise it scrolls the page)">Zoom</button>
   </div>
   <div id="scatter-field-picker" class="scatter-field-row" style="display:none;">
@@ -105,7 +104,10 @@
       <span>to</span>
       <input type="datetime-local" id="range-end">
     </div>
-    <button id="plot-btn" onclick="runAnalysisPlot()" type="button">Plot</button>
+    <div class="plot-actions">
+      <button id="share-axes-btn" class="overlay-btn active" onclick="toggleShareAxes()" type="button" title="Fields with the same unit share one axis">Shared axes</button>
+      <button id="plot-btn" onclick="runAnalysisPlot()" type="button">Plot</button>
+    </div>
   </div>
 
   <div id="analysis-status" class="no-data" style="display:none;"></div>

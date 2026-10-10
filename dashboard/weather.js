@@ -368,16 +368,6 @@ const WEATHER_SOURCES = [
 let currentWeatherSourceId = 'open-meteo';
 const weatherCache = {}; // sourceId -> { data, fetchedAt }
 
-// Same color bands as tempColor() in dashboard.js, applied to the card
-// badge instead of a text color — kept as a separate small function rather
-// than reusing tempColor() since a badge needs a class name, not a hex color.
-function tempBadgeClass(c) {
-  if (c < 10) return 'badge-blue';
-  if (c < 25) return 'badge-green';
-  if (c < 35) return 'badge-amber';
-  return 'badge-red';
-}
-
 function kmhToMph(kmh) { return kmh * 0.621371; }
 function mmToInches(mm) { return mm * 0.0393701; }
 
@@ -406,11 +396,7 @@ function dayLabel(dateStr, index) {
 let lastWeatherData = null;
 
 function renderWeather(data) {
-  const badge = document.getElementById('weather-badge');
   const cur = data.current;
-
-  badge.className = 'card-badge ' + tempBadgeClass(cur.tempC);
-  badge.textContent = `${Math.round(formatTemp(cur.tempC))}${tempUnitLabel()}`;
 
   const dailyHtml = data.daily.map((d, i) => `<div class="weather-day">
       <div class="weather-day-label">${dayLabel(d.date, i)}</div>
@@ -455,9 +441,6 @@ function renderWeather(data) {
 
 function showWeatherError(source, err) {
   console.error(`weather fetch failed (${source.id})`, err);
-  const badge = document.getElementById('weather-badge');
-  badge.className = 'card-badge badge-gray';
-  badge.textContent = 'error';
   document.getElementById('weather-body').innerHTML =
     `<div class="no-data">Could not load forecast from ${source.label}</div>`;
 }
