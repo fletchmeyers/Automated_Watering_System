@@ -14,7 +14,8 @@
     <h1>garden<span>/</span>dashboard</h1>
   </div>
   <div class="header-right">
-    <!-- One chip per node: status dot + time since its last packet (dashboard.js) -->
+    <!-- One chip per node: status dot + time since its last packet; click one
+         to open that node's details below the header (dashboard.js) -->
     <div id="node-status" class="node-status"><span class="node-status-loading">loading...</span></div>
     <div class="unit-toggle" id="unit-toggle">
       <button id="unit-c-btn" class="unit-btn active" onclick="setUnitPref('C')" type="button">°C</button>
@@ -27,31 +28,29 @@
     <span id="ping-result"></span>
   </div>
 </header>
-<div class="grid" id="grid">
 
-  <!-- Every node at a glance. The sensor cards (one per sensor per node) are
-       created by dashboard.js as each node's data arrives, ahead of the
-       weather card. -->
-  <div class="card card-wide" id="card-nodes">
-    <div class="card-header">
-      <span class="card-title">Nodes</span>
+<!-- A full-width row per node opened from its chip in the header: its
+     battery and storage, radio/system and sensor health (dashboard.js) -->
+<div id="node-panels"></div>
+
+<!-- Weather Forecast: a full-width row above the sensor cards; its title
+     folds it away -->
+<section class="panel" id="weather-panel">
+  <div class="card-header">
+    <button type="button" class="panel-toggle" id="weather-toggle" onclick="toggleWeatherPanel()" aria-expanded="true">
+      <span class="panel-caret">▾</span><span class="card-title">Weather Forecast</span>
+    </button>
+    <div class="weather-header-right">
+      <select id="weather-source-select" onchange="onWeatherSourceChange(this.value)"></select>
+      <span id="weather-badge" class="card-badge badge-gray">–</span>
     </div>
-    <div class="card-body"><div class="no-data">Loading...</div></div>
   </div>
+  <div id="weather-body"><div class="no-data">Loading...</div></div>
+</section>
 
-  <!-- Weather Forecast -->
-  <div class="card card-wide" id="card-weather">
-    <div class="card-header">
-      <span class="card-title">Weather Forecast</span>
-      <div class="weather-header-right">
-        <select id="weather-source-select" onchange="onWeatherSourceChange(this.value)"></select>
-        <span id="weather-badge" class="card-badge badge-gray">–</span>
-      </div>
-    </div>
-    <div id="weather-body"><div class="no-data">Loading...</div></div>
-  </div>
-
-</div>
+<!-- The sensor cards (one per sensor per node), created by dashboard.js as
+     each node's data arrives -->
+<div class="grid" id="grid"></div>
 
 <!-- Populated when one or more cards above are hidden; click "show" to restore -->
 <div id="hidden-cards-bar"></div>
@@ -130,6 +129,7 @@
 // (a few seconds at most — loadNodes() falls back to its built-in list).
 loadNodes().then(() => {
   initUnitToggle();
+  initWeatherToggle();
   buildPingNodeSelect();
   refresh();
   setInterval(refresh, REFRESH_MS);
