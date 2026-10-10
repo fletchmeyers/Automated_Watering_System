@@ -153,12 +153,37 @@
     overflow: hidden;
   }
   .node-panel-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: minmax(170px, auto) minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px 24px;
     margin-bottom: 14px;
   }
-  .node-panel-head .node-row-ago { margin-left: 4px; }
+  .node-panel-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+  }
+  .node-panel-title .node-row-note { flex-basis: 100%; margin-top: 2px; }
+  .node-panel-head .node-row-ago { margin-left: 0; }
+  @media (max-width: 700px) {
+    .node-panel-head { grid-template-columns: minmax(0, 1fr) auto; }
+    .node-panel-head .node-metrics { grid-column: 1 / -1; grid-row: 2; }
+  }
+  /* Radio/system readings side by side, sensor health in as many columns as fit */
+  .node-panel-section .card-body:has(.mini-metric) {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+  }
+  .node-panel-section .mini-metric { margin: 0 !important; }
+  .node-panel-section .card-body:has(.health-row) {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    column-gap: 20px;
+  }
+  .node-panel-section .health-row:last-child { border-bottom: 1px solid var(--border); }
   .panel-close {
     margin-left: auto;
     background: none;
@@ -172,7 +197,7 @@
   .panel-close:hover { color: var(--text); border-color: var(--text); }
   .node-panel-body {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 16px 24px;
   }
   .node-panel-section + .node-panel-section {
@@ -203,11 +228,62 @@
   .panel-caret { font-size: 14px; line-height: 1; transition: transform 0.15s; }
   #weather-panel.collapsed .panel-caret { transform: rotate(-90deg); }
   #weather-panel.collapsed #weather-body { display: none; }
-  #weather-panel.collapsed .card-header { margin-bottom: 0; }
+
+  /* Weather: title, today and the days ahead, and the source picker all on
+     one line; on a narrow screen the forecast drops under the title. */
+  #weather-panel { padding-bottom: 20px; }
+  .weather-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px 24px;
+  }
+  #weather-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 24px;
+    min-width: 0;
+  }
+  @media (max-width: 900px) {
+    .weather-row { grid-template-columns: minmax(0, 1fr) auto; }
+    #weather-body { grid-column: 1 / -1; grid-row: 2; }
+  }
+  /* Today: icon, then temperature and "feels like" with humidity, wind and
+     precipitation in a line under them */
+  #weather-panel .weather-current {
+    flex: 0 1 auto;
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 4px 12px;
+    align-items: center;
+  }
+  #weather-panel .weather-current-icon { font-size: 34px; grid-row: span 2; }
+  #weather-panel .big-value { font-size: 28px; }
+  #weather-panel .sub-value { margin-top: 2px; }
+  #weather-panel .weather-current-extra { flex: 0 0 auto; display: flex; gap: 16px; }
+  #weather-panel .weather-current-extra .mini-metric { background: none; padding: 0; }
+  #weather-panel .weather-current-extra .mini-value { font-size: 14px; }
+  #weather-panel .weather-current-extra .mini-label { margin-bottom: 0; }
+  #weather-panel .weather-daily { flex: 1 1 340px; margin-top: 0; gap: 6px; }
+  #weather-panel .weather-day { padding: 6px 4px; min-width: 52px; }
+  #weather-panel .weather-day-label { margin-bottom: 2px; }
+  #weather-panel .weather-day-icon { font-size: 18px; margin-bottom: 2px; }
+  #weather-panel .weather-day-precip { margin-top: 2px; }
+  #weather-panel .weather-attribution {
+    position: absolute;
+    right: 20px;
+    bottom: 4px;
+    margin: 0;
+  }
 
   .node-card {
     background: color-mix(in srgb, var(--node-color) 7%, var(--bg2));
     border-color: color-mix(in srgb, var(--node-color) 35%, var(--border));
+    /* Boxes inside a node's card or details row (gauges, readings, power
+       monitors) all take this one tint of the node's color, in a combined
+       card too, where each display keeps its own node's. */
+    --node-box: color-mix(in srgb, var(--node-color) 12%, var(--bg3));
   }
   .node-card::before {
     content: '';
@@ -623,7 +699,7 @@
   }
 
   .mini-metric {
-    background: var(--bg3);
+    background: var(--node-box, var(--bg3));
     border-radius: 8px;
     padding: 10px 12px;
   }
@@ -651,7 +727,7 @@
   /* Tinted with the node's color, so a combined card's gauges are easy to
      tell apart */
   .soil-card {
-    background: color-mix(in srgb, var(--node-color, var(--bg3)) 13%, var(--bg3));
+    background: var(--node-box, var(--bg3));
     border-radius: 8px;
     padding: 12px;
     text-align: center;
@@ -794,7 +870,7 @@
   }
 
   .power-node {
-    background: var(--bg3);
+    background: var(--node-box, var(--bg3));
     border-radius: 8px;
     padding: 12px 14px;
     border: 1px solid var(--border);

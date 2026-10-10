@@ -33,19 +33,19 @@
      battery and storage, radio/system and sensor health (dashboard.js) -->
 <div id="node-panels"></div>
 
-<!-- Weather Forecast: a full-width row above the sensor cards; its title
-     folds it away -->
+<!-- Weather Forecast: a full-width row above the sensor cards, the forecast
+     on the same line as its title; the title folds it away -->
 <section class="panel" id="weather-panel">
-  <div class="card-header">
+  <div class="weather-row">
     <button type="button" class="panel-toggle" id="weather-toggle" onclick="toggleWeatherPanel()" aria-expanded="true">
       <span class="panel-caret">▾</span><span class="card-title">Weather Forecast</span>
     </button>
+    <div id="weather-body"><div class="no-data">Loading...</div></div>
     <div class="weather-header-right">
       <select id="weather-source-select" onchange="onWeatherSourceChange(this.value)"></select>
       <span id="weather-badge" class="card-badge badge-gray">–</span>
     </div>
   </div>
-  <div id="weather-body"><div class="no-data">Loading...</div></div>
 </section>
 
 <!-- The sensor cards (one per sensor per node), created by dashboard.js as
