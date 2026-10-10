@@ -37,6 +37,10 @@ STORAGE    = ("sd", "flash", "none")
 # no log by default (nothing to sync once the Pi is reachable again), and
 # don't sleep. Wi-Fi needs a board with a Wi-Fi chip (WIFI_BOARDS), running
 # a framework whose firmware has Wi-Fi so far (WIFI_FRAMEWORKS).
+#
+# "link" is one of LINKS, or a list of both in order of preference
+# (["wifi", "radio"]): the node answers on both, and the Pi uses the first
+# that's up (links.py). node_setup.py prefer N <link> reorders it.
 LINKS = ("radio", "wifi")
 WIFI_BOARDS = ("picow", "pico2w", "feather_esp32s2", "feather_esp32_v2")
 WIFI_FRAMEWORKS = ("arduino",)   # CircuitPython Wi-Fi isn't written yet
@@ -213,15 +217,17 @@ def check_node(node_id, node):
         if not isinstance(value, int) or value <= 0:
             fail(f'"{field}" must be a whole number of seconds above 0')
 
-    link = link_of(node)
-    if link not in LINKS:
-        fail(f'link must be one of {", ".join(LINKS)}, not "{link}"')
-    if link == "wifi":
+    raw = node.get("link", "radio")
+    links = links_of(node)
+    if (isinstance(raw, list) and (not raw or len(set(raw)) != len(raw)))             or not all(isinstance(l, str) and l in LINKS for l in links):
+        fail(f'link must be one of {", ".join(LINKS)}, or a list of them in order of '
+             f'preference, not {json.dumps(raw)}')
+    if "wifi" in links:
         if not wifi_able(node["board"], framework):
             fail(f"{framework} on {node['board']} can't use Wi-Fi (so far Wi-Fi is "
                  f"{' or '.join(WIFI_FRAMEWORKS)} on {', '.join(WIFI_BOARDS)})")
         if node.get("sleep_window"):
-            fail("a Wi-Fi node doesn't sleep (sleep_window is for radio nodes)")
+            fail("a Wi-Fi node doesn't sleep (sleep_window is for radio-only nodes)")
 
     storage = storage_of(node)
     if storage not in STORAGE:
@@ -231,10 +237,10 @@ def check_node(node_id, node):
     if "rtc" in node and node["rtc"] not in RTCS:
         fail(f'rtc must be one of {", ".join(RTCS)}, or left out for no RTC chip')
 
-    pins = node.get("pins", {} if link == "wifi" else None)
+    pins = node.get("pins", None if "radio" in links else {})
     if not isinstance(pins, dict):
         fail('needs a "pins" section')
-    required = REQUIRED_PINS[framework] if link == "radio" else ()
+    required = REQUIRED_PINS[framework] if "radio" in links else ()
     for pin in required:
         if pin not in pins:
             fail(f'needs pin "{pin}"')
@@ -273,24 +279,31 @@ def wifi_able(board, framework):
     return board in WIFI_BOARDS and framework in WIFI_FRAMEWORKS
 
 
+def links_of(node):
+    '''A node's links in order of preference: ["radio"], ["wifi"], or both.'''
+    link = node.get("link", "radio")
+    return list(link) if isinstance(link, list) else [link]
+
+
 def link_of(node):
-    return node.get("link", "radio")
+    '''Its preferred link (see links.active_link for the one in use now).'''
+    return links_of(node)[0]
 
 
 def storage_of(node):
     '''Where a node logs readings: an SD card unless it says otherwise, or
-    nothing at all for a Wi-Fi node unless it says otherwise.'''
-    return node.get("storage", "none" if link_of(node) == "wifi" else "sd")
+    nothing at all for a Wi-Fi-only node unless it says otherwise.'''
+    return node.get("storage", "sd" if "radio" in links_of(node) else "none")
 
 
 # ── What main.py and wifi_nodes.py need ──────────────────────────────────────
 
 def radio_node_ids(nodes):
-    return [n for n, node in nodes.items() if link_of(node) == "radio"]
+    return [n for n, node in nodes.items() if "radio" in links_of(node)]
 
 
 def wifi_node_ids(nodes):
-    return [n for n, node in nodes.items() if link_of(node) == "wifi"]
+    return [n for n, node in nodes.items() if "wifi" in links_of(node)]
 
 
 def sleep_windows(nodes):
@@ -315,7 +328,8 @@ PUBLIC_FIELDS = ("name", "short", "color", "battery", "board", "framework")
 
 def public_nodes(nodes):
     '''How to show each node: no pins or other wiring.'''
-    return {n: {**{k: node[k] for k in PUBLIC_FIELDS if k in node}, "link": link_of(node)}
+    return {n: {**{k: node[k] for k in PUBLIC_FIELDS if k in node},
+                "link": link_of(node), "links": links_of(node)}
             for n, node in nodes.items()}
 
 
@@ -352,8 +366,11 @@ def arduino_build_flags(node_id, node):
     pins = node.get("pins", {})
     storage = storage_of(node)
     flags = [f"-D NODE_ID={node_id}"]
-    if link_of(node) == "wifi":
-        flags.append("-D NODE_LINK_WIFI")       # no radio; see wifi_link.h
+    links = links_of(node)
+    if "wifi" in links:
+        flags.append("-D NODE_LINK_WIFI")       # see wifi_link.h
+    if "radio" not in links:
+        flags.append("-D NODE_NO_RADIO")
     else:
         flags += [f"-D RFM69_CS={pins['radio_cs']}", f"-D RFM69_INT={pins['radio_irq']}",
                   f"-D RFM69_RST={pins['radio_rst']}"]

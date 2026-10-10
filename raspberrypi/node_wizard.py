@@ -25,7 +25,7 @@ October 2026
 
 import sqlite3
 
-from nodes import (NodeConfigError, BOARDS, REQUIRED_PINS, check_node, wifi_able,
+from nodes import (NodeConfigError, BOARDS, REQUIRED_PINS, check_node, links_of, wifi_able,
                    next_free_id, read_node_file, save_node_file)
 
 # Each board's usual wiring, per framework: an RFM69 FeatherWing / breakout
@@ -61,7 +61,15 @@ BOARD_NAMES = {
     "feather_m0": "Feather M0",
 }
 FRAMEWORK_NAMES = {"circuitpython": "CircuitPython", "arduino": "Arduino"}
-LINK_NAMES = {"wifi": "Wi-Fi", "radio": "RFM69 radio"}
+# The link question's answers: one link, or both in order of preference
+# (nodes.json "link": ["wifi", "radio"]).
+LINK_NAMES = {"wifi": "Wi-Fi", "radio": "RFM69 radio",
+              "wifi,radio": "Wi-Fi, with the radio as backup",
+              "radio,wifi": "RFM69 radio, with Wi-Fi as backup"}
+
+
+def _has(a, link):
+    return link in a["link"].split(",")
 STORAGE_NAMES = {"sd": "SD card", "flash": "the board's flash chip", "none": "nothing"}
 
 # Plot colors, in the order new nodes get them. Kept clear of the dashboard's
@@ -196,7 +204,10 @@ def _steps(w, nodes, boards, taken_ids):
             return w.choose("How it reaches the Pi", [("radio", LINK_NAMES["radio"])], "radio")
         return w.choose("How it reaches the Pi",
                         [("wifi", "Wi-Fi (no radio needed; the Pi gives it the Wi-Fi settings)"),
-                         ("radio", LINK_NAMES["radio"])], a.get("link", "wifi"))
+                         ("radio", LINK_NAMES["radio"]),
+                         ("wifi,radio", "Both: Wi-Fi first, the radio if Wi-Fi is down"),
+                         ("radio,wifi", "Both: the radio first, Wi-Fi if the radio is down")],
+                        a.get("link", "wifi"))
 
     def node_id(a):
         def free(n):
@@ -222,11 +233,11 @@ def _steps(w, nodes, boards, taken_ids):
                    ("none", "Nothing: the Pi only gets readings when it asks")]
         if a["framework"] == "arduino" and BOARDS[a["board"]]["chip"] == "samd21":
             options.append(("flash", "The board's own flash chip"))
-        usual = "sd" if a["link"] == "radio" and "sd_cs" in defaults(a) else "none"
+        usual = "sd" if _has(a, "radio") and "sd_cs" in defaults(a) else "none"
         return w.choose("Where it logs readings", options, a.get("storage", usual))
 
     def wanted_pins(a):
-        wanted = list(REQUIRED_PINS[a["framework"]]) if a["link"] == "radio" else []
+        wanted = list(REQUIRED_PINS[a["framework"]]) if _has(a, "radio") else []
         if a["storage"] == "sd":
             wanted += [p for p in SD_PINS if p in defaults(a)] or ["sd_cs"]
         return wanted
@@ -284,7 +295,7 @@ def _steps(w, nodes, boards, taken_ids):
              applies=lambda a: a["storage"] != "none"),
         Step("rtc", "Clock chip (RTC)", rtc, show=lambda v: "PCF8523" if v else "none"),
         Step("sleep", "Sleep window", sleep, show=lambda v: "-".join(v) if v else "none",
-             applies=lambda a: a["link"] == "radio"),
+             applies=lambda a: a["link"] == "radio"),   # Wi-Fi nodes don't sleep
     ]
 
 
@@ -293,8 +304,9 @@ def _build(nodes, a):
             "color": next((c for c in COLORS if c not in {n.get("color") for n in nodes.values()}),
                           COLORS[a["node_id"] % len(COLORS)]),
             "framework": a["framework"], "board": a["board"]}
-    if a["link"] == "wifi":
-        node["link"] = "wifi"
+    if a["link"] != "radio":
+        links = a["link"].split(",")
+        node["link"] = links if len(links) > 1 else links[0]
     node.update(sense_interval_s=a["sense"],
                 log_interval_s=a["log"] if a["storage"] != "none" else UNLOGGED_INTERVAL_S,
                 storage=a["storage"])
@@ -394,6 +406,25 @@ def add_node(path, wizard, boards=None, db_file=None):
     save_node_file(data, path)
     wizard.say(f"[SETUP] Saved node {node_id} to {path}.")
     return node_id
+
+
+def prefer_link(path, node_id, link):
+    '''Make link the first of a node's links (it must have both); returns
+    the new order. The Pi switches within a minute, with no restart.'''
+    data = read_node_file(path)
+    node = data["nodes"].get(str(node_id))
+    if node is None:
+        raise NodeConfigError(f"Node {node_id} isn't in {path}.")
+    links = links_of(node)
+    if link not in links:
+        raise NodeConfigError(f"Node {node_id} has no {LINK_NAMES.get(link, link)} link "
+                              f"(only {', '.join(LINK_NAMES[l] for l in links)}); adding one "
+                              "means re-flashing it with new settings.")
+    if len(links) == 1:
+        raise NodeConfigError(f"Node {node_id} only has {LINK_NAMES[link]}, so there's nothing to switch.")
+    node["link"] = [link] + [l for l in links if l != link]
+    save_node_file(data, path)
+    return node["link"]
 
 
 def remove_node(path, node_id, wizard):

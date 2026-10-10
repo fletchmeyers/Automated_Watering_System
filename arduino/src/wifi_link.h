@@ -1,9 +1,9 @@
 /*
  * wifi_link.h
  *
- * For nodes on Wi-Fi instead of the radio (nodes.json "link": "wifi";
- * node_setup.py builds them with -D NODE_LINK_WIFI). ESP32 boards and the
- * Pico W / Pico 2 W.
+ * For nodes on Wi-Fi (nodes.json "link": "wifi", or ["wifi", "radio"] with
+ * the radio too; node_setup.py builds them with -D NODE_LINK_WIFI, plus
+ * -D NODE_NO_RADIO for Wi-Fi only). ESP32 boards and the Pico W / Pico 2 W.
  *
  * The node joins the Wi-Fi network, opens a TCP connection to the Pi's
  * garden-wifi service (raspberrypi/wifi_nodes.py), says hello, and then

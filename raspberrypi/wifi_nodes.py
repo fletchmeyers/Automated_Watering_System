@@ -13,8 +13,13 @@ are stored exactly as main.py stores radio ones (BatchReceiver: sensors.db,
 the day's archive file, data_from_pico.txt).
 
 It runs separately from main.py's radio loop, so neither can hold the other
-up. nodes.json is read again for every new connection, so a newly added
-Wi-Fi node needs no restart.
+up. nodes.json is read again whenever it changes, so a newly added Wi-Fi
+node, or a changed link preference, needs no restart.
+
+A node with the radio too ("link": ["radio", "wifi"] or the other way
+round) is polled here only while Wi-Fi is the link in use (links.py: the
+first in its list that's up); otherwise it's just pinged each minute, so
+its connection is known to be alive if the radio fails.
 
 The dashboard's Refresh and ping test reach Wi-Fi nodes through a control
 port only open to the Pi itself (CONTROL_PORT on 127.0.0.1): flask_api.py
@@ -34,7 +39,8 @@ from pathlib import Path
 
 import db
 from communication_indoor import BatchReceiver, ISO_FORMAT
-from nodes import NODES_FILE, load_nodes, wifi_node_ids
+from links import NodeList, RADIO_STATUS_FILE, WIFI_STATUS_FILE, active_link
+from nodes import NODES_FILE, wifi_node_ids
 from sync_indoor import DATA_FILE, PING_PROGRESS_FILE
 
 WIFI_PORT     = 5006   # also sent to each node by node_setup.py
@@ -45,9 +51,10 @@ MAX_MISSES    = 3      # unanswered polls in a row before dropping the connectio
 CONTROL_PORT  = 5007   # on 127.0.0.1 only: on-demand polls and pings from flask_api.py
 PING_TIMEOUT  = 2      # seconds to wait for each pong
 
-# Which Wi-Fi nodes are connected right now, for node_setup.py (and later the
-# dashboard): {"<node>": {"ip", "since", "last_reading"}}.
-STATUS_FILE = "/tmp/garden_wifi_nodes.json"
+# Which Wi-Fi nodes are connected right now, for node_setup.py, main.py and
+# the dashboard (links.py): {"<node>": {"ip", "since", "last_seen",
+# "last_reading"}}; last_seen is the last time it answered anything.
+STATUS_FILE = WIFI_STATUS_FILE
 
 
 def _now():
@@ -67,10 +74,12 @@ class Link:
 class WifiNodes:
     def __init__(self, db_conn, nodes_file=NODES_FILE, poll_interval=POLL_INTERVAL,
                  reply_timeout=REPLY_TIMEOUT, status_file=STATUS_FILE, data_file=DATA_FILE,
-                 store=True):
+                 store=True, radio_status_file=RADIO_STATUS_FILE):
         self.db_conn = db_conn
         self.store = store   # False: print each reading instead of saving it (bench tests)
         self.nodes_file = nodes_file
+        self.node_list = NodeList(nodes_file)
+        self.radio_status_file = radio_status_file
         self.poll_interval = poll_interval
         self.reply_timeout = reply_timeout
         self.status_file = Path(status_file)
@@ -85,11 +94,21 @@ class WifiNodes:
             print(f"[WIFI] Could not write {self.status_file}: {e}")
 
     def _known_wifi_nodes(self):
-        try:
-            return set(wifi_node_ids(load_nodes(self.nodes_file, skip_invalid=True)))
-        except Exception as e:
-            print(f"[WIFI] Could not read the node list: {e}")
-            return set()
+        return set(wifi_node_ids(self.node_list.get()))
+
+    def _seen(self, node_id, reading=False):
+        entry = self.status.get(str(node_id))
+        if entry is not None:
+            entry["last_seen"] = _now()
+            if reading:
+                entry["last_reading"] = entry["last_seen"]
+            self._write_status()
+
+    def _wifi_in_use(self, node_id):
+        '''Whether the minute's poll goes over Wi-Fi (not the radio).'''
+        node = self.node_list.get().get(node_id)
+        return node is None or active_link(node_id, node, wifi_file=self.status_file,
+                                           radio_file=self.radio_status_file) == "wifi"
 
     @staticmethod
     async def _send(writer, command):
@@ -118,7 +137,8 @@ class WifiNodes:
         if old is not None:
             old.writer.close()           # the node reconnected; drop the stale link
         link = self.links[node_id] = Link(reader, writer)
-        self.status[str(node_id)] = {"ip": ip, "since": _now(), "last_reading": None}
+        self.status[str(node_id)] = {"ip": ip, "since": _now(), "last_seen": _now(),
+                                     "last_reading": None}
         self._write_status()
         print(f"[WIFI] Node {node_id} connected from {ip}.")
 
@@ -127,12 +147,17 @@ class WifiNodes:
         try:
             while not writer.is_closing():
                 async with link.lock:
-                    answered = await self.poll(node_id, reader, writer, batch)
+                    if self._wifi_in_use(node_id):
+                        what = "a poll"
+                        answered = await self.poll(node_id, reader, writer, batch)
+                    else:   # the radio is in use: just check the connection
+                        what = "a ping"
+                        answered = (await self.ping(node_id, count=1, quiet=True))["hits"] == 1
                 if answered:
                     misses = 0
                 else:
                     misses += 1
-                    print(f"[WIFI] Node {node_id} didn't answer a poll ({misses}/{MAX_MISSES}).")
+                    print(f"[WIFI] Node {node_id} didn't answer {what} ({misses}/{MAX_MISSES}).")
                     if misses >= MAX_MISSES:
                         break
                 await asyncio.sleep(self.poll_interval)
@@ -172,8 +197,7 @@ class WifiNodes:
             if not self.store:
                 print(f"[WIFI] Node {node_id}: {json.dumps(packet)}")
                 if kind == "batch_end":
-                    self.status[str(node_id)]["last_reading"] = _now()
-                    self._write_status()
+                    self._seen(node_id, reading=True)
                     if link is not None:
                         link.last_packets = got
                     return True
@@ -185,9 +209,7 @@ class WifiNodes:
             elif kind == "batch_end":
                 batch.close_batch(packet)
                 written = batch.flush(radio=None)   # no radio: nothing to ack over the air
-                if written:
-                    self.status[str(node_id)]["last_reading"] = _now()
-                    self._write_status()
+                self._seen(node_id, reading=bool(written))
                 if link is not None:
                     link.last_packets = written or []
                 return True
@@ -196,9 +218,11 @@ class WifiNodes:
             elif "q" in packet:
                 batch.collect(packet)
 
-    async def ping(self, node_id, count=10, timeout=PING_TIMEOUT, progress_file=PING_PROGRESS_FILE):
+    async def ping(self, node_id, count=10, timeout=PING_TIMEOUT, progress_file=PING_PROGRESS_FILE,
+                   quiet=False):
         '''count pings over the node's connection, each waiting up to timeout
-        for its pong: the same result as main.py's radio ping test.'''
+        for its pong: the same result as main.py's radio ping test. quiet:
+        a connection check, not a test (no progress file, nothing printed).'''
         link = self.links[node_id]
         results = []
         for q in range(count):
@@ -219,16 +243,18 @@ class WifiNodes:
                     continue
                 if isinstance(packet, dict) and packet.get("t") == "pong" and packet.get("pq") == q:
                     rtt_ms = round((time.monotonic() - sent_at) * 1000, 1)
+                    self._seen(node_id)
                     break
             results.append({"q": q, "ok": rtt_ms is not None, "rtt_ms": rtt_ms})
-            if progress_file:
+            if progress_file and not quiet:
                 try:
                     Path(progress_file).write_text(json.dumps(
                         {"done": q + 1, "count": count, "hits": sum(r["ok"] for r in results)}))
                 except OSError:
                     pass
         rtts = [r["rtt_ms"] for r in results if r["ok"]]
-        print(f"[WIFI] Ping test for node {node_id}: {len(rtts)}/{count} pongs.")
+        if not quiet:
+            print(f"[WIFI] Ping test for node {node_id}: {len(rtts)}/{count} pongs.")
         return {"count": count, "hits": len(rtts), "misses": count - len(rtts),
                 "avg_rtt_ms": round(sum(rtts) / len(rtts), 1) if rtts else None,
                 "results": results, "node_id": node_id}

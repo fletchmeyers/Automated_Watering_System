@@ -45,7 +45,8 @@ async function loadNodes(timeoutMs = 4000) {
         name: n.name || `Node ${id}`,
         short: n.short || `N${id}`,
         color: n.color || nodeInfo.fallbackColor(id),
-        link: n.link || 'radio',
+        link: n.link || 'radio',              // the one in use right now
+        links: n.links || [n.link || 'radio'], // all it has, in order of preference
         ...(n.battery ? { battery: n.battery } : {}),
       };
     }
@@ -1473,12 +1474,16 @@ function initCardCustomization() {
 
 // The node picker for Refresh and the ping test, built from NODES so a new
 // node shows up there too. A Wi-Fi node is reached through the Pi's Wi-Fi
-// service, a radio node over the radio; the label says which.
+// service, a radio node over the radio; the label says which, and for a
+// node with both, which one is in use now and which is the backup.
 function buildPingNodeSelect() {
   const sel = document.getElementById('ping-node-select');
   if (!sel) return;
   sel.innerHTML = knownNodeIds().map(n => {
     const info = nodeInfo(n);
-    return `<option value="${n}">${info.name} · ${info.link === 'wifi' ? 'Wi-Fi' : 'radio'}</option>`;
+    const name = link => link === 'wifi' ? 'Wi-Fi' : 'radio';
+    const backup = (info.links || []).filter(l => l !== info.link);
+    return `<option value="${n}">${info.name} · ${name(info.link)}${
+      backup.length ? ` (${backup.map(name).join(', ')} backup)` : ''}</option>`;
   }).join('');
 }

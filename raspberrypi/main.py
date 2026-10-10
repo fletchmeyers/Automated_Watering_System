@@ -9,6 +9,7 @@ March 2026
 '''
 
 import json
+import time
 from pathlib import Path
 
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
@@ -25,6 +26,7 @@ from communication_indoor import (
 )
 
 import db
+from links import NodeList, active_link, write_radio_status
 from nodes import load_nodes, radio_node_ids, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -33,12 +35,13 @@ from nodes import load_nodes, radio_node_ids, sleep_windows, sync_node_ids
 # node logs a reading every 5 minutes while asleep and the next day's sync
 # collects them. Nodes with "storage": "none" keep no log, so aren't synced.
 NODES         = load_nodes(skip_invalid=True)   # a broken entry is skipped, not fatal
-NODE_IDS      = radio_node_ids(NODES)   # Wi-Fi nodes are polled by wifi_nodes.py
+NODE_IDS      = radio_node_ids(NODES)   # Wi-Fi-only nodes are polled by wifi_nodes.py
 SLEEP_WINDOWS = sleep_windows(NODES)
 SYNC_NODE_IDS = sync_node_ids(NODES)
 
 POLL_INTERVAL = 60     # seconds between polls per node
 INFO_INTERVAL = 3600   # seconds between storage reports per node
+RADIO_STATUS_EVERY = 30   # seconds between writes of which nodes answer (links.py)
 
 SYNC_LINES_PER_HOUR = 2000   # cap per hourly session — a backlog drains over several hours
 SYNC_CHUNK_LINES    = 8      # lines per chunk — small, so one lost packet costs little on a weak link
@@ -76,6 +79,27 @@ def available(node_id):
     return health.reachable(node_id) and not sleeper.asleep(node_id)
 
 
+# A node with Wi-Fi too is polled over the radio only while the radio is
+# the link in use (links.py); its preference is read live from nodes.json.
+node_list = NodeList()
+
+
+def radio_in_use(node_id):
+    node = node_list.get().get(node_id)
+    return node is None or active_link(node_id, node) == "radio"
+
+
+radio_status = {"written": None, "at": 0.0}
+
+
+def share_radio_status():
+    '''Tell wifi_nodes.py which nodes answer over the radio (links.py).'''
+    reachable = {n: available(n) for n in NODE_IDS}
+    if reachable != radio_status["written"] or time.monotonic() - radio_status["at"] >= RADIO_STATUS_EVERY:
+        write_radio_status(reachable)
+        radio_status.update(written=reachable, at=time.monotonic())
+
+
 def record_sleep(node_id):
     until = sleeper.asleep_until(node_id)
     update_node_info(node_id, sleep_until=until.strftime("%Y-%m-%dT%H:%M:%S") if until else None)
@@ -83,6 +107,7 @@ frags = FragmentReassembler()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 while True:
+    share_radio_status()
 
     # ── A timed-out command counts against its node; a timed-out sync ────
     # ── chunk also ends that node's session for the hour ──────────────────
@@ -160,6 +185,9 @@ while True:
     # same reason — a second request_poll() would overwrite the first.
     # Polls come first, so a long sync session never starves them.
     if cmd.pending is None and not Path(COMMAND_FILE).exists():
+        for n in timer.due_nodes():
+            if not radio_in_use(n):
+                timer.mark_polled(n)   # wifi_nodes.py polls it this minute
         due = [n for n in timer.due_nodes() if available(n)]
         info_due = [n for n in info_timer.due_nodes() if available(n)]
         sleep_cmd = sleeper.next_command(available)

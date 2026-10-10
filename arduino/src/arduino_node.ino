@@ -45,9 +45,13 @@ void setup() {
 #endif
 
 #ifdef NODE_LINK_WIFI
-  // A Wi-Fi node has no radio: it talks to the Pi over Wi-Fi (wifi_link.h).
-  Serial.println(F("[BOOT] Wi-Fi node: no radio."));
+  // Talks to the Pi over Wi-Fi (wifi_link.h) — and over the radio too unless
+  // built with NODE_NO_RADIO. With both, it answers each command over the
+  // link it came in on; the Pi decides which one it uses (links.py).
   wifi_link_begin();
+#endif
+#ifdef NODE_NO_RADIO
+  Serial.println(F("[BOOT] Wi-Fi only: no radio."));
 #else
   pinMode(RFM69_RST, OUTPUT);
   digitalWrite(RFM69_RST, LOW);

@@ -359,6 +359,19 @@ DNS). While it can't join the network, the node says why on USB every
 the Wi-Fi was down are lost. Check the service with
 `sudo journalctl -u garden-wifi -f`.
 
+**Wi-Fi and the radio together** — a Wi-Fi board with an RFM69 wired up
+can have both: answer "Both" when `node_setup.py add` asks (`"link":
+["wifi", "radio"]`, in order of preference, with the radio pins). The node
+answers on both, and the Pi polls it over the first link in its list that's
+up (`raspberrypi/links.py`): Wi-Fi counts as down once it hasn't answered
+for 3 minutes, the radio once `main.py` has marked it unreachable (3 missed
+commands). Only one link polls it each minute, so readings aren't stored
+twice. To switch which comes first, with no re-flash or restart:
+
+    python3 node_setup.py prefer 4 radio    # or: prefer 4 wifi
+
+The ping test menu on the dashboard shows which link is in use now.
+
 **Bench testing** — don't add test boards to `nodes.json` (`main.py` would
 start polling them). `tests/hardware_tests/` has bench files with the same
 board IDs (9–12) as Arduino or CircuitPython nodes; point the script at one:
