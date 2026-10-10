@@ -705,7 +705,6 @@ function renderNodePanels(byNode) {
       panel.innerHTML = `
         <div class="node-panel-head"></div>
         <div class="node-panel-body">
-          <div class="node-panel-section node-panel-summary"></div>
           ${nodePanelSection(`node-panel-${n}-system`, wifi ? 'Wi-Fi &amp; System' : 'Radio &amp; System',
                              `<span class="node-badge">${wifi ? 'Wi-Fi' : 'RFM69'}</span>`)}
           ${nodePanelSection(`node-panel-${n}-health`, 'Sensor Health', '<span class="card-badge badge-gray">–</span>')}
@@ -729,19 +728,22 @@ function renderNodePanels(byNode) {
       ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)} — logging to storage, radio off · ${reported}`
       : reported;
 
+    // The node's name, battery and storage share the top line with the close
+    // button; radio/system and sensor health sit side by side under it.
     panel.querySelector('.node-panel-head').innerHTML = `
-      ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
-      <span class="node-row-name">${info.name}</span>
-      <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : 'no data in 6h'}</span>
-      <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>`;
-    panel.querySelector('.node-panel-summary').innerHTML = `
+      <div class="node-panel-title">
+        ${statusDot(asleep ? 'asleep' : freshness(lastTs))}
+        <span class="node-row-name">${info.name}</span>
+        <span class="node-row-ago">${lastTs ? minutesAgo(lastTs) || '' : 'no data in 6h'}</span>
+        <div class="node-row-note">${note}</div>
+      </div>
       <div class="node-metrics">
         ${metrics.map(([label, value]) => `<div>
           <div class="mini-label">${label}</div>
           <div class="node-metric-value">${value}</div>
         </div>`).join('')}
       </div>
-      <div class="node-row-note">${note}</div>`;
+      <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>`;
 
     let seq = null;
     for (let i = np.length - 1; i >= 0; i--) if ('q' in np[i]) { seq = np[i].q; break; }
