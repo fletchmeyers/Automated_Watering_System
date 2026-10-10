@@ -191,6 +191,23 @@ def test_b_goes_back_a_question_keeping_the_answers_as_defaults(pi_list):
     assert "  Name (shown on the dashboard) [Kitchen]: " in t.prompts
 
 
+def test_b_from_the_review_keeps_going_back_through_the_questions(pi_list):
+    t = Typing(*[""] * 7,
+               "b",         # at the review: back to the RTC question...
+               "b",         # ...back again to the sense interval...
+               "b",         # ...and to where it logs
+               "1", "5",    # SD card, sd_cs on pin 5
+               "", "",      # sense, log
+               "",          # RTC
+               "")          # save at the review
+    node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"])
+    added = load_nodes()[node_id]
+    assert added["storage"] == "sd" and added["pins"] == {"sd_cs": 5}
+    assert t.prompts[8].startswith("  Does it have a PCF8523")
+    assert t.prompts[9].startswith("  Seconds between sensor readings")
+    assert t.prompts[10] == "  Choose [2]: "
+
+
 def test_b_at_the_first_question_stays_there(pi_list):
     t = Typing("b", *[""] * 8)
     assert node_wizard.add_node(nodes.NODES_FILE, t.wizard(), ["feather_esp32_v2"]) == 3
