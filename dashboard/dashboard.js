@@ -574,13 +574,45 @@ function withKnownTs(packets) {
   return packets.filter(p => p.ts && p.ts !== 'unknown');
 }
 
+// A local "YYYY-MM-DDTHH:MM:SS", the form the Pi's timestamps take.
+function localIso(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T` +
+         `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+// Merge newly arrived packets into the ones held: no duplicates (a manual
+// poll's packets come round again from /api/data), oldest first, nothing
+// older than the data window, at most WINDOW of them.
+function mergePackets(held, fresh) {
+  const byKey = new Map();
+  for (const p of held.concat(fresh)) byKey.set(`${p.ts}|${p.n}|${p.t}`, p);
+  const since = localIso(new Date(Date.now() - DATA_WINDOW_MINUTES * 60000));
+  return [...byKey.values()].filter(p => p.ts >= since)
+    .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0)).slice(-WINDOW);
+}
+
+// The first load takes the whole data window; after that, each refresh asks
+// /api/data only for the rows added since the last (its "cursor"), which is
+// a few packets rather than hours of them. An API too old to give a cursor
+// just gets the whole window every time, as before.
+let dataCursor = null;
+let lastFreshPackets = [];   // what the last refresh brought (for the analysis panel's Live data)
+
 async function loadData() {
   try {
-    const resp = await fetch(`${API_BASE}/api/data?minutes=${DATA_WINDOW_MINUTES}`);
+    const url = dataCursor == null
+      ? `${API_BASE}/api/data?minutes=${DATA_WINDOW_MINUTES}`
+      : `${API_BASE}/api/data?after=${dataCursor}`;
+    const resp = await fetch(url);
     if (!resp.ok) throw new Error(resp.status);
     const data = await resp.json();
     if (data.status !== 'ok') throw new Error(data.error || 'unknown API error');
-    return withKnownTs(data.packets).slice(-WINDOW);
+    const fresh = withKnownTs(data.packets);
+    const first = dataCursor == null;
+    dataCursor = data.cursor ?? null;
+    lastFreshPackets = first ? [] : fresh;
+    return first ? mergePackets([], fresh) : mergePackets(currentPackets, fresh);
   } catch (e) {
     document.getElementById('node-status').innerHTML =
       '<span class="node-status-error">error: cannot load data</span>';
@@ -936,6 +968,7 @@ async function refresh() {
   // whatever comes back is already current as of the query.
   currentPackets = packets;
   renderAll(currentPackets);
+  if (typeof onLivePackets === 'function') onLivePackets(lastFreshPackets);
 }
 
 // ── Manual refresh (live poll via Flask API, falls back to static reload) ────
@@ -978,7 +1011,7 @@ async function triggerRefresh() {
 
     if (data.status === 'ok' && Array.isArray(data.packets) && data.packets.length) {
       // Real sensor values are already here — render them immediately.
-      currentPackets = withKnownTs(currentPackets.concat(data.packets)).slice(-WINDOW);
+      currentPackets = mergePackets(currentPackets, withKnownTs(data.packets));
       renderAll(currentPackets);
       btn.textContent = original;
       btn.disabled = false;

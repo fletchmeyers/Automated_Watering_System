@@ -98,6 +98,13 @@
   </div>
 
   <div class="time-range-row">
+    <!-- Time window: plotted once (Refresh window moves it up to now).
+         Live data: the window keeps ending now, and the plot updates
+         whenever a plotted field gets a new reading from the Pi. -->
+    <div class="range-mode" role="radiogroup" aria-label="What to plot">
+      <label><input type="radio" name="range-mode" value="window" checked onchange="setLiveData(false)"> Time window</label>
+      <label><input type="radio" name="range-mode" value="live" onchange="setLiveData(true)"> Live data</label>
+    </div>
     <div class="preset-btns" id="preset-btns"></div>
     <div class="custom-range">
       <input type="datetime-local" id="range-start">
@@ -105,7 +112,9 @@
       <input type="datetime-local" id="range-end">
     </div>
     <div class="plot-actions">
-      <button id="share-axes-btn" class="overlay-btn active" onclick="toggleShareAxes()" type="button" title="Fields with the same unit share one axis">Shared axes</button>
+      <button id="share-axes-btn" class="action-btn" onclick="toggleShareAxes()" type="button" disabled>Shared axes</button>
+      <button id="refresh-window-btn" class="action-btn" onclick="refreshWindow()" type="button" title="Move the time window up to now and plot it again">↻ Refresh window</button>
+      <button id="clear-fields-btn" class="action-btn action-red" onclick="clearFields()" type="button" title="Untick every field">Clear selection</button>
       <button id="plot-btn" onclick="runAnalysisPlot()" type="button">Plot</button>
     </div>
   </div>
@@ -115,7 +124,7 @@
 </div>
 
 <footer>
-  <span>live from sensors.db · auto-refresh 10s</span>
+  <span>live from sensors.db · new readings every 10s</span>
   <span>packets in window: <span id="packets-count">–</span></span>
 </footer>
 

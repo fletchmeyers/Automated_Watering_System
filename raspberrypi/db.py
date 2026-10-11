@@ -10,6 +10,7 @@ communication_indoor.py's BatchReceiver.
 '''
 
 import sqlite3
+import threading
 from pathlib import Path
 
 DB_FILE = Path(__file__).parent / "sensors.db"
@@ -86,8 +87,14 @@ def insert_batch(conn, packets):
     conn.commit()
 
 
+def latest_rowid(conn):
+    '''The newest row's rowid: a cursor for "what's been added since"
+    (rows are only ever appended, so a higher rowid is a newer row).'''
+    return conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM readings").fetchone()[0]
+
+
 def query_readings(conn, minutes=None, start=None, end=None,
-                    sensor_type=None, node_id=None):
+                    sensor_type=None, node_id=None, after=None, upto=None):
     '''
     Query the readings table with optional filters, returning raw long-format
     rows as (ts, node_id, sensor_type, key, value) tuples, oldest first.
@@ -100,6 +107,10 @@ def query_readings(conn, minutes=None, start=None, end=None,
     sensor_type   — e.g. "uv", "s2". None = all types.
     node_id       — None = all nodes.
 
+    after, upto   — rowids (see latest_rowid()): only rows added after `after`,
+                     up to and including `upto`. A fast way to fetch just
+                     what's new, whatever its timestamp.
+
     minutes and start/end are mutually exclusive on purpose — pass one or the
     other, not both, to avoid ambiguous overlapping ranges.
     '''
@@ -107,7 +118,10 @@ def query_readings(conn, minutes=None, start=None, end=None,
     params  = []
 
     if minutes is not None:
-        clauses.append("ts >= datetime('now', 'localtime', ?)")
+        # Stored timestamps have a "T" ("2026-10-11T12:00:00"); compared as
+        # text against datetime()'s "2026-10-11 12:00:00" every reading from
+        # today would count as recent, since "T" sorts after a space.
+        clauses.append("ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', ?)")
         params.append(f"-{int(minutes)} minutes")
     else:
         if start is not None:
@@ -125,6 +139,13 @@ def query_readings(conn, minutes=None, start=None, end=None,
         clauses.append("node_id = ?")
         params.append(node_id)
 
+    if after is not None:
+        clauses.append("rowid > ?")
+        params.append(int(after))
+    if upto is not None:
+        clauses.append("rowid <= ?")
+        params.append(int(upto))
+
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     query = f"SELECT ts, node_id, sensor_type, key, value FROM readings {where_sql} ORDER BY ts ASC"
 
@@ -132,7 +153,7 @@ def query_readings(conn, minutes=None, start=None, end=None,
     return cursor.fetchall()
 
 
-def get_available_fields(conn):
+def get_available_fields(conn, after=0):
     '''
     Return every (node_id, sensor_type, key) combination that has ever
     logged at least one row, as a list of {"node_id": ..., "sensor_type":
@@ -140,9 +161,35 @@ def get_available_fields(conn):
     analysis panel only offers each node the fields it actually has (the
     same sensor type can exist on several nodes; pw3 was never wired up),
     without pulling any actual reading data to figure that out.
+
+    after: only look at rows added after this rowid (a full scan takes ~20 s
+    on a Pi 3B once the table is big; flask_api.py keeps the answer and only
+    looks at new rows after that).
     '''
-    cursor = conn.execute("SELECT DISTINCT node_id, sensor_type, key FROM readings")
+    cursor = conn.execute("SELECT DISTINCT node_id, sensor_type, key FROM readings WHERE rowid > ?",
+                          (int(after),))
     return [{"node_id": n, "sensor_type": t, "key": k} for n, t, k in cursor.fetchall()]
+
+
+class AvailableFields:
+    '''get_available_fields(), kept: the first call scans the whole table
+    (slow once it's big), later ones only the rows added since. Safe to share
+    between threads; a caller arriving mid-scan waits for it.'''
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._fields = set()
+        self._rowid = 0
+
+    def get(self, conn):
+        with self._lock:
+            upto = latest_rowid(conn)
+            if upto > self._rowid:
+                self._fields.update((f["node_id"], f["sensor_type"], f["key"])
+                                    for f in get_available_fields(conn, after=self._rowid))
+                self._rowid = upto
+            return [{"node_id": n, "sensor_type": t, "key": k}
+                    for n, t, k in sorted(self._fields, key=lambda f: tuple(map(str, f)))]
 
 
 def pivot_to_packets(rows):
