@@ -19,7 +19,7 @@ March 2026
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -76,17 +76,21 @@ WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
 # ── Outbound commands ─────────────────────────────────────────────────────────
 
-def request_poll(node_id=1):
+def request_poll(node_id=1, prefer=None):
     '''
     Write a poll command to the command file.
     Always includes the current time so the Pico silently updates its RTC —
     no separate sync/sync_ack round trip needed for routine clock maintenance.
+    prefer: for a node with both links, the one the Pi prefers ("pf"), which
+    a battery saver node keeps on (link_power.h).
     '''
     command = {
         "t":  "poll",
         "ts": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "n":  node_id,
     }
+    if prefer:
+        command["pf"] = prefer
     Path(COMMAND_FILE).write_text(json.dumps(command))
     # Clear any stale result from a previous poll so wait_for_poll_result()
     # can't pick up an old file before this poll has actually completed.
@@ -129,10 +133,26 @@ def request_info(node_id):
 
 
 def update_node_info(node_id, **fields):
-    '''Merge fields into node_id's entry in NODE_INFO_FILE.'''
+    '''Merge fields into node_id's entry in NODE_INFO_FILE (main.py and the
+    Wi-Fi service both write it, so it's replaced whole, never half-written).'''
     info = get_node_info()
     info.setdefault(str(node_id), {}).update(fields)
-    NODE_INFO_FILE.write_text(json.dumps(info, indent=2))
+    tmp = NODE_INFO_FILE.with_name(NODE_INFO_FILE.name + ".tmp")
+    tmp.write_text(json.dumps(info, indent=2))
+    os.replace(tmp, NODE_INFO_FILE)
+
+
+def recorded_wake(node_id, grace_s=90, now=None):
+    '''If NODE_INFO_FILE says node_id is asleep (whichever service sent the
+    sleep: main.py over the radio, or the Wi-Fi service), when it wakes;
+    else None. Like SleepScheduler.asleep(), it counts as asleep until
+    grace_s after waking.'''
+    until = get_node_info().get(str(node_id), {}).get("sleep_until")
+    try:
+        wake = datetime.strptime(until, "%Y-%m-%dT%H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+    return wake if (now or datetime.now()) < wake + timedelta(seconds=grace_s) else None
 
 
 def save_node_info(packet):

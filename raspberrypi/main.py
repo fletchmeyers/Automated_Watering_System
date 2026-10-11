@@ -15,7 +15,7 @@ from pathlib import Path
 from hardware_setup_indoor import rfm69, GLED, YLED, RLED, blink_led
 from sync_indoor import (
     DATA_FILE, COMMAND_FILE, request_poll, request_sync_chunk, request_info, save_node_info,
-    request_command, update_node_info, SLEEP_REQUEST_FILE,
+    request_command, update_node_info, recorded_wake, SLEEP_REQUEST_FILE,
     POLL_RESULT_FILE, PING_REQUEST_FILE, PING_RESULT_FILE, SYNC_REQUEST_FILE,
     usb_sync_node,
 )
@@ -27,7 +27,7 @@ from communication_indoor import (
 
 import db
 from links import NodeList, active_link, write_radio_status
-from nodes import load_nodes, radio_node_ids, sleep_windows, sync_node_ids
+from nodes import links_of, load_nodes, radio_node_ids, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Nodes come from the Pi's nodes.json (python3 node_setup.py add, then restart).
@@ -75,8 +75,10 @@ sleeper = SleepScheduler(SLEEP_WINDOWS)
 
 
 def available(node_id):
-    '''Awake and answering — safe to send commands to.'''
-    return health.reachable(node_id) and not sleeper.asleep(node_id)
+    '''Awake and answering — safe to send commands to. A node the Wi-Fi
+    service put to sleep is asleep here too (recorded_wake).'''
+    return (health.reachable(node_id) and not sleeper.asleep(node_id)
+            and recorded_wake(node_id) is None)
 
 
 # A node with Wi-Fi too is polled over the radio only while the radio is
@@ -87,6 +89,18 @@ node_list = NodeList()
 def radio_in_use(node_id):
     node = node_list.get().get(node_id)
     return node is None or active_link(node_id, node) == "radio"
+
+
+def on_radio(node_id):
+    '''Available, and the radio is the link in use: polls, sleep commands,
+    storage reports and sync all go over the link in use.'''
+    return available(node_id) and radio_in_use(node_id)
+
+
+def preferred_link(node_id):
+    '''A node with both links is told which one the Pi prefers in each poll.'''
+    links = links_of(node_list.get().get(node_id, {}))
+    return links[0] if len(links) > 1 else None
 
 
 radio_status = {"written": None, "at": 0.0}
@@ -189,10 +203,10 @@ while True:
             if not radio_in_use(n):
                 timer.mark_polled(n)   # wifi_nodes.py polls it this minute
         due = [n for n in timer.due_nodes() if available(n)]
-        info_due = [n for n in info_timer.due_nodes() if available(n)]
-        sleep_cmd = sleeper.next_command(available)
+        info_due = [n for n in info_timer.due_nodes() if on_radio(n)]
+        sleep_cmd = sleeper.next_command(on_radio)
         if due:
-            request_poll(due[0])
+            request_poll(due[0], prefer=preferred_link(due[0]))
             timer.mark_polled(due[0])
         elif sleep_cmd is not None:
             request_command(sleep_cmd)
@@ -200,7 +214,7 @@ while True:
             request_info(info_due[0])
             info_timer.mark_polled(info_due[0])
         else:
-            chunk_request = sync.next_command(lambda n: available(n) and n != usb_node)
+            chunk_request = sync.next_command(lambda n: on_radio(n) and n != usb_node)
             if chunk_request is not None:
                 request_sync_chunk(chunk_request)
 

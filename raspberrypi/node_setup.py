@@ -16,6 +16,10 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
     python3 node_setup.py link 3 wifi radio — give node 3 Wi-Fi and the radio (in
                                          that order of preference; asks for the
                                          radio pins), or just one; then re-flash it
+    python3 node_setup.py saver 2 on   — battery saver for a node with both links
+                                         (off to undo; --wifi-check-hours N to let
+                                         a radio-first node check Wi-Fi every N
+                                         hours); then re-flash it
     python3 node_setup.py prefer 3 wifi — for a node with Wi-Fi and the radio:
                                          use Wi-Fi first (or radio), from the
                                          next poll on; no re-flash or restart
@@ -840,7 +844,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?",
-                        choices=["update", "add", "remove", "list", "prefer", "link", "calibrate", "check"],
+                        choices=["update", "add", "remove", "list", "prefer", "link", "saver", "calibrate",
+                                 "check"],
                         default="update")
     parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer, link and calibrate: which node")
     parser.add_argument("what", nargs="*",
@@ -852,6 +857,9 @@ def main():
     parser.add_argument("--until", help="for calibrate: the window ends here (18:30, or "
                                         "2026-10-10T18:30) instead of now")
     parser.add_argument("--value", type=int, help="for calibrate: use this raw reading instead")
+    parser.add_argument("--wifi-check-hours", type=int,
+                        help="for saver on: with the radio first, turn Wi-Fi on every N hours to check it "
+                             "(default: never)")
     parser.add_argument("--node", type=int, help="node ID to set the board up as")
     parser.add_argument("--install", action="store_true",
                         help=f"(re)install CircuitPython {CIRCUITPYTHON_VERSION} even if the board has it")
@@ -892,6 +900,15 @@ def main():
             if "radio" in links_of(node):
                 print("[SETUP] Then restart the radio loop so it knows the node: "
                       "sudo systemctl restart garden-sensor")
+        elif args.action == "saver":
+            if args.node_id is None or args.what not in (["on"], ["off"]):
+                parser.error("say which node and on or off: node_setup.py saver 2 on")
+            node = node_wizard.set_saver(args.nodes, args.node_id, args.what == ["on"], args.wifi_check_hours)
+            state = "on" if node.get("battery_saver") else "off"
+            check = (f", checking Wi-Fi every {node['wifi_check_hours']} h" if node.get("wifi_check_hours")
+                     else "")
+            print(f"[SETUP] Battery saver {state} for node {args.node_id}{check}. With the board plugged "
+                  "in, re-flash it so the firmware matches: python3 node_setup.py")
         elif args.action == "check":
             check_sensors(args.nodes)
         elif args.action == "calibrate":

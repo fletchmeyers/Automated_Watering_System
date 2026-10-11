@@ -396,6 +396,25 @@ loop knows the node):
     python3 node_setup.py link 3 wifi radio   # Wi-Fi first, the radio as backup
     python3 node_setup.py link 3 wifi         # back to Wi-Fi only
 
+**Sleep and battery saver** — any node can have a nightly `sleep_window`
+(Wi-Fi or radio): the sleep command goes over the link in use, and the node
+switches its radio and Wi-Fi off until morning (an M0 also puts its chip in
+standby), then rejoins. Both services record it in `node_info.json`, so
+neither polls a sleeping node or counts it as missing.
+
+A node with both links can also have **battery saver**, which keeps only
+the link in use powered. With the radio first, Wi-Fi stays off (Wi-Fi draws
+far more than a listening radio); add `--wifi-check-hours N` to let it turn
+Wi-Fi on for a few minutes every N hours to check it (and keep it on if the
+Pi then uses it). With Wi-Fi first, the radio only comes on once Wi-Fi has
+been quiet for 5 minutes. `prefer` still switches which link comes first
+without a re-flash (each poll tells the node); battery saver itself is built
+into the firmware, so re-flash after changing it:
+
+    python3 node_setup.py saver 2 on                        # Wi-Fi never checked
+    python3 node_setup.py saver 2 on --wifi-check-hours 24  # check Wi-Fi once a day
+    python3 node_setup.py saver 2 off
+
 The ping test menu on the dashboard shows which link is in use now.
 
 **Calibrating soil sensors** — out of the box the dashboard shows every

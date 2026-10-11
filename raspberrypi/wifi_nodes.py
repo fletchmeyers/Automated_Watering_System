@@ -21,6 +21,11 @@ round) is polled here only while Wi-Fi is the link in use (links.py: the
 first in its list that's up); otherwise it's just pinged each minute, so
 its connection is known to be alive if the radio fails.
 
+A node with a sleep_window is put to sleep from here while Wi-Fi is the
+link in use (the same SleepScheduler as main.py's), and recorded in
+node_info.json as asleep, so neither service polls it until it wakes. It
+leaves Wi-Fi while it sleeps and reconnects when it wakes.
+
 The dashboard's Refresh and ping test reach Wi-Fi nodes through a control
 port only open to the Pi itself (CONTROL_PORT on 127.0.0.1): flask_api.py
 sends one request line ({"t": "poll" or "ping", "n": <id>}) with
@@ -38,10 +43,10 @@ from datetime import datetime
 from pathlib import Path
 
 import db
-from communication_indoor import BatchReceiver, ISO_FORMAT
+from communication_indoor import BatchReceiver, ISO_FORMAT, SleepScheduler
 from links import NodeList, RADIO_STATUS_FILE, WIFI_STATUS_FILE, active_link
-from nodes import NODES_FILE, wifi_node_ids
-from sync_indoor import DATA_FILE, PING_PROGRESS_FILE
+from nodes import NODES_FILE, links_of, sleep_windows, wifi_node_ids
+from sync_indoor import DATA_FILE, PING_PROGRESS_FILE, recorded_wake, update_node_info
 
 WIFI_PORT     = 5006   # also sent to each node by node_setup.py
 POLL_INTERVAL = 60     # seconds between polls, the same as radio nodes
@@ -86,6 +91,7 @@ class WifiNodes:
         self.data_file = data_file
         self.links = {}      # node ID -> its Link
         self.status = {}
+        self.sleeper = SleepScheduler({})   # windows refreshed from the node list as it changes
 
     def _write_status(self):
         try:
@@ -146,7 +152,19 @@ class WifiNodes:
         misses = 0
         try:
             while not writer.is_closing():
+                if self._asleep(node_id):
+                    # Just woken (within the grace time), or about to drop the
+                    # connection as it goes to sleep: leave it be, but notice
+                    # when it hangs up.
+                    try:
+                        if not await asyncio.wait_for(reader.readline(), self.poll_interval):
+                            break
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
                 async with link.lock:
+                    if self._wifi_in_use(node_id) and await self._maybe_sleep(node_id, link):
+                        continue
                     if self._wifi_in_use(node_id):
                         what = "a poll"
                         answered = await self.poll(node_id, reader, writer, batch)
@@ -162,18 +180,66 @@ class WifiNodes:
                         break
                 await asyncio.sleep(self.poll_interval)
         except (ConnectionError, OSError) as e:
-            print(f"[WIFI] Node {node_id}'s connection dropped: {e}")
+            if not self._asleep(node_id):
+                print(f"[WIFI] Node {node_id}'s connection dropped: {e}")
         finally:
             if self.links.get(node_id) is link:
                 del self.links[node_id]
                 self.status.pop(str(node_id), None)
                 self._write_status()
-                print(f"[WIFI] Node {node_id} disconnected.")
+                until = self.sleeper.asleep_until(node_id)
+                print(f"[WIFI] Node {node_id} disconnected"
+                      + (f" (asleep until {until.strftime(ISO_FORMAT)})." if until else "."))
             writer.close()
+
+    def _asleep(self, node_id):
+        return self.sleeper.asleep(node_id) or recorded_wake(node_id) is not None
+
+    async def _maybe_sleep(self, node_id, link):
+        '''Send a sleep command if the node is due one; True if it went to sleep.'''
+        self.sleeper.windows = sleep_windows(self.node_list.get())
+        command = self.sleeper.next_command(lambda n: n == node_id)
+        if command is None:
+            return False
+        await self._send(link.writer, command)
+        ack = await self._reply(link, "sleep_ack", self.reply_timeout)
+        if ack is None:
+            self.sleeper.timed_out(command)
+        else:
+            self.sleeper.handle_ack(ack)
+        until = self.sleeper.asleep_until(node_id)
+        update_node_info(node_id, sleep_until=until.strftime(ISO_FORMAT) if until else None)
+        return until is not None
+
+    @staticmethod
+    async def _reply(link, kind, timeout):
+        '''The next packet of type kind from the node, or None after timeout.'''
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                line = await asyncio.wait_for(link.reader.readline(), remaining)
+            except asyncio.TimeoutError:
+                return None
+            if not line:
+                raise ConnectionError("the node closed the connection")
+            try:
+                packet = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(packet, dict) and packet.get("t") == kind:
+                return packet
+        return None
+
+    def _poll_command(self, node_id):
+        command = {"t": "poll", "ts": _now(), "n": node_id}
+        links = links_of(self.node_list.get().get(node_id, {}))
+        if len(links) > 1:
+            command["pf"] = links[0]   # which link a battery saver node keeps on
+        return command
 
     async def poll(self, node_id, reader, writer, batch):
         '''Ask for the latest reading; True once its batch_end has arrived and it's stored.'''
-        await self._send(writer, {"t": "poll", "ts": _now(), "n": node_id})
+        await self._send(writer, self._poll_command(node_id))
         link = self.links.get(node_id)
         got = []
         deadline = time.monotonic() + self.reply_timeout

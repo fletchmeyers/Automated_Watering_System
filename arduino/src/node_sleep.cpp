@@ -38,7 +38,9 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
   Serial.println(ts);
   Serial.flush();
 
+#ifndef NODE_NO_RADIO
   radio.sleep();
+#endif
 #if SLEEP_USE_STANDBY
   // SAMD21 errata: letting the flash controller power down in standby can
   // hard-fault the chip on wake. Keep it powered (costs a few µA).
@@ -94,7 +96,9 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
   Serial.print(ts);
   Serial.println(F(" (no RTC, so the chip stays awake)."));
 
+#ifndef NODE_NO_RADIO
   radio.sleep();
+#endif
   while (clock_now() < wake) {
     uint32_t next = min(wake, clock_now() + (uint32_t)(LOG_INTERVAL_MS / 1000));
     while (clock_now() < next) delay(200);

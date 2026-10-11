@@ -33,10 +33,17 @@ FRAMEWORKS = ("circuitpython", "arduino")
 STORAGE    = ("sd", "flash", "none")
 
 # How a node talks to the Pi: the RFM69 radio (main.py), or Wi-Fi to the
-# garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins, keep
-# no log by default (nothing to sync once the Pi is reachable again), and
-# don't sleep. Wi-Fi needs a board with a Wi-Fi chip (WIFI_BOARDS), running
-# a framework whose firmware has Wi-Fi so far (WIFI_FRAMEWORKS).
+# garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins and
+# keep no log by default (nothing to sync once the Pi is reachable again).
+# Any node can have a nightly sleep_window: the sleep command goes over the
+# link in use, and Wi-Fi sleeps along with the radio. Wi-Fi needs a board
+# with a Wi-Fi chip (WIFI_BOARDS), running a framework whose firmware has
+# Wi-Fi so far (WIFI_FRAMEWORKS).
+#
+# A node with both links can have "battery_saver": true, which keeps only
+# the link in use powered (arduino/src/link_power.h): with the radio first,
+# Wi-Fi stays off, unless "wifi_check_hours": N turns it on every N hours to
+# check it; with Wi-Fi first, the radio only comes on once Wi-Fi goes quiet.
 #
 # "link" is one of LINKS, or a list of both in order of preference
 # (["wifi", "radio"]): the node answers on both, and the Pi uses the first
@@ -249,8 +256,18 @@ def check_node(node_id, node):
         if not wifi_able(node["board"], framework):
             fail(f"{framework} on {node['board']} can't use Wi-Fi (so far Wi-Fi is "
                  f"{' or '.join(WIFI_FRAMEWORKS)} on {', '.join(WIFI_BOARDS)})")
-        if node.get("sleep_window"):
-            fail("a Wi-Fi node doesn't sleep (sleep_window is for radio-only nodes)")
+
+    saver = node.get("battery_saver", False)
+    if not isinstance(saver, bool):
+        fail("battery_saver must be true or false")
+    if saver and len(links) < 2:
+        fail("battery_saver is for nodes with both Wi-Fi and the radio (it keeps only one on)")
+    hours = node.get("wifi_check_hours")
+    if hours is not None:
+        if not isinstance(hours, int) or isinstance(hours, bool) or hours <= 0:
+            fail("wifi_check_hours must be a whole number of hours above 0")
+        if not saver:
+            fail("wifi_check_hours goes with battery_saver (without it Wi-Fi is always on)")
 
     storage = storage_of(node)
     if storage not in STORAGE:
@@ -419,6 +436,12 @@ def arduino_build_flags(node_id, node):
     else:
         flags += [f"-D RFM69_CS={pins['radio_cs']}", f"-D RFM69_INT={pins['radio_irq']}",
                   f"-D RFM69_RST={pins['radio_rst']}"]
+    if len(links) > 1 and links[0] == "wifi":
+        flags.append("-D LINK_FIRST_WIFI")      # see link_power.h
+    if node.get("battery_saver"):
+        flags.append("-D BATTERY_SAVER")
+    if node.get("wifi_check_hours"):
+        flags.append(f"-D WIFI_CHECK_HOURS={node['wifi_check_hours']}")
     flags += [
         f"-D DEFAULT_SENSE_INTERVAL_MS={node['sense_interval_s'] * 1000}UL",
         f"-D LOG_INTERVAL_MS={node['log_interval_s'] * 1000}UL",

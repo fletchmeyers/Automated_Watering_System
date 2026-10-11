@@ -62,7 +62,6 @@ def test_both_services_know_a_node_with_both_links():
     (dual_node(link=["wifi", "wifi"]), "link must be one of"),
     (dual_node(link=["wifi", "lora"]), "link must be one of"),
     (dual_node(board="pico2"), "can't use Wi-Fi"),
-    (dual_node(sleep_window=["19:00", "07:00"]), "doesn't sleep"),
 ])
 def test_dual_link_mistakes_are_reported(node, message):
     with pytest.raises(NodeConfigError, match=message):
@@ -185,7 +184,8 @@ def test_the_questions_offer_both_links_on_a_wifi_board(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "NODES_FILE", tmp_path / "nodes.json")
     monkeypatch.setattr(nodes, "LEGACY_FILE", tmp_path / "old.json")
     # framework, link: both (radio first), ID, name, short, storage, pins (accepted), sense, RTC, save
-    t = Typing("arduino", "radio,wifi", *[""] * 8)
+    # then ID, name, short, storage, pins, sense, RTC, battery saver, sleep, save
+    t = Typing("arduino", "radio,wifi", *[""] * 10)
     node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), boards=["pico2w"])
     added = load_nodes()[node_id]
     assert added["link"] == ["radio", "wifi"]
@@ -314,10 +314,11 @@ def test_node_2_becomes_an_m0_wifi_with_the_radio_first(node_file):
     from test_node_list import Typing
     before = load_nodes(node_file)[2]
     assert (before["board"], before.get("sleep_window")) == ("feather_m0", ["19:00", "07:00"])
-    t = Typing("y", "", "")   # it is an M0 WiFi; put Wi-Fi on it; drop the sleep window
+    t = Typing("y", "")   # it is an M0 WiFi; put Wi-Fi on it
     node = node_wizard.set_links(node_file, 2, ["radio", "wifi"], t.wizard())
     assert node["board"] == "feather_m0_wifi" and node["link"] == ["radio", "wifi"]
-    assert "sleep_window" not in node and node["pins"] == before["pins"] and node["storage"] == "sd"
+    assert node["sleep_window"] == ["19:00", "07:00"]          # it still sleeps
+    assert node["pins"] == before["pins"] and node["storage"] == "sd"
     assert any("18 KB" in s for s in t.said)
     from nodes import arduino_env
     saved = load_nodes(node_file)[2]
@@ -332,7 +333,7 @@ def test_a_plain_m0_cant_have_wifi(node_file):
         node_wizard.set_links(node_file, 2, ["radio", "wifi"], Typing("n").wizard())
 
 
-@pytest.mark.parametrize("answers", [("y", "n"), ("y", "", "n")])   # no Wi-Fi after all; keep sleeping
+@pytest.mark.parametrize("answers", [("y", "n")])   # no Wi-Fi after all
 def test_saying_no_changes_nothing(node_file, answers):
     from test_node_list import Typing
     before = node_file.read_text()
@@ -346,8 +347,9 @@ def test_a_new_m0_wifi_asks_before_putting_wifi_on(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes, "NODES_FILE", tmp_path / "nodes.json")
     monkeypatch.setattr(nodes, "LEGACY_FILE", tmp_path / "old.json")
     # link: Wi-Fi, but no to its cost; asked again: the radio first with Wi-Fi, yes;
-    # then ID, name, short, storage (SD), pins (accepted), sense, log, RTC, save
-    t = Typing("wifi", "n", "radio,wifi", "", *[""] * 9)
+    # then ID, name, short, storage (SD), pins (accepted), sense, log, RTC, battery
+    # saver, sleep, save
+    t = Typing("wifi", "n", "radio,wifi", "", *[""] * 11)
     node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), boards=["feather_m0_wifi"])
     added = load_nodes()[node_id]
     assert (added["board"], added["link"], added["storage"]) == ("feather_m0_wifi", ["radio", "wifi"], "sd")
