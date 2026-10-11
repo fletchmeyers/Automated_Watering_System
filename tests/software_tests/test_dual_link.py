@@ -298,7 +298,6 @@ def test_other_pins_can_be_given(node_file):
     (3, [], "order of preference"),
     (3, ["wifi", "wifi"], "order of preference"),
     (3, ["lora"], "order of preference"),
-    (1, ["wifi", "radio"], "can't use Wi-Fi"),   # CircuitPython: no Wi-Fi yet
     (99, ["wifi"], "isn't in"),
 ])
 def test_impossible_links_are_refused(node_file, node_id, links, message):

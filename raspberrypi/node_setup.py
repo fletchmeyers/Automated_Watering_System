@@ -89,7 +89,10 @@ UF2_CACHE        = Path.home() / ".cache" / "garden-nodes"
 # The node's own code, copied in this order: code.py last, so the board's
 # auto-reload doesn't start the new code before the rest is in place.
 CIRCUITPY_FILES = ("hardware_setup_garden.py", "communication_garden.py",
-                   "sync_garden.py", "boot.py", "code.py")
+                   "sync_garden.py", "wifi_link.py", "link_power.py", "boot.py", "code.py")
+# Where a CircuitPython node keeps its Wi-Fi settings (wifi_link.py reads
+# them); code updates never touch it.
+CIRCUITPY_SETTINGS = "settings.toml"
 
 _NODE_ID_LINE = re.compile(rb"^NODE_ID\s*=\s*(\d+)", re.MULTILINE)
 
@@ -681,14 +684,53 @@ def send_wifi_config(node_id, settings, answer_within=15):
     return False
 
 
-def setup_wifi(node_id, timeout=60):
-    '''Send a freshly flashed Wi-Fi node the network settings over USB (they
-    never touch git or the terminal), then wait for it to reach garden-wifi.'''
+def _toml_string(value):
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def settings_toml_with(text, values):
+    '''settings.toml's text with values ({key: value}) set: lines for those
+    keys replaced, the rest kept as they were, missing keys added.'''
+    lines, done = [], set()
+    for line in text.splitlines():
+        key = line.split("=", 1)[0].strip()
+        if "=" in line and key in values and not line.lstrip().startswith("#"):
+            if key not in done:
+                lines.append(f"{key} = {_toml_string(values[key])}")
+                done.add(key)
+            continue
+        lines.append(line)
+    lines += [f"{key} = {_toml_string(value)}" for key, value in values.items() if key not in done]
+    return "\n".join(lines) + "\n"
+
+
+def write_circuitpython_wifi(settings):
+    '''Put the Wi-Fi settings in settings.toml on the CIRCUITPY drive (they
+    never touch git or the terminal); CircuitPython restarts the code by itself.'''
+    values = {"GARDEN_WIFI_SSID": settings["s"], "GARDEN_WIFI_PASSWORD": settings["p"],
+              "GARDEN_PI_HOST": settings["h"], "GARDEN_PI_HOSTNAME": settings["hn"],
+              "GARDEN_PI_PORT": settings["port"]}
+    with mounted(device(CIRCUITPY_LABEL), MOUNT_POINT) as drive:
+        path = Path(drive) / CIRCUITPY_SETTINGS
+        try:
+            text = path.read_text()
+        except OSError:
+            text = ""
+        path.write_text(settings_toml_with(text, values))
+        sync_disks()
+
+
+def setup_wifi(node_id, timeout=60, framework="arduino"):
+    '''Give a freshly set-up Wi-Fi node the network settings (they never touch
+    git or the terminal): over USB to an Arduino node, into settings.toml on
+    a CircuitPython one. Then wait for it to reach garden-wifi.'''
     from wifi_nodes import STATUS_FILE
     settings = wifi_settings()
-    print(f"[SETUP] Sending node {node_id} the Wi-Fi settings for \"{settings['s']}\" "
+    print(f"[SETUP] Giving node {node_id} the Wi-Fi settings for \"{settings['s']}\" "
           f"(Pi at {settings['h']}:{settings['port']})...")
-    if not send_wifi_config(node_id, settings):
+    if framework == "circuitpython":
+        write_circuitpython_wifi(settings)
+    elif not send_wifi_config(node_id, settings):
         raise SetupError("Couldn't give the node its Wi-Fi settings over USB: it didn't answer, "
                          "or didn't confirm them. Run node_setup.py again to retry.")
 
@@ -776,7 +818,7 @@ def run(args, board=None):
         if "wifi" not in links_of(node):
             raise SetupError(f"Node {node_id} doesn't use Wi-Fi, so it has no Wi-Fi settings.")
         if not args.dry_run:
-            setup_wifi(node_id)
+            setup_wifi(node_id, framework=node["framework"])
         return
 
     if target == "circuitpython":
@@ -801,7 +843,7 @@ def run(args, board=None):
         if args.dry_run:
             print("[SETUP] Would then send it the Pi's Wi-Fi network, password and address over USB.")
         elif running:
-            setup_wifi(node_id)
+            setup_wifi(node_id, framework=node["framework"])
     if "radio" in links_of(node) and not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-sensor")

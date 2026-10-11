@@ -36,6 +36,14 @@ except ImportError:
         "spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
         "radio_cs": "GP22", "radio_rst": "GP27", "sd_cs": "GP17",
     }
+# How it reaches the Pi, in order of preference, and battery saver (see
+# link_power.py). A node_config.py from before Wi-Fi has none of these.
+try:
+    from node_config import LINKS, BATTERY_SAVER, WIFI_CHECK_HOURS
+except ImportError:
+    LINKS = ["radio"]
+    BATTERY_SAVER = False
+    WIFI_CHECK_HOURS = 0
 RADIO_FREQ_MHZ = 915.0
 
 sequence = 0
@@ -55,16 +63,19 @@ except Exception as e:
     spi = None
 
 # Radio — without one (e.g. a board on the bench) the node still runs and
-# answers over USB, so it can be set up and tested from the Pi.
-try:
-    radio_cs = digitalio.DigitalInOut(pin("radio_cs"))
-    radio_reset = digitalio.DigitalInOut(pin("radio_rst"))
-    rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
-    rfm69.tx_power = 20   # RFM69HCW maximum — the link to the Pi needs the margin
-    rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
-except Exception as e:
-    print(f"[WARN] No radio found, USB only: {e}")
-    rfm69 = None
+# answers over USB, so it can be set up and tested from the Pi. A Wi-Fi-only
+# node has none.
+rfm69 = None
+if "radio" in LINKS:
+    try:
+        radio_cs = digitalio.DigitalInOut(pin("radio_cs"))
+        radio_reset = digitalio.DigitalInOut(pin("radio_rst"))
+        rfm69 = adafruit_rfm69.RFM69(spi, radio_cs, radio_reset, RADIO_FREQ_MHZ)
+        rfm69.tx_power = 20   # RFM69HCW maximum — the link to the Pi needs the margin
+        rfm69.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
+    except Exception as e:
+        print(f"[WARN] No radio found, USB only: {e}")
+        rfm69 = None
 
 # SD card — without one, the node still runs; it just has no log to sync.
 # Boards with a built-in card slot on its own SPI bus (e.g. the Feather

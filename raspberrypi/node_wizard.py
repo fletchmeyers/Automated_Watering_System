@@ -251,7 +251,11 @@ def _steps(w, nodes, boards, taken_ids):
     def wanted_pins(a):
         wanted = list(REQUIRED_PINS[a["framework"]]) if _has(a, "radio") else []
         if a["storage"] == "sd":
-            wanted += [p for p in SD_PINS if p in defaults(a)] or ["sd_cs"]
+            sd = [p for p in SD_PINS if p in defaults(a)] or ["sd_cs"]
+            if a["framework"] == "circuitpython" and "sd_sck" not in sd:
+                # Without its own bus the card is on the radio's SPI pins.
+                sd += [p for p in ("spi_sck", "spi_mosi", "spi_miso") if p not in wanted]
+            wanted += sd
         return wanted
 
     def pins(a):

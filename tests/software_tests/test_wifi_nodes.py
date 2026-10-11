@@ -41,7 +41,7 @@ def test_every_board_with_a_wifi_chip_can_be_an_arduino_wifi_node(board):
 @pytest.mark.parametrize("node, message", [
     (wifi_node(board="pico"), "can't use Wi-Fi"),                  # no Wi-Fi chip
     (wifi_node(board="feather_m0"), "can't use Wi-Fi"),
-    (wifi_node(board="picow", framework="circuitpython"), "circuitpython on picow can't use Wi-Fi"),
+    (wifi_node(board="pico", framework="circuitpython"), "circuitpython on pico can't use Wi-Fi"),
     (wifi_node(link="lora"), "link must be one of"),
 ])
 def test_wifi_node_mistakes_are_reported(node, message):
