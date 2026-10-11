@@ -283,7 +283,20 @@ wiring, or your own), how often it reads its sensors, how often it logs
 (only with somewhere to log to), RTC and sleep window. Type `b` to go back
 a question. At the end it lists every answer with a number: type one to
 change it, or press Enter to save. Then it offers to set the board up as
-the new node. Plain `python3 node_setup.py`
+the new node.
+
+**The hardware check** — after setting a board up (new or updated),
+`node_setup.py` reads its sensors a few times over USB and lists every one
+that answered, with a `!` under any whose readings look wrong: out of
+range, a soil sensor at the top of its range or reading as if in air,
+readings jumping about (often a noisy USB charger), or a sensor that
+stopped answering. A soil sensor that isn't calibrated yet can then take
+its dry (or wet) reading on the spot, from about 30 s of live readings
+(see "Calibrating soil sensors"). Run the check on its own, with the node
+plugged in, with `python3 node_setup.py check`. To check another kind of
+sensor, add a row to `CHECKS` in `raspberrypi/sensor_check.py`.
+
+Plain `python3 node_setup.py`
 offers the same questions for a board that isn't a node yet. To take a
 node off the list (its readings stay): `python3 node_setup.py remove 3`.
 Anything the questions don't cover (a `battery` label for the Nodes card,
@@ -389,7 +402,9 @@ they are) and asks before saving them to nodes.json (`"soil": {"s1": {"dry":
 0% and its wet one as 100%. An uncalibrated sensor's label has a `*`, and
 hovering over it shows the raw reading. Each reading the nodes send is
 already the middle of 9 quick ones, so a noisy USB charger's spikes are
-thrown out.
+thrown out. The hardware check after setup (`python3 node_setup.py
+check`) also offers to take either reading from live readings while the
+node is plugged into the Pi.
 
 **Bench testing** — don't add test boards to `nodes.json` (`main.py` would
 start polling them). `tests/hardware_tests/` has bench files with the same
