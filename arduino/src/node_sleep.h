@@ -37,6 +37,8 @@ void handle_sleep(JsonDocument &command, PacketSender &sender);
 
 // Radio off, then sleep until wake, logging a reading every LOG_INTERVAL_MS.
 // Returns once wake is reached, with the radio ready to be used again.
+// (A node with Wi-Fi switches that off first and back on after: see
+// arduino_node.ino.)
 void sleep_until(uint32_t wake, RH_RF69 &radio);
 
 #endif

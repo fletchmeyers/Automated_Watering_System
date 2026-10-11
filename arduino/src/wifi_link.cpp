@@ -325,6 +325,32 @@ bool wifi_link_poll(JsonDocument &out) {
 
 PacketSender &wifi_sender() { return tcp_sender; }
 
+bool wifi_link_running() { return wifi_started; }
+
+void wifi_link_off() {
+  if (wifi_started) {
+    client.flush();   // e.g. a sleep_ack just sent
+    delay(20);
+    client.stop();
+#if defined(BOARD_ESP32)
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+#elif defined(BOARD_RP2)
+    WiFi.end();
+#else
+    WiFi.end();
+#endif
+    wifi_started = false;
+    wifi_up = false;
+    Serial.println(F("[WIFI] Wi-Fi off."));
+  }
+#ifdef BOARD_HAS_WINC1500
+  // Hold the module disabled (it may never have been started).
+  pinMode(WINC_EN, OUTPUT);
+  digitalWrite(WINC_EN, LOW);
+#endif
+}
+
 void handle_wifi_config(JsonDocument &command, PacketSender &reply) {
   bool saved = save_settings(command["s"] | "", command["p"] | "", command["h"] | "",
                              command["hn"] | "", command["port"] | DEFAULT_PI_PORT);

@@ -38,6 +38,14 @@ bool wifi_link_poll(JsonDocument &out);
 // Replies to commands that came over Wi-Fi go back through this.
 PacketSender &wifi_sender();
 
+// Switch Wi-Fi off (battery saver, or before a sleep): close the connection
+// to the Pi, leave the network and power the Wi-Fi down. wifi_link_begin()
+// switches it back on.
+void wifi_link_off();
+
+// Whether Wi-Fi is on (joining or joined).
+bool wifi_link_running();
+
 // {"t":"wifi_config","s":ssid,"p":password,"h":pi_ip,"hn":pi_hostname,
 //  "port":port} from node_setup.py over USB: save, ack, reconnect with them.
 void handle_wifi_config(JsonDocument &command, PacketSender &reply);

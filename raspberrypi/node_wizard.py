@@ -276,6 +276,10 @@ def _steps(w, nodes, boards, taken_ids):
     def rtc(a):
         return w.yes("Does it have a PCF8523 clock chip (RTC)?", default=a.get("rtc", False))
 
+    def saver(a):
+        return w.yes("Battery saver: keep only the link in use powered (Wi-Fi stays off while "
+                     "the radio works)?", default=a.get("saver", False))
+
     def sleep(a):
         while True:
             window = w.text("Nightly sleep window, e.g. 19:00-07:00 (Enter for none, - to clear)",
@@ -306,8 +310,9 @@ def _steps(w, nodes, boards, taken_ids):
         Step("log", "Saves a reading every", log, show=lambda v: f"{v} s",
              applies=lambda a: a["storage"] != "none"),
         Step("rtc", "Clock chip (RTC)", rtc, show=lambda v: "PCF8523" if v else "none"),
-        Step("sleep", "Sleep window", sleep, show=lambda v: "-".join(v) if v else "none",
-             applies=lambda a: a["link"] == "radio"),   # Wi-Fi nodes don't sleep
+        Step("saver", "Battery saver", saver, show=lambda v: "on" if v else "off",
+             applies=lambda a: "," in a["link"]),
+        Step("sleep", "Sleep window", sleep, show=lambda v: "-".join(v) if v else "none"),
     ]
 
 
@@ -326,6 +331,8 @@ def _build(nodes, a):
         node["pins"] = a["pins"]
     if a["rtc"]:
         node["rtc"] = "pcf8523"
+    if a.get("saver") and "," in a["link"]:
+        node["battery_saver"] = True
     if a.get("sleep"):
         node["sleep_window"] = a["sleep"]
     return node
@@ -443,11 +450,10 @@ def set_links(path, node_id, links, wizard):
             check_node(node_id, {**changed, "link": links})   # says why not
         if not wifi_worth_it(wizard, changed["board"]):
             raise Cancelled()
-        if node.get("sleep_window"):
-            window = "-".join(node["sleep_window"])
-            if not wizard.yes(f"Nodes with Wi-Fi don't sleep. Drop its {window} sleep window?"):
-                raise Cancelled()
-            del changed["sleep_window"]
+    if len(links) < 2:
+        # Battery saver chooses between two links; with one it has nothing to do.
+        changed.pop("battery_saver", None)
+        changed.pop("wifi_check_hours", None)
     # Where it logs stays as it was: a node with the radio would otherwise
     # default to an SD card it may not have.
     changed["storage"] = storage_of(node)
@@ -466,6 +472,27 @@ def set_links(path, node_id, links, wizard):
             else:
                 pins.update({p: wizard.pin(p, framework, offer.get(p)) for p in wanted})
         changed["pins"] = pins
+    check_node(node_id, changed)
+    data["nodes"][str(node_id)] = changed
+    save_node_file(data, path)
+    return changed
+
+
+def set_saver(path, node_id, on, wifi_check_hours=None):
+    '''Turn battery saver on or off for a node with both links (the board
+    then needs re-flashing). wifi_check_hours: with the radio first, how
+    often to turn Wi-Fi on to check it (None: never). Returns the node.'''
+    data = read_node_file(path)
+    node = data["nodes"].get(str(node_id))
+    if node is None:
+        raise NodeConfigError(f"Node {node_id} isn't in {path}.")
+    changed = {k: v for k, v in node.items() if k not in ("battery_saver", "wifi_check_hours")}
+    if on:
+        changed["battery_saver"] = True
+        if wifi_check_hours:
+            changed["wifi_check_hours"] = wifi_check_hours
+    elif wifi_check_hours:
+        raise NodeConfigError("--wifi-check-hours goes with battery saver on.")
     check_node(node_id, changed)
     data["nodes"][str(node_id)] = changed
     save_node_file(data, path)
