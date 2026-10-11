@@ -236,10 +236,10 @@ const tsSelectedFields = new Set(['1.s0.m', '1.s2.m']);
 // readable." Revisit if a field's poll interval changes a lot mid-range.
 const SMOOTHING_WINDOW = 9;
 
-// Both default on: raw shows the real data, smoothed shows the overlay.
-// Independent toggles (not a mode swap) since seeing both at once is the
-// normal case — you turn one off to declutter a specific comparison.
-let showRawData = true;
+// Smoothed on and raw off by default: the smoothed line reads cleanly, and
+// raw (the real, noisier readings) can be turned on underneath it.
+// Independent toggles, not a mode swap, since seeing both at once is useful.
+let showRawData = false;
 let showSmoothedData = true;
 
 function setAnalysisMode(mode) {
