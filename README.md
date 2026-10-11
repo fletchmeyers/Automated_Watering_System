@@ -355,67 +355,9 @@ command turns the radio off but keeps the chip awake. A board with
 no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 
-**Wi-Fi nodes** — a board with a Wi-Fi chip running Arduino (an ESP32
-Feather, a Pico W, a Pico 2 W or a Feather M0 WiFi) can skip the radio (and the SD card):
-answer Wi-Fi when `node_setup.py add` asks (`"link": "wifi"`, no `pins`). It
-joins the Pi's own Wi-Fi network and connects to the `garden-wifi` service
-(`raspberrypi/wifi_nodes.py`, installed by `deploy/install.sh`), which
-polls it every minute and stores its readings like a radio node's. The
-Pi stays in charge: the node only answers. `node_setup.py` sends the
-network name, password and the Pi's address to the board over USB after
-flashing it — they never go through git or the terminal — and the board
-keeps them in its own flash, so re-run `node_setup.py` if the Wi-Fi
-password or the Pi's address changes (if the address moved, it also looks
-the Pi up by name: an ESP32 as `pi.local`, a Pico W or M0 WiFi through the
-router's DNS). On the Feather M0 WiFi (`feather_m0_wifi`; Adafruit 3044, with
-an ATWINC1500 module on D8/D7/D4/D2), Wi-Fi takes about 18 KB of the M0's
-256 KB flash, so `node_setup.py` says so and asks first; it keeps the Wi-Fi
-settings in its own flash, which an upload erases, so they're sent again
-after every upload. It looks like a plain Feather M0 over USB, so
-`node_setup.py link` asks which it is. While it can't join the network, the node says why on USB every
-30 s. A Wi-Fi node has no log to sync, so readings from while the Pi or
-the Wi-Fi was down are lost. Check the service with
-`sudo journalctl -u garden-wifi -f`.
-
-**Wi-Fi and the radio together** — a Wi-Fi board with an RFM69 wired up
-can have both: answer "Both" when `node_setup.py add` asks (`"link":
-["wifi", "radio"]`, in order of preference, with the radio pins). The node
-answers on both, and the Pi polls it over the first link in its list that's
-up (`raspberrypi/links.py`): Wi-Fi counts as down once it hasn't answered
-for 3 minutes, the radio once `main.py` has marked it unreachable (3 missed
-commands). Only one link polls it each minute, so readings aren't stored
-twice. To switch which comes first, with no re-flash or restart:
-
-    python3 node_setup.py prefer 4 radio    # or: prefer 4 wifi
-
-To give an existing node the radio (or take it away), say which links it
-should have, in order of preference; it asks for the radio pins, and the
-board then needs re-flashing (and `garden-sensor` restarting, so the radio
-loop knows the node):
-
-    python3 node_setup.py link 3 wifi radio   # Wi-Fi first, the radio as backup
-    python3 node_setup.py link 3 wifi         # back to Wi-Fi only
-
-**Sleep and battery saver** — any node can have a nightly `sleep_window`
-(Wi-Fi or radio): the sleep command goes over the link in use, and the node
-switches its radio and Wi-Fi off until morning (an M0 also puts its chip in
-standby), then rejoins. Both services record it in `node_info.json`, so
-neither polls a sleeping node or counts it as missing.
-
-A node with both links can also have **battery saver**, which keeps only
-the link in use powered. With the radio first, Wi-Fi stays off (Wi-Fi draws
-far more than a listening radio); add `--wifi-check-hours N` to let it turn
-Wi-Fi on for a few minutes every N hours to check it (and keep it on if the
-Pi then uses it). With Wi-Fi first, the radio only comes on once Wi-Fi has
-been quiet for 5 minutes. `prefer` still switches which link comes first
-without a re-flash (each poll tells the node); battery saver itself is built
-into the firmware, so re-flash after changing it:
-
-    python3 node_setup.py saver 2 on                        # Wi-Fi never checked
-    python3 node_setup.py saver 2 on --wifi-check-hours 24  # check Wi-Fi once a day
-    python3 node_setup.py saver 2 off
-
-The ping test menu on the dashboard shows which link is in use now.
+**Wi-Fi, two links, sleep and battery saver** — see
+[How nodes reach the Pi](#how-nodes-reach-the-pi-links-sleep-and-battery-saver)
+below for every option and command.
 
 **Calibrating soil sensors** — out of the box the dashboard shows every
 soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
@@ -483,6 +425,188 @@ node only has to compile: a few minutes for the first build of each board
 type on a Pi 3B, a minute or two after that.
 
 ---
+
+## How nodes reach the Pi: links, sleep and battery saver
+
+Everything here is set per node in the Pi's `raspberrypi/nodes.json`, by
+the `node_setup.py add` questions or the commands below (each is listed in
+[the quick reference](#quick-reference) at the end). In every case **the
+Pi is in charge**: a node never sends anything on its own, it only answers
+the Pi's commands (poll, ping, sync, info, sleep, ...).
+
+### The two links
+
+| | RFM69 radio | Wi-Fi |
+|---|---|---|
+| On the Pi | `main.py` (`garden-sensor` service) | `raspberrypi/wifi_nodes.py` (`garden-wifi` service), TCP port 5006 |
+| Range | Long (the garden) | The house Wi-Fi's reach |
+| Power on the node | Low: about 16 mA listening | High: tens of mA (M0 WiFi) to 80–130 mA (ESP32) while connected |
+| Wiring | An RFM69HCW (FeatherWing or breakout): CS, IRQ (G0 on a breakout), RST and SPI | None: the board's own Wi-Fi chip |
+| Readings while the Pi can't be reached | Logged to SD (or M0 flash) and synced later | Lost, unless the node also has storage and the radio |
+| Speed | Slow; big packets are split | Fast; one JSON line per packet |
+
+### Which boards can use Wi-Fi
+
+| Board (`"board"`) | Arduino | CircuitPython | Notes |
+|---|---|---|---|
+| `picow`, `pico2w` | Yes | Yes | |
+| `feather_esp32_v2` | Yes | No | |
+| `feather_esp32s2` | Yes | No | Needs a u.FL antenna |
+| `feather_m0_wifi` (Adafruit 3044) | Yes | No | Wi-Fi takes about 18 KB of the M0's 256 KB flash; setup asks first. It looks like a plain `feather_m0` over USB, so `link` asks which it is |
+| `pico`, `pico2`, `feather_m0`, Adalogger | No | No | No Wi-Fi chip |
+
+### Choosing a node's links
+
+`"link"` in `nodes.json` is one of:
+
+| `"link"` | Means |
+|---|---|
+| `"radio"` (or left out) | Radio only. Needs the radio pins. |
+| `"wifi"` | Wi-Fi only. No radio pins; storage defaults to none. |
+| `["wifi", "radio"]` | Both, Wi-Fi preferred: the radio is the backup. |
+| `["radio", "wifi"]` | Both, radio preferred: Wi-Fi is the backup. |
+
+The `node_setup.py add` questions offer these four on a Wi-Fi board. For a
+node that's already in the list:
+
+    python3 node_setup.py link 3 wifi radio   # both, Wi-Fi first (asks for the radio pins if it's new to the radio)
+    python3 node_setup.py link 3 radio wifi   # both, radio first
+    python3 node_setup.py link 3 wifi         # Wi-Fi only
+
+Changing the links changes what's built into the node's code, so **re-flash
+it afterwards** (plug it in, `python3 node_setup.py`), and if it just gained
+the radio, restart the radio loop so it starts polling it:
+`sudo systemctl restart garden-sensor`. Where it logs is kept as it was.
+
+### Wi-Fi settings
+
+The node joins the same Wi-Fi network as the Pi. `node_setup.py` gives it
+the network name and password (read from the Pi's own NetworkManager
+connection, with sudo) and the Pi's address and hostname, **never through
+git or the terminal**:
+
+- **Arduino** nodes get them over USB right after flashing, and keep them in
+  their own flash: an ESP32's NVS or a Pico W's EEPROM sector (both survive
+  re-flashing), or on the M0 WiFi a page of program flash (an upload erases
+  it, so they're sent again after every upload).
+- **CircuitPython** nodes get them written into `settings.toml` on the
+  CIRCUITPY drive (`GARDEN_WIFI_SSID`, `GARDEN_WIFI_PASSWORD`,
+  `GARDEN_PI_HOST`, `GARDEN_PI_HOSTNAME`, `GARDEN_PI_PORT`). Code updates
+  never touch that file, and anything else in it is kept. They're not the
+  usual `CIRCUITPY_WIFI_SSID` names on purpose: those would make
+  CircuitPython join by itself and start its web workflow.
+
+If the Wi-Fi password or the Pi's address changes, plug the node in and
+re-send them without flashing anything:
+
+    python3 node_setup.py --wifi-only
+
+If the Pi's address has moved, the node also looks the Pi up by name: an
+ESP32 as `pi.local` (mDNS), the others through the router's DNS. While a
+node can't join the network it prints why on its USB console every 30 s
+("network not found", "wrong password?", ...), and keeps trying; the Pico W
+and M0 retry the join every 30 s (the M0 backs off to every 5 minutes,
+since each try makes it wait up to 8 s).
+
+### Nodes with both links
+
+The node listens on both links and answers each command over the link it
+came in on, so which link is used is up to the Pi. Each minute the Pi
+polls it over **the first link in its list that's up**
+(`raspberrypi/links.py`), and only that one, so no reading is stored twice:
+
+- **Wi-Fi is up** while `garden-wifi` has heard from the node in the last
+  3 minutes (it pings a connected node each minute even when the radio is
+  in use, to know).
+- **The radio is up** while `main.py` counts the node as reachable: 3
+  missed commands in a row and it's not, until it answers one of the checks
+  `main.py` sends every 5 minutes. If `main.py` isn't running at all, the
+  radio counts as down after 3 minutes.
+- If neither is up, the first link keeps trying.
+
+So a failover takes about 3 minutes either way. To change which link comes
+first, **with no re-flash and no restart** (both services re-read
+`nodes.json` within a minute, and each poll tells the node too):
+
+    python3 node_setup.py prefer 3 radio      # or: prefer 3 wifi
+
+The dashboard's ping test menu shows each node's link in use right now,
+e.g. "ESP32-V2 · Wi-Fi (radio backup)", and Refresh and the ping test go
+over it.
+
+### Sleep windows
+
+Any node can sleep every night: `"sleep_window": ["19:00", "07:00"]` (Pi's
+local time; it may cross midnight), set by the add questions or in
+`nodes.json`. Inside the window the Pi sends the node a sleep command (over
+the link in use) with its wake time; the node answers, switches its radio
+and Wi-Fi off, and wakes at that time (an M0 also puts its chip into
+standby; other boards stay awake on their own clock with the links off). It
+still takes a reading every log interval while asleep, and the next day's
+sync collects them (nodes with storage). Both services record the sleep in
+`node_info.json`, so neither polls a sleeping node or counts it as missing,
+and the dashboard shows it as asleep. On waking it rejoins Wi-Fi by itself.
+
+To sleep a node now (bench tests): `python3 sync_indoor.py sleep <node> <minutes>`
+(this goes through `main.py`, so only to a node on the radio at the time).
+**CircuitPython nodes don't sleep yet**: give them no `sleep_window`.
+
+### Battery saver
+
+For a node with both links on a small battery: `"battery_saver": true`
+keeps **only the link in use powered**, since Wi-Fi draws far more than a
+listening radio. What it does depends on which link comes first:
+
+| Links | Battery saver | Radio | Wi-Fi |
+|---|---|---|---|
+| Both | Off (default) | Always on | Always on |
+| Radio first | On | Always on | **Off, and never checked.** If the radio fails, the node can't be reached until it's fixed. |
+| Radio first | On, `"wifi_check_hours": N` | Always on | Off, except for 5 minutes every N hours (the first right after boot). If the Pi uses Wi-Fi during a check (which only happens when the radio is down), it stays on while the Pi keeps using it. |
+| Wi-Fi first | On | Off while Wi-Fi works; on after 5 minutes without hearing the Pi over Wi-Fi, and off again once the Pi is back on Wi-Fi | Always on |
+
+Details worth remembering:
+
+- Only real commands (polls, sync, ...) count as the Pi using a link; the
+  "still there?" pings `garden-wifi` sends don't keep Wi-Fi on.
+- `prefer` works with battery saver too: each poll tells the node which link
+  the Pi prefers, and it switches which one it keeps on (until its next
+  restart, when it starts from the order it was built with, and the Pi's
+  next poll corrects it).
+- After `node_setup.py` gives it new Wi-Fi settings, the node keeps Wi-Fi on
+  for 5 minutes even if it's radio first, so setup can see it connect.
+- `wifi_check_hours` only matters with the radio first (with Wi-Fi first,
+  Wi-Fi is always on anyway).
+- Battery saver is built into the node's code, so **re-flash after turning
+  it on or off**:
+
+        python3 node_setup.py saver 2 on                         # Wi-Fi never checked
+        python3 node_setup.py saver 2 on --wifi-check-hours 24   # check Wi-Fi once a day
+        python3 node_setup.py saver 2 off
+
+  Going down to one link (`link 2 radio`) turns battery saver off, since it
+  has nothing left to choose between.
+
+A sleep window and battery saver work together: battery saver decides which
+link is on during the day, and at night both are off.
+
+### Quick reference
+
+| Command (in `raspberrypi/`) | What it does | Re-flash? | Restart? |
+|---|---|---|---|
+| `python3 node_setup.py add` | Add a node (links, battery saver, sleep window among the questions) | Sets it up | `garden-sensor`, for a radio node |
+| `python3 node_setup.py link N wifi radio` | Change a node's links (in order of preference) | Yes | `garden-sensor`, if it gained the radio |
+| `python3 node_setup.py prefer N radio` | Change which of its two links comes first | No | No |
+| `python3 node_setup.py saver N on [--wifi-check-hours H]` | Battery saver on (or `off`) | Yes | No |
+| `python3 node_setup.py --wifi-only` | Re-send the Wi-Fi settings to the plugged-in node | No | No |
+| `python3 node_setup.py list` | Each node's links, storage and sleep window | | |
+| `sudo journalctl -u garden-wifi -f` | Wi-Fi nodes connecting, polls, sleeps | | |
+| `sudo journalctl -u garden-sensor -f` | Radio polls, pings, sleeps | | |
+
+**After pulling new code on the Pi**, restart the services
+(`sudo systemctl restart garden-sensor garden-wifi garden-api`): running
+services keep the old code until then. A Wi-Fi node that's turned away with
+"isn't a Wi-Fi node in nodes.json" in `garden-wifi`'s log is usually a
+`garden-wifi` still running code from before that board could use Wi-Fi.
 
 ## Syncing a node over USB
 

@@ -144,6 +144,7 @@ def test_a_circuitpython_pico_on_the_radio_with_its_own_pins(pi_list):
     t = Typing(
         "",            # board: Pico 2 W (the default)
         "",            # framework: CircuitPython
+        "radio",       # link (a Pico 2 W could have Wi-Fi too)
         "",            # node ID 3
         "Bed 3",       # name
         "",            # short: "Bed"

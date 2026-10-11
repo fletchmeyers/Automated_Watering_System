@@ -36,9 +36,9 @@ STORAGE    = ("sd", "flash", "none")
 # garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins and
 # keep no log by default (nothing to sync once the Pi is reachable again).
 # Any node can have a nightly sleep_window: the sleep command goes over the
-# link in use, and Wi-Fi sleeps along with the radio. Wi-Fi needs a board
-# with a Wi-Fi chip (WIFI_BOARDS), running a framework whose firmware has
-# Wi-Fi so far (WIFI_FRAMEWORKS).
+# link in use, and Wi-Fi sleeps along with the radio (Arduino nodes only so
+# far: CircuitPython nodes don't sleep yet). Wi-Fi needs a board with a Wi-Fi
+# chip whose framework can use it there (WIFI_SUPPORT).
 #
 # A node with both links can have "battery_saver": true, which keeps only
 # the link in use powered (arduino/src/link_power.h): with the radio first,
@@ -49,8 +49,17 @@ STORAGE    = ("sd", "flash", "none")
 # (["wifi", "radio"]): the node answers on both, and the Pi uses the first
 # that's up (links.py). node_setup.py prefer N <link> reorders it.
 LINKS = ("radio", "wifi")
-WIFI_BOARDS = ("picow", "pico2w", "feather_esp32s2", "feather_esp32_v2", "feather_m0_wifi")
-WIFI_FRAMEWORKS = ("arduino",)   # CircuitPython Wi-Fi isn't written yet
+# Boards with a Wi-Fi chip, and the frameworks whose node code can use it
+# there (CircuitPython only on the Pico W boards: ESP32 boards are Arduino
+# only here, and the M0's Wi-Fi module needs Arduino's WiFi101).
+WIFI_SUPPORT = {
+    "picow":            ("arduino", "circuitpython"),
+    "pico2w":           ("arduino", "circuitpython"),
+    "feather_esp32s2":  ("arduino",),
+    "feather_esp32_v2": ("arduino",),
+    "feather_m0_wifi":  ("arduino",),
+}
+WIFI_BOARDS = tuple(WIFI_SUPPORT)
 
 # Boards where Wi-Fi takes a real share of a small flash, so node_setup.py
 # says what it costs and asks before putting it on: board -> the cost.
@@ -254,8 +263,8 @@ def check_node(node_id, node):
              f'preference, not {json.dumps(raw)}')
     if "wifi" in links:
         if not wifi_able(node["board"], framework):
-            fail(f"{framework} on {node['board']} can't use Wi-Fi (so far Wi-Fi is "
-                 f"{' or '.join(WIFI_FRAMEWORKS)} on {', '.join(WIFI_BOARDS)})")
+            able = [f"{b} ({'/'.join(f)})" for b, f in WIFI_SUPPORT.items()]
+            fail(f"{framework} on {node['board']} can't use Wi-Fi (it can on: {', '.join(able)})")
 
     saver = node.get("battery_saver", False)
     if not isinstance(saver, bool):
@@ -286,6 +295,10 @@ def check_node(node_id, node):
             fail(f'needs pin "{pin}"')
     if storage == "sd" and "sd_cs" not in pins:
         fail('storage "sd" needs pin "sd_cs"')
+    if (framework == "circuitpython" and storage == "sd" and "sd_sck" not in pins
+            and not all(p in pins for p in ("spi_sck", "spi_mosi", "spi_miso"))):
+        fail('the SD card shares the radio\'s SPI bus here, so it needs "spi_sck", "spi_mosi" '
+             'and "spi_miso" (or its own bus: "sd_sck", "sd_mosi", "sd_miso")')
     for pin, value in pins.items():
         if pin not in REQUIRED_PINS[framework] and pin not in OPTIONAL_PINS:
             fail(f'unknown pin "{pin}"')
@@ -338,7 +351,7 @@ def check_node(node_id, node):
 
 def wifi_able(board, framework):
     '''Whether a node on this board and framework can be a Wi-Fi node.'''
-    return board in WIFI_BOARDS and framework in WIFI_FRAMEWORKS
+    return framework in WIFI_SUPPORT.get(board, ())
 
 
 def links_of(node):
@@ -399,7 +412,7 @@ def public_nodes(nodes):
 
 def circuitpython_config(node_id, node):
     '''The node_config.py that hardware_setup_garden.py imports on a CircuitPython node.'''
-    pins = ",\n".join(f"    {k!r}: {v!r}" for k, v in node["pins"].items())
+    pins = "".join(f"    {k!r}: {v!r},\n" for k, v in node.get("pins", {}).items())   # none: Wi-Fi only
     return (
         f"# node_config.py: written by node_setup.py on the Pi from nodes.json\n"
         f"# ({node['name']}). Change nodes.json and run node_setup.py again rather\n"
@@ -408,7 +421,10 @@ def circuitpython_config(node_id, node):
         f"SENSE_INTERVAL = {node['sense_interval_s']}\n"
         f"LOG_INTERVAL = {node['log_interval_s']}\n"
         f"USE_SD = {storage_of(node) == 'sd'}\n"
-        f"PINS = {{\n{pins},\n}}\n"
+        f"PINS = {{\n{pins}}}\n"
+        f"LINKS = {links_of(node)!r}\n"
+        f"BATTERY_SAVER = {bool(node.get('battery_saver'))}\n"
+        f"WIFI_CHECK_HOURS = {node.get('wifi_check_hours') or 0}\n"
     )
 
 
