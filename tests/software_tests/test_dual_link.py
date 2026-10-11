@@ -306,3 +306,49 @@ def test_impossible_links_are_refused(node_file, node_id, links, message):
     esp32_on_wifi(node_file)
     with pytest.raises(NodeConfigError, match=message):
         node_wizard.set_links(node_file, node_id, links, Typing().wizard())
+
+
+# ── The Feather M0 WiFi ──────────────────────────────────────────────────────
+
+def test_node_2_becomes_an_m0_wifi_with_the_radio_first(node_file):
+    from test_node_list import Typing
+    before = load_nodes(node_file)[2]
+    assert (before["board"], before.get("sleep_window")) == ("feather_m0", ["19:00", "07:00"])
+    t = Typing("y", "", "")   # it is an M0 WiFi; put Wi-Fi on it; drop the sleep window
+    node = node_wizard.set_links(node_file, 2, ["radio", "wifi"], t.wizard())
+    assert node["board"] == "feather_m0_wifi" and node["link"] == ["radio", "wifi"]
+    assert "sleep_window" not in node and node["pins"] == before["pins"] and node["storage"] == "sd"
+    assert any("18 KB" in s for s in t.said)
+    from nodes import arduino_env
+    saved = load_nodes(node_file)[2]
+    assert arduino_env(saved) == "feather_m0_wifi"
+    flags = arduino_build_flags(2, saved)
+    assert "-D NODE_LINK_WIFI" in flags and "-D RFM69_CS=9" in flags and "-D SD_CS=10" in flags
+
+
+def test_a_plain_m0_cant_have_wifi(node_file):
+    from test_node_list import Typing
+    with pytest.raises(NodeConfigError, match="can't use Wi-Fi"):
+        node_wizard.set_links(node_file, 2, ["radio", "wifi"], Typing("n").wizard())
+
+
+@pytest.mark.parametrize("answers", [("y", "n"), ("y", "", "n")])   # no Wi-Fi after all; keep sleeping
+def test_saying_no_changes_nothing(node_file, answers):
+    from test_node_list import Typing
+    before = node_file.read_text()
+    with pytest.raises(node_wizard.Cancelled):
+        node_wizard.set_links(node_file, 2, ["radio", "wifi"], Typing(*answers).wizard())
+    assert node_file.read_text() == before
+
+
+def test_a_new_m0_wifi_asks_before_putting_wifi_on(tmp_path, monkeypatch):
+    from test_node_list import Typing
+    monkeypatch.setattr(nodes, "NODES_FILE", tmp_path / "nodes.json")
+    monkeypatch.setattr(nodes, "LEGACY_FILE", tmp_path / "old.json")
+    # link: Wi-Fi, but no to its cost; asked again: the radio first with Wi-Fi, yes;
+    # then ID, name, short, storage (SD), pins (accepted), sense, log, RTC, save
+    t = Typing("wifi", "n", "radio,wifi", "", *[""] * 9)
+    node_id = node_wizard.add_node(nodes.NODES_FILE, t.wizard(), boards=["feather_m0_wifi"])
+    added = load_nodes()[node_id]
+    assert (added["board"], added["link"], added["storage"]) == ("feather_m0_wifi", ["radio", "wifi"], "sd")
+    assert sum("18 KB" in s for s in t.said) == 2

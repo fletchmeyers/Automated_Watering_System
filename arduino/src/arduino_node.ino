@@ -43,6 +43,12 @@ void setup() {
   pinMode(SD_CS, OUTPUT);
   digitalWrite(SD_CS, HIGH);
 #endif
+#ifdef BOARD_HAS_WINC1500
+  // The Feather M0 WiFi's Wi-Fi module shares that bus too (CS on D8): keep
+  // it deselected, whether or not this node uses Wi-Fi.
+  pinMode(8, OUTPUT);
+  digitalWrite(8, HIGH);
+#endif
 
 #ifdef NODE_LINK_WIFI
   // Talks to the Pi over Wi-Fi (wifi_link.h) — and over the radio too unless
