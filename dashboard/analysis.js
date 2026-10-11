@@ -105,6 +105,7 @@ function clearFields() {
     if (box) box.checked = false;
   });
   assignCheckedColors();
+  updateShareAxesBtn();
 }
 
 // Every field whose raw key is "tmp" is a temperature reading (soil ×3,
@@ -263,6 +264,8 @@ function setAnalysisMode(mode) {
   const multiAxis = mode === 'timeseries' || mode === 'trend' || mode === 'rate';
   document.getElementById('ts-overlay-toggle').style.display = multiAxis ? 'flex' : 'none';
   document.getElementById('share-axes-btn').style.display = multiAxis ? '' : 'none';
+  document.getElementById('clear-fields-btn').style.display = usesFieldPicker ? '' : 'none';
+  updateShareAxesBtn();
   for (const id of ['raw-toggle-btn', 'smoothed-toggle-btn']) {
     document.getElementById(id).style.display = mode === 'timeseries' ? '' : 'none';
   }
@@ -311,6 +314,7 @@ function toggleField(id, checked) {
   const chip = document.querySelector(`.field-chip[data-field="${id}"]`);
   if (chip) chip.classList.toggle('checked', checked);
   assignCheckedColors();
+  updateShareAxesBtn();
 }
 
 function buildFieldPicker() {
@@ -343,7 +347,8 @@ function buildFieldPicker() {
     return `<div class="field-group" style="--node-color:${info.color}">
       <span class="field-group-name">${info.name}</span>${chips}
     </div>`;
-  }).join('') + `<button type="button" class="overlay-btn field-clear-btn" onclick="clearFields()">Clear selection</button>`;
+  }).join('');
+  updateShareAxesBtn();
 
   const opts = fields.map(f => `<option value="${f.id}">${fieldLabel(f)}</option>`).join('');
   const xSel = document.getElementById('scatter-x-select');
@@ -386,6 +391,67 @@ function applyPreset(minutes, btn) {
   document.getElementById('range-end').value = toLocalInputValue(end);
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
+  if (liveData && btn) runAnalysisPlot();
+}
+
+// ── Refresh window and Live data ──────────────────────────────────────────────
+
+// How long the window is: the picked preset's, or the custom range's.
+function windowMinutes() {
+  const preset = document.querySelector('.preset-btn.active');
+  if (preset) return parseInt(preset.dataset.minutes, 10);
+  const start = new Date(document.getElementById('range-start').value);
+  const end = new Date(document.getElementById('range-end').value);
+  const minutes = Math.round((end - start) / 60000);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : 1440;
+}
+
+// Move the window up to now, keeping its length, and plot it again.
+function refreshWindow() {
+  const end = new Date();
+  document.getElementById('range-start').value = toLocalInputValue(new Date(end - windowMinutes() * 60000));
+  document.getElementById('range-end').value = toLocalInputValue(end);
+  return runAnalysisPlot();
+}
+
+// Live data: the window always ends now, and the plot is redrawn whenever
+// the dashboard's 10 s refresh brings a new reading for a plotted field
+// (onLivePackets, called from dashboard.js). Only the new readings are
+// fetched each time (fetchForFields keeps the rest).
+let liveData = false;
+let fetchIncrementally = false;   // set during a live update: see fetchForFields
+
+function setLiveData(on) {
+  liveData = on;
+  const radio = document.querySelector(`input[name="range-mode"][value="${on ? 'live' : 'window'}"]`);
+  if (radio) radio.checked = true;
+  document.getElementById('range-end').disabled = on;
+  document.getElementById('card-analysis').classList.toggle('live-data', on);
+  if (on) refreshWindow();
+}
+
+// The fields the current mode would plot.
+function plottedFields() {
+  if (analysisMode === 'scatter') {
+    return ['scatter-x-select', 'scatter-y-select'].map(id => fieldById(document.getElementById(id).value));
+  }
+  if (analysisMode === 'dayover') return [fieldById(document.getElementById('dayover-field-select').value)];
+  return visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id));
+}
+
+let liveUpdating = false;
+async function onLivePackets(packets) {
+  if (!liveData || liveUpdating || !packets.length) return;
+  const plotted = new Set(plottedFields().filter(Boolean).map(seriesKey));
+  if (!packets.some(p => plotted.has(`${p.n}.${p.t}`))) return;
+  liveUpdating = true;
+  fetchIncrementally = true;
+  try {
+    await refreshWindow();
+  } finally {
+    fetchIncrementally = false;
+    liveUpdating = false;
+  }
 }
 
 function buildPresetButtons() {
@@ -423,11 +489,26 @@ async function fetchSeries(sensorType, start, end, nodeId) {
 // needs it (e.g. s0.m and s0.tmp on the same node come from one request).
 function seriesKey(f) { return `${f.node}.${f.type}`; }
 
+// Each series fetched for a window ending now, kept so a live update only
+// asks for readings newer than its last one: { start, packets }.
+const liveSeries = new Map();
+
 async function fetchForFields(fields, start, end) {
   const packets = {};
   const needed = [...new Map(fields.map(f => [seriesKey(f), f])).values()];
   await Promise.all(needed.map(async f => {
-    packets[seriesKey(f)] = await fetchSeries(f.type, start, end, f.node);
+    const key = seriesKey(f);
+    const kept = liveSeries.get(key);
+    if (fetchIncrementally && end == null && kept && kept.packets.length && start >= kept.start) {
+      const last = kept.packets[kept.packets.length - 1].ts;
+      const fresh = (await fetchSeries(f.type, last, null, f.node)).filter(p => p.ts > last);
+      kept.packets = kept.packets.concat(fresh).filter(p => p.ts >= start);
+      kept.start = start;
+      packets[key] = kept.packets;
+      return;
+    }
+    packets[key] = await fetchSeries(f.type, start, end, f.node);
+    if (end == null) liveSeries.set(key, { start, packets: packets[key] });
   }));
   return packets;
 }
@@ -490,10 +571,10 @@ function showAnalysisStatus(msg, level = false) {
 async function runAnalysisPlot() {
   const btn = document.getElementById('plot-btn');
   const start = inputToIso(document.getElementById('range-start').value);
-  const end   = inputToIso(document.getElementById('range-end').value);
+  const end   = liveData ? null : inputToIso(document.getElementById('range-end').value);   // live: up to now
 
   btn.disabled = true;
-  showAnalysisStatus('loading...');
+  if (!fetchIncrementally) showAnalysisStatus('loading...');   // a live update shouldn't flicker
   lastMultiAxis = null;   // set again by plotMultiAxis() if this mode uses it
 
   try {
@@ -608,8 +689,24 @@ function drawMultiAxis() {
 
 function toggleShareAxes() {
   shareAxes = !shareAxes;
-  document.getElementById('share-axes-btn').classList.toggle('active', shareAxes);
+  updateShareAxesBtn();
   if (['timeseries', 'trend', 'rate'].includes(analysisMode)) runAnalysisPlot();
+}
+
+// Shared axes only matters when two picked fields measure the same thing:
+// otherwise it's plain and can't be clicked. When it matters it's teal while
+// they could share an axis, and red while they do.
+function updateShareAxesBtn() {
+  const btn = document.getElementById('share-axes-btn');
+  if (!btn) return;
+  const keys = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id)).map(f => f.key);
+  const shareable = new Set(keys).size < keys.length;
+  btn.disabled = !shareable;
+  btn.classList.toggle('action-teal', shareable && !shareAxes);
+  btn.classList.toggle('action-red', shareable && shareAxes);
+  btn.title = !shareable ? 'Pick two fields that measure the same thing (two soil moistures, say) to share an axis'
+    : shareAxes ? 'Fields with the same unit share one axis: click to give each its own'
+    : 'Fields with the same unit could share one axis: click to share it';
 }
 
 function toggleZoom() {

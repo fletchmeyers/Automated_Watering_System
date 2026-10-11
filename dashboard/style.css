@@ -1148,15 +1148,58 @@
   .field-chip .swatch-picker::-webkit-color-swatch { border: none; border-radius: 50%; }
   .field-chip .swatch-picker::-moz-color-swatch { border: none; border-radius: 50%; }
   .field-chip:not(.checked) .swatch-picker { display: none; }
-  .field-clear-btn { align-self: center; }
-
-  /* Shared axes sits next to Plot, at the right end of the range row */
+  /* Shared axes, Refresh window and Clear selection sit next to Plot, at the
+     right end of the range row */
   .plot-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     margin-left: auto;
   }
+
+  /* Buttons beside Plot: plain until they have something to say, then lit
+     like Plot (teal), or red (Clear selection; Shared axes while sharing). */
+  .action-btn {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .action-btn:hover:not(:disabled) { color: var(--text); }
+  .action-btn:disabled { opacity: 0.5; cursor: default; }
+  .action-btn.action-teal { background: var(--teal-dim); border-color: var(--teal); color: var(--teal); }
+  .action-btn.action-teal:hover { background: #123d38; color: var(--teal); }
+  .action-btn.action-red { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+  .action-btn.action-red:hover { background: #4f1f1f; color: var(--red); }
+
+  /* Time window / Live data */
+  .range-mode {
+    display: flex;
+    gap: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .range-mode label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .range-mode input { accent-color: var(--teal); margin: 0; }
+  .range-mode label:has(input:checked) { color: var(--text); }
+  #card-analysis.live-data .range-mode label:has(input[value="live"]:checked)::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
+  #range-end:disabled { opacity: 0.5; }
 
   .overlay-toggle {
     display: flex;

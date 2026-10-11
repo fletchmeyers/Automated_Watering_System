@@ -244,13 +244,17 @@ def api_data():
     end         = request.args.get("end", type=str)
     sensor_type = request.args.get("sensor_type", type=str)
     node_id     = request.args.get("node_id", type=int)
+    # after: the "cursor" from an earlier reply — just the rows added since
+    # then, whatever their time (the dashboard's 10 s refresh).
+    after       = request.args.get("after", type=int)
 
-    # start/end override the minutes default if either is explicitly given
-    use_minutes = minutes if (start is None and end is None) else None
+    # start/end (or after) override the minutes default if given
+    use_minutes = minutes if (start is None and end is None and after is None) else None
 
     try:
         conn = db.get_connection()
         try:
+            cursor = db.latest_rowid(conn)   # before the query, so nothing added meanwhile is skipped next time
             rows = db.query_readings(
                 conn,
                 minutes=use_minutes,
@@ -258,25 +262,45 @@ def api_data():
                 end=end,
                 sensor_type=sensor_type,
                 node_id=node_id,
+                after=after,
+                upto=cursor if after is not None else None,
             )
             packets = db.pivot_to_packets(rows)
         finally:
             conn.close()
-        return jsonify({"status": "ok", "packets": packets})
+        return jsonify({"status": "ok", "packets": packets, "cursor": cursor})
     except Exception as e:
         print(f"[API] /api/data query failed: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
-@app.route("/api/available_fields", methods=["GET"])
-def api_available_fields():
-    # Cheap SELECT DISTINCT, no cooldown needed (same reasoning as /api/data:
-    # it's a read against a local SQLite file, not something that hits the
-    # radio or blocks on the Pico). Lets the dashboard hide analysis-panel
-    # checkboxes for sensor+field combos that have never actually logged data.
+_available_fields = db.AvailableFields()
+
+
+def _warm_available_fields():
     try:
         conn = db.get_connection()
         try:
-            fields = db.get_available_fields(conn)
+            _available_fields.get(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[API] Couldn't work out the available fields at startup: {e}")
+
+
+# The first page load after a restart shouldn't wait for the slow scan.
+threading.Thread(target=_warm_available_fields, daemon=True).start()
+
+
+@app.route("/api/available_fields", methods=["GET"])
+def api_available_fields():
+    # Lets the dashboard hide analysis-panel checkboxes for sensor+field
+    # combos that have never actually logged data. Kept between requests
+    # (db.AvailableFields): the full scan behind it takes ~20 s on the Pi, so
+    # it's done once, at startup, and after that only new rows are looked at.
+    try:
+        conn = db.get_connection()
+        try:
+            fields = _available_fields.get(conn)
         finally:
             conn.close()
         return jsonify({"status": "ok", "fields": fields})
