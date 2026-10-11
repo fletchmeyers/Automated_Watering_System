@@ -387,8 +387,21 @@ The ping test menu on the dashboard shows which link is in use now.
 
 **Calibrating soil sensors** — out of the box the dashboard shows every
 soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
-few pots. Calibrate a sensor with two readings in its own soil: "dry" while
-the plant is due for watering, and "wet" 30-60 minutes after watering:
+few pots. Calibrate a sensor with two readings in its own soil (not air or
+a jar of water: soil reads well inside that range, and differently for
+different soils): "dry" while the plant is due for watering, and "wet"
+30-60 minutes after watering.
+
+The Pi does it by itself for a soil sensor it hasn't seen before (on a new
+node, or a new seesaw on an existing one): put the sensor in dry soil,
+wait a few minutes, then water it thoroughly. `garden-api` checks every 5
+minutes; it sees the watering as a jump in the readings, takes dry from
+just before it and wet from 30-60 minutes after it, and saves both. Until
+then the dashboard shows that sensor's gauge in purple with its raw reading
+and what it's waiting for ("water it", or "done ~14:20"). Start it for a
+sensor by hand (after swapping one, say) with
+`python3 node_setup.py calibrate 3 s1 auto`; sensors that were already
+there when this first ran are left alone. Or set either end yourself:
 
     python3 node_setup.py calibrate 3 s1 dry                 # median of the last hour
     python3 node_setup.py calibrate 3 s1 wet --minutes 20

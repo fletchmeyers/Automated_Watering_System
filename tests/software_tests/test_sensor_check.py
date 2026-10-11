@@ -102,7 +102,7 @@ def node_file(tmp_path):
 def test_dry_is_taken_from_live_readings_and_wet_is_explained(node_file, tmp_path):
     first = readings_of({"s1": {"m": 826, "tmp": 20}})
     live = FakeUsbNode(*[{"s1": {"m": m, "tmp": 20}} for m in [825, 826, 825, 824, 825, 900, 825, 826, 825, 825]])
-    t = Typing("1", "")                   # dry, then save
+    t = Typing("2", "")                   # dry (after "automatically"), then save
     offer_soil_calibration(node_file, 3, live, first, t.wizard(), tmp_path / "none.db", gap=0, sleep=no_wait)
     assert load_nodes(node_file)[3]["soil"] == {"s1": {"dry": 825}}
     assert len(live.sent) == 10
@@ -132,7 +132,7 @@ def test_only_the_missing_end_is_asked_for(node_file, tmp_path):
     data["nodes"]["3"]["soil"] = {"s1": {"dry": 825}}
     node_file.write_text(json.dumps(data))
     live = FakeUsbNode(*[{"s1": {"m": 984, "tmp": 20}}] * 10)
-    t = Typing("2", "")                   # wet, then save
+    t = Typing("3", "")                   # wet, then save
     offer_soil_calibration(node_file, 3, live, readings_of({"s1": {"m": 984, "tmp": 20}}),
                            t.wizard(), tmp_path / "none.db", gap=0, sleep=no_wait)
     assert load_nodes(node_file)[3]["soil"] == {"s1": {"dry": 825, "wet": 984}}

@@ -39,6 +39,7 @@ import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+import soil_calibration
 from links import active_link
 from nodes import NodeConfigError, load_nodes, public_nodes
 from wifi_nodes import ask_wifi_service
@@ -276,19 +277,29 @@ def api_data():
 _available_fields = db.AvailableFields()
 
 
-def _warm_available_fields():
-    try:
-        conn = db.get_connection()
+SOIL_CHECK_EVERY = 300   # seconds between automatic soil calibration steps
+
+
+def _background():
+    '''Every few minutes: keep the available-fields list current (the first
+    time at startup, so a page load right after a restart doesn't wait for
+    its slow scan), start calibrating any new soil sensor, and move the
+    automatic calibrations on (soil_calibration.py).'''
+    while True:
         try:
-            _available_fields.get(conn)
-        finally:
-            conn.close()
-    except Exception as e:
-        print(f"[API] Couldn't work out the available fields at startup: {e}")
+            conn = db.get_connection()
+            try:
+                fields = _available_fields.get(conn)
+                soil_calibration.start_new_sensors(fields)
+                soil_calibration.update_auto(conn)
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[API] Background check failed: {e}")
+        time.sleep(SOIL_CHECK_EVERY)
 
 
-# The first page load after a restart shouldn't wait for the slow scan.
-threading.Thread(target=_warm_available_fields, daemon=True).start()
+threading.Thread(target=_background, daemon=True).start()
 
 
 @app.route("/api/available_fields", methods=["GET"])

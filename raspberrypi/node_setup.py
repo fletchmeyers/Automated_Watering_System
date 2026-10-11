@@ -842,7 +842,7 @@ def main():
     parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer and calibrate: which node")
     parser.add_argument("what", nargs="*",
                         help="for prefer: wifi or radio (the link to use first); "
-                             "for calibrate: a soil sensor (s0, s1, s2) and dry, wet or clear")
+                             "for calibrate: a soil sensor (s0, s1, s2) and dry, wet, auto or clear")
     parser.add_argument("--minutes", type=int, default=60,
                         help="for calibrate: how many minutes of readings to take the median of (default 60)")
     parser.add_argument("--until", help="for calibrate: the window ends here (18:30, or "
@@ -880,9 +880,9 @@ def main():
             check_sensors(args.nodes)
         elif args.action == "calibrate":
             if (args.node_id is None or len(args.what) != 2
-                    or args.what[1] not in ("dry", "wet", "clear")):
+                    or args.what[1] not in ("dry", "wet", "clear", "auto")):
                 parser.error("say which node, sensor and point: node_setup.py calibrate 3 s1 dry "
-                             "(or wet, or clear)")
+                             "(or wet, auto or clear)")
             soil_calibration.calibrate(args.nodes, args.node_id, args.what[0], args.what[1],
                                        node_wizard.Wizard(), DB_FILE, minutes=args.minutes,
                                        until=args.until, value=args.value)

@@ -1,6 +1,7 @@
 const DATA_WINDOW_MINUTES = 360;  // how much history /api/data returns (6 hours)
 const WINDOW = 2000;              // cap on packets kept in memory (used when triggerRefresh merges a manual poll in)
 const REFRESH_MS = 10000;
+const NODES_REFRESH_MS = 60000;   // the node list (names, colors, soil calibration) again
 
 // Cloudflare Tunnel + domain — dashboard reads live from sensors.db via /api/data.
 const API_BASE = "https://api.fletchermeyers.com";
@@ -159,6 +160,21 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 // 100% at its just-watered one; otherwise, or for an end not measured yet,
 // the seesaw's usual range (200 in air to ~1023) fills in.
 const SOIL_DRY = 200, SOIL_WET = 1023;
+const SOIL_CALIBRATING_COLOR = '#bc8cff';   // --purple: an SVG stroke attribute can't use var()
+
+// What a sensor calibrating itself is waiting for ({since, watered} from
+// nodes.json): the watering, or the hour after it for the water to soak in.
+function calibratingStatus(auto) {
+  const hhmm = iso => iso.slice(11, 16);
+  if (!auto.watered) {
+    return { short: 'calibrating · water it',
+             long: 'Calibrating: once it has been in its dry soil a few minutes, water it thoroughly' };
+  }
+  const done = new Date(new Date(auto.watered).getTime() + 60 * 60000);
+  const at = `${String(done.getHours()).padStart(2, '0')}:${String(done.getMinutes()).padStart(2, '0')}`;
+  return { short: `calibrating · done ~${at}`,
+           long: `Calibrating: watered at ${hhmm(auto.watered)}; the wet reading is taken by ${at}` };
+}
 function soilPct(raw, calibration) {
   const dry = calibration?.dry ?? SOIL_DRY;
   const wet = calibration?.wet ?? SOIL_WET;
@@ -433,6 +449,23 @@ function renderSoil(el, soilData) {
   for (const id of present) {
     const d = soilData[id];
     const calibration = info.soil?.[`s${id}`];
+    const calibrating = calibration?.auto;
+    if (calibrating) {
+      // Still calibrating itself (soil_calibration.py on the Pi): there's
+      // no percent yet, so it shows its raw reading, in purple.
+      const status = calibratingStatus(calibrating);
+      html += `<div class="soil-card calibrating" title="${status.long}; raw ${d.m}">
+        <div class="soil-arc-wrap">
+          ${donutArc(soilPct(d.m), SOIL_CALIBRATING_COLOR, '#1a2530')}
+          <div class="soil-pct" style="color:${SOIL_CALIBRATING_COLOR}">${Math.round(d.m)}</div>
+        </div>
+        <div class="soil-label">SENSOR ${id}</div>
+        <div class="soil-node">${node} · ${id}</div>
+        <div class="soil-calibrating">${status.short}</div>
+        <div class="soil-temp">${formatTemp(d.tmp).toFixed(1)}${tempUnitLabel()}</div>
+      </div>`;
+      continue;
+    }
     const pct = soilPct(d.m, calibration);
     const color = pct < 20 ? '#f85149' : pct < 40 ? '#d29922' : '#3fb950';
     html += `<div class="soil-card">

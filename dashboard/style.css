@@ -516,6 +516,13 @@
   .card-group.kind-soil .group-members > .card + .card { border: none; padding: 0; }
   /* An uncalibrated sensor's label gets a faint star (its tooltip says why). */
   .soil-uncal { color: var(--muted); margin-left: 2px; }
+  /* A sensor calibrating itself: what it's waiting for, in purple */
+  .soil-calibrating {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--purple);
+    margin-top: 2px;
+  }
   .soil-node { display: none; }
   .card-group .soil-label { display: none; }
   .card-group .soil-node {
@@ -1176,8 +1183,20 @@
   .action-btn:disabled { opacity: 0.5; cursor: default; }
   .action-btn.action-teal { background: var(--teal-dim); border-color: var(--teal); color: var(--teal); }
   .action-btn.action-teal:hover { background: #123d38; color: var(--teal); }
-  .action-btn.action-red { background: var(--red-dim); border-color: var(--red); color: var(--red); }
-  .action-btn.action-red:hover { background: #4f1f1f; color: var(--red); }
+  /* Clear selection: red, but quiet against the dark background */
+  .action-btn.action-red {
+    background: color-mix(in srgb, var(--red) 7%, var(--bg3));
+    border-color: color-mix(in srgb, var(--red) 35%, var(--border));
+    color: color-mix(in srgb, var(--red) 70%, var(--muted));
+  }
+  .action-btn.action-red:hover {
+    background: color-mix(in srgb, var(--red) 14%, var(--bg3));
+    color: color-mix(in srgb, var(--red) 85%, var(--text));
+  }
+  /* Shared axes in use: a tick before its name */
+  .action-btn.ticked::before { content: '✓ '; }
+  /* Refresh window: just its arrow */
+  .action-btn.action-icon { padding: 6px 10px; font-size: 14px; line-height: 1; }
 
   /* Time window / Live data */
   .range-mode {
