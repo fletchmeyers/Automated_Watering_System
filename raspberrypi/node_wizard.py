@@ -25,8 +25,8 @@ October 2026
 
 import sqlite3
 
-from nodes import (NodeConfigError, BOARDS, REQUIRED_PINS, check_node, links_of, wifi_able,
-                   next_free_id, read_node_file, save_node_file)
+from nodes import (NodeConfigError, BOARDS, LINKS, REQUIRED_PINS, check_node, links_of, wifi_able,
+                   next_free_id, read_node_file, save_node_file, storage_of)
 
 # Each board's usual wiring, per framework: an RFM69 FeatherWing / breakout
 # as in board_config_*.h (Arduino) or hardware_setup_garden.py
@@ -406,6 +406,42 @@ def add_node(path, wizard, boards=None, db_file=None):
     save_node_file(data, path)
     wizard.say(f"[SETUP] Saved node {node_id} to {path}.")
     return node_id
+
+
+def set_links(path, node_id, links, wizard):
+    '''Change which links a node has ("wifi", "radio" or both, in order of
+    preference), asking for the radio pins if it's gaining the radio. The
+    board then needs re-flashing. Returns the node's new settings.'''
+    data = read_node_file(path)
+    node = data["nodes"].get(str(node_id))
+    if node is None:
+        raise NodeConfigError(f"Node {node_id} isn't in {path}.")
+    links = list(links)
+    if not links or len(set(links)) != len(links) or any(l not in LINKS for l in links):
+        raise NodeConfigError(f"Say its links in order of preference: {' and/or '.join(LINKS)}.")
+    changed = dict(node)
+    # Where it logs stays as it was: a node with the radio would otherwise
+    # default to an SD card it may not have.
+    changed["storage"] = storage_of(node)
+    changed["link"] = links[0] if len(links) == 1 else links
+    if "radio" in links:
+        framework, board = node["framework"], node["board"]
+        pins = dict(node.get("pins") or {})
+        wanted = [p for p in REQUIRED_PINS[framework] if p not in pins]
+        if wanted:
+            usual = DEFAULT_PINS.get(framework, {}).get(board, {})
+            offer = {p: usual[p] for p in wanted if p in usual}
+            if len(offer) == len(wanted):
+                wizard.say("  Radio pins: " + ", ".join(f"{p}={v}" for p, v in offer.items()))
+            if len(offer) == len(wanted) and wizard.yes("Use these pins?"):
+                pins.update(offer)
+            else:
+                pins.update({p: wizard.pin(p, framework, offer.get(p)) for p in wanted})
+        changed["pins"] = pins
+    check_node(node_id, changed)
+    data["nodes"][str(node_id)] = changed
+    save_node_file(data, path)
+    return changed
 
 
 def prefer_link(path, node_id, link):
