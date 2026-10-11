@@ -25,8 +25,8 @@ October 2026
 
 import sqlite3
 
-from nodes import (NodeConfigError, BOARDS, LINKS, REQUIRED_PINS, check_node, links_of, wifi_able,
-                   next_free_id, read_node_file, save_node_file, storage_of)
+from nodes import (NodeConfigError, BOARDS, LINKS, REQUIRED_PINS, WIFI_COST, check_node, links_of,
+                   wifi_able, next_free_id, read_node_file, save_node_file, storage_of)
 
 # Each board's usual wiring, per framework: an RFM69 FeatherWing / breakout
 # as in board_config_*.h (Arduino) or hardware_setup_garden.py
@@ -42,6 +42,7 @@ DEFAULT_PINS = {
         "feather_esp32s2":  {"radio_cs": 10, "radio_irq": 6, "radio_rst": 11},
         "feather_esp32_v2": {"radio_cs": 33, "radio_irq": 27, "radio_rst": 15},
         "feather_m0":       {"radio_cs": 9, "radio_irq": 6, "radio_rst": 11, "sd_cs": 10},
+        "feather_m0_wifi":  {"radio_cs": 9, "radio_irq": 6, "radio_rst": 11, "sd_cs": 10},
     },
     "circuitpython": {
         **{board: {"spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
@@ -58,8 +59,16 @@ BOARD_NAMES = {
     "pico": "Pico", "picow": "Pico W", "pico2": "Pico 2", "pico2w": "Pico 2 W",
     "feather_rp2040_adalogger": "Feather RP2040 Adalogger",
     "feather_esp32s2": "ESP32-S2 Feather", "feather_esp32_v2": "ESP32 V2 Feather",
-    "feather_m0": "Feather M0",
+    "feather_m0": "Feather M0", "feather_m0_wifi": "Feather M0 WiFi",
 }
+
+
+def wifi_worth_it(wizard, board):
+    '''On a board where Wi-Fi has a cost (WIFI_COST), say what it is and ask.'''
+    if board not in WIFI_COST:
+        return True
+    wizard.say(f"  Wi-Fi on a {BOARD_NAMES.get(board, board)}: {WIFI_COST[board]}.")
+    return wizard.yes("Put Wi-Fi on it?")
 FRAMEWORK_NAMES = {"circuitpython": "CircuitPython", "arduino": "Arduino"}
 # The link question's answers: one link, or both in order of preference
 # (nodes.json "link": ["wifi", "radio"]).
@@ -202,12 +211,15 @@ def _steps(w, nodes, boards, taken_ids):
     def link(a):
         if not wifi_able(a["board"], a["framework"]):
             return w.choose("How it reaches the Pi", [("radio", LINK_NAMES["radio"])], "radio")
-        return w.choose("How it reaches the Pi",
-                        [("wifi", "Wi-Fi (no radio needed; the Pi gives it the Wi-Fi settings)"),
-                         ("radio", LINK_NAMES["radio"]),
-                         ("wifi,radio", "Both: Wi-Fi first, the radio if Wi-Fi is down"),
-                         ("radio,wifi", "Both: the radio first, Wi-Fi if the radio is down")],
-                        a.get("link", "wifi"))
+        while True:
+            answer = w.choose("How it reaches the Pi",
+                              [("wifi", "Wi-Fi (no radio needed; the Pi gives it the Wi-Fi settings)"),
+                               ("radio", LINK_NAMES["radio"]),
+                               ("wifi,radio", "Both: Wi-Fi first, the radio if Wi-Fi is down"),
+                               ("radio,wifi", "Both: the radio first, Wi-Fi if the radio is down")],
+                              a.get("link", "radio" if a["board"] in WIFI_COST else "wifi"))
+            if answer == "radio" or wifi_worth_it(w, a["board"]):
+                return answer
 
     def node_id(a):
         def free(n):
@@ -420,6 +432,22 @@ def set_links(path, node_id, links, wizard):
     if not links or len(set(links)) != len(links) or any(l not in LINKS for l in links):
         raise NodeConfigError(f"Say its links in order of preference: {' and/or '.join(LINKS)}.")
     changed = dict(node)
+    if "wifi" in links and "wifi" not in links_of(node):
+        # A Feather M0 WiFi looks like a plain M0 over USB, so it may be
+        # listed as one.
+        if node["board"] == "feather_m0" and wizard.yes(
+                f"Is node {node_id} a Feather M0 WiFi (Adafruit 3044, with the ATWINC1500 module)?",
+                default=False):
+            changed["board"] = "feather_m0_wifi"
+        if not wifi_able(changed["board"], node["framework"]):
+            check_node(node_id, {**changed, "link": links})   # says why not
+        if not wifi_worth_it(wizard, changed["board"]):
+            raise Cancelled()
+        if node.get("sleep_window"):
+            window = "-".join(node["sleep_window"])
+            if not wizard.yes(f"Nodes with Wi-Fi don't sleep. Drop its {window} sleep window?"):
+                raise Cancelled()
+            del changed["sleep_window"]
     # Where it logs stays as it was: a node with the radio would otherwise
     # default to an SD card it may not have.
     changed["storage"] = storage_of(node)

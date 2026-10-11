@@ -3,21 +3,36 @@
 
 #ifdef NODE_LINK_WIFI
 
-#include <WiFi.h>
 #if defined(BOARD_ESP32)
+  #include <WiFi.h>
   #include <Preferences.h>
   #include <ESPmDNS.h>
 #elif defined(BOARD_RP2)
+  #include <WiFi.h>
   #include <EEPROM.h>
+#elif defined(BOARD_HAS_WINC1500)
+  #include <WiFi101.h>
+  #include <FlashStorage.h>
 #else
-  #error "Wi-Fi is only built for ESP32 and Pico W / Pico 2 W boards"
+  #error "Wi-Fi is only built for ESP32 boards, the Pico W / Pico 2 W and the Feather M0 WiFi"
 #endif
 
 static const uint16_t DEFAULT_PI_PORT = 5006;
 static const unsigned long RETRY_MS = 5000;          // between attempts to reach the Pi
 static const unsigned long JOIN_REPORT_MS = 30000;   // "still joining" every this long
-#ifdef BOARD_RP2
-static const unsigned long REJOIN_MS = 30000;        // start joining over if it hasn't worked
+#if defined(BOARD_RP2) || defined(BOARD_HAS_WINC1500)
+// Neither core rejoins by itself: start joining over this long after the
+// last try. The M0's WiFi101 waits (up to WINC_JOIN_MS) while it joins, so
+// each failed try doubles the wait, up to REJOIN_MAX_MS, to keep the radio
+// listening most of the time while Wi-Fi is out of reach.
+static const unsigned long REJOIN_MS = 30000;
+static const unsigned long REJOIN_MAX_MS = 5UL * 60 * 1000;
+static unsigned long rejoin_wait = REJOIN_MS, last_begin = 0;
+#endif
+#ifdef BOARD_HAS_WINC1500
+// The Feather M0 WiFi's ATWINC1500 module (Adafruit 3044).
+static const int WINC_CS = 8, WINC_IRQ = 7, WINC_RST = 4, WINC_EN = 2;
+static const unsigned long WINC_JOIN_MS = 8000;
 #endif
 
 static String ssid, password, pi_host, pi_hostname;
@@ -34,9 +49,16 @@ static WiFiClient client;
 static PacketSender tcp_sender(NODE_ID, &client);
 static LineReader tcp_lines;
 
+// "192.168.1.50": not every core's IPAddress has toString().
+static String ip_text(IPAddress ip) {
+  return String(ip[0]) + "." + ip[1] + "." + ip[2] + "." + ip[3];
+}
+
 // ── Saved settings ───────────────────────────────────────────────────────
 // ESP32: its NVS (Preferences). Pico W / Pico 2 W: the Arduino-Pico core's
-// EEPROM, which is the last sector of flash. Both survive re-flashing.
+// EEPROM, the last sector of flash. Both survive re-flashing. Feather M0
+// WiFi: a page of its own flash (FlashStorage), which an upload erases;
+// node_setup.py sends the settings again after every upload anyway.
 
 #if defined(BOARD_ESP32)
 
@@ -65,7 +87,7 @@ static bool save_settings(const char *s, const char *p, const char *h, const cha
   return true;
 }
 
-#elif defined(BOARD_RP2)
+#else
 
 struct StoredSettings {
   uint32_t magic;
@@ -76,14 +98,38 @@ struct StoredSettings {
   uint16_t port;
 };
 static const uint32_t SETTINGS_MAGIC = 0x31494657;   // "WFI1"; anything else is empty flash
+
+#if defined(BOARD_RP2)
 static const size_t EEPROM_BYTES = 512;
 static_assert(sizeof(StoredSettings) <= EEPROM_BYTES, "settings must fit in EEPROM_BYTES");
 
-static void load_settings() {
-  StoredSettings stored;
+static void read_stored(StoredSettings &stored) {
   EEPROM.begin(EEPROM_BYTES);
   EEPROM.get(0, stored);
   EEPROM.end();
+}
+
+static bool write_stored(const StoredSettings &stored) {
+  EEPROM.begin(EEPROM_BYTES);
+  EEPROM.put(0, stored);
+  bool ok = EEPROM.commit();
+  EEPROM.end();
+  return ok;
+}
+#else
+FlashStorage(settings_flash, StoredSettings);
+
+static void read_stored(StoredSettings &stored) { stored = settings_flash.read(); }
+
+static bool write_stored(const StoredSettings &stored) {
+  settings_flash.write(stored);
+  return true;
+}
+#endif
+
+static void load_settings() {
+  StoredSettings stored;
+  read_stored(stored);
   if (stored.magic != SETTINGS_MAGIC) {
     ssid = password = pi_host = pi_hostname = "";
     pi_port = DEFAULT_PI_PORT;
@@ -114,11 +160,7 @@ static bool save_settings(const char *s, const char *p, const char *h, const cha
       || !copy_field(stored.hostname, sizeof(stored.hostname), hn)) {
     return false;
   }
-  EEPROM.begin(EEPROM_BYTES);
-  EEPROM.put(0, stored);
-  bool ok = EEPROM.commit();
-  EEPROM.end();
-  return ok;
+  return write_stored(stored);
 }
 
 #endif
@@ -126,30 +168,46 @@ static bool save_settings(const char *s, const char *p, const char *h, const cha
 // ── Joining the network ──────────────────────────────────────────────────
 
 static void start_joining() {
-  WiFi.setHostname((String("garden-node-") + NODE_ID).c_str());
 #if defined(BOARD_ESP32)
+  WiFi.setHostname((String("garden-node-") + NODE_ID).c_str());
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(ssid.c_str(), password.c_str());
-#else
+#elif defined(BOARD_RP2)
+  WiFi.setHostname((String("garden-node-") + NODE_ID).c_str());
   WiFi.beginNoBlock(ssid.c_str(), password.c_str());   // begin() would wait up to 30 s
+  last_begin = millis();
+#else
+  // WiFi101 can only join by waiting for it: at most WINC_JOIN_MS.
+  WiFi.setTimeout(WINC_JOIN_MS);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  last_begin = millis();
 #endif
   join_started = last_join_report = millis();
 }
 
 void wifi_link_begin() {
+#ifdef BOARD_HAS_WINC1500
+  WiFi.setPins(WINC_CS, WINC_IRQ, WINC_RST, WINC_EN);
+#endif
   load_settings();
-  if (ssid.isEmpty()) {
+  if (ssid.length() == 0) {
     Serial.println(F("[WIFI] No Wi-Fi settings yet: run node_setup.py on the Pi with this board plugged in."));
     return;
   }
+#ifdef BOARD_HAS_WINC1500
+  if (WiFi.status() == WL_NO_SHIELD) {
+    Serial.println(F("[WIFI] No ATWINC1500 Wi-Fi module answered: is this really a Feather M0 WiFi?"));
+    return;
+  }
+#endif
   client.stop();
   wifi_up = false;
   last_attempt = 0;
-  start_joining();
-  wifi_started = true;
   Serial.print(F("[WIFI] Joining "));
   Serial.println(ssid);   // the network's name only; never the password
+  start_joining();
+  wifi_started = true;
 }
 
 static const char *join_problem(uint8_t status) {
@@ -157,6 +215,7 @@ static const char *join_problem(uint8_t status) {
     case WL_NO_SSID_AVAIL:   return "network not found";
     case WL_CONNECT_FAILED:  return "it turned the node away (wrong password?)";
     case WL_CONNECTION_LOST: return "connection lost";
+    case WL_NO_SHIELD:       return "no Wi-Fi module answered";
     default:                 return "no answer yet";
   }
 }
@@ -168,10 +227,13 @@ static bool wifi_ready() {
   if (status == WL_CONNECTED) {
     if (!wifi_up) {
       wifi_up = true;
+#if defined(BOARD_RP2) || defined(BOARD_HAS_WINC1500)
+      rejoin_wait = REJOIN_MS;
+#endif
       Serial.print(F("[WIFI] Joined "));
       Serial.print(ssid);
       Serial.print(F(" as "));
-      Serial.println(WiFi.localIP());
+      Serial.println(ip_text(WiFi.localIP()));
     }
     return true;
   }
@@ -193,13 +255,16 @@ static bool wifi_ready() {
     Serial.print(status);
     Serial.println(F(")."));
   }
-#ifdef BOARD_RP2
-  // The Pico W core doesn't rejoin by itself.
-  static unsigned long last_begin = 0;
-  if (now - join_started >= REJOIN_MS && now - last_begin >= REJOIN_MS) {
-    last_begin = now;
+#if defined(BOARD_RP2) || defined(BOARD_HAS_WINC1500)
+  if (now - last_begin >= rejoin_wait) {
     WiFi.disconnect();
+  #if defined(BOARD_RP2)
     WiFi.beginNoBlock(ssid.c_str(), password.c_str());
+  #else
+    WiFi.begin(ssid.c_str(), password.c_str());
+    rejoin_wait = min(rejoin_wait * 2, REJOIN_MAX_MS);   // each failed try waits WINC_JOIN_MS
+  #endif
+    last_begin = millis();
   }
 #endif
   return false;
@@ -210,16 +275,16 @@ static bool wifi_ready() {
 #if defined(BOARD_ESP32)
 static bool connect_ip(IPAddress ip) { return client.connect(ip, pi_port, 3000); }
 #else
-static bool connect_ip(IPAddress ip) { return client.connect(ip, pi_port); }   // 5 s timeout
+static bool connect_ip(IPAddress ip) { return client.connect(ip, pi_port); }
 #endif
 
 // The Pi at its saved address, or — if that has changed — found by name
 // (e.g. "pi" for pi.local): over mDNS on an ESP32; through the router's DNS
-// on a Pico W, whose core can't look up .local names.
+// on a Pico W or M0 WiFi, whose libraries can't look up .local names.
 static bool connect_to_pi() {
   IPAddress ip;
   if (ip.fromString(pi_host) && connect_ip(ip)) return true;
-  if (pi_hostname.isEmpty()) return false;
+  if (pi_hostname.length() == 0) return false;
   String name = pi_hostname;
   if (name.endsWith(".local")) name.remove(name.length() - 6);
   IPAddress found;
@@ -228,8 +293,10 @@ static bool connect_to_pi() {
     mdns_started = MDNS.begin((String("garden-node-") + NODE_ID).c_str());
   }
   found = MDNS.queryHost(name.c_str(), 2000);
-#else
+#elif defined(BOARD_RP2)
   if (!WiFi.hostByName(name.c_str(), found, 3000)) return false;
+#else
+  if (!WiFi.hostByName(name.c_str(), found)) return false;
 #endif
   return found != IPAddress(0, 0, 0, 0) && connect_ip(found);
 }
@@ -243,13 +310,15 @@ bool wifi_link_poll(JsonDocument &out) {
       Serial.println(F("[WIFI] Can't reach the Pi's garden-wifi service yet; retrying."));
       return false;
     }
+#if defined(BOARD_ESP32) || defined(BOARD_RP2)
     client.setNoDelay(true);
+#endif
     tcp_lines = LineReader();
     JsonDocument hello;
-    hello["ip"] = WiFi.localIP().toString();
+    hello["ip"] = ip_text(WiFi.localIP());
     tcp_sender.send(hello, "hello");   // t, q and n are added by send()
     Serial.print(F("[WIFI] Connected to the Pi at "));
-    Serial.println(client.remoteIP());
+    Serial.println(ip_text(client.remoteIP()));
   }
   return tcp_lines.read(client, out);
 }

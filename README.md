@@ -356,7 +356,7 @@ no radio, no I2C sensors or no RTC still runs (USB only), which makes a
 bare board easy to test on the bench.
 
 **Wi-Fi nodes** — a board with a Wi-Fi chip running Arduino (an ESP32
-Feather, a Pico W or a Pico 2 W) can skip the radio (and the SD card):
+Feather, a Pico W, a Pico 2 W or a Feather M0 WiFi) can skip the radio (and the SD card):
 answer Wi-Fi when `node_setup.py add` asks (`"link": "wifi"`, no `pins`). It
 joins the Pi's own Wi-Fi network and connects to the `garden-wifi` service
 (`raspberrypi/wifi_nodes.py`, installed by `deploy/install.sh`), which
@@ -366,8 +366,13 @@ network name, password and the Pi's address to the board over USB after
 flashing it — they never go through git or the terminal — and the board
 keeps them in its own flash, so re-run `node_setup.py` if the Wi-Fi
 password or the Pi's address changes (if the address moved, it also looks
-the Pi up by name: an ESP32 as `pi.local`, a Pico W through the router's
-DNS). While it can't join the network, the node says why on USB every
+the Pi up by name: an ESP32 as `pi.local`, a Pico W or M0 WiFi through the
+router's DNS). On the Feather M0 WiFi (`feather_m0_wifi`; Adafruit 3044, with
+an ATWINC1500 module on D8/D7/D4/D2), Wi-Fi takes about 18 KB of the M0's
+256 KB flash, so `node_setup.py` says so and asks first; it keeps the Wi-Fi
+settings in its own flash, which an upload erases, so they're sent again
+after every upload. It looks like a plain Feather M0 over USB, so
+`node_setup.py link` asks which it is. While it can't join the network, the node says why on USB every
 30 s. A Wi-Fi node has no log to sync, so readings from while the Pi or
 the Wi-Fi was down are lost. Check the service with
 `sudo journalctl -u garden-wifi -f`.

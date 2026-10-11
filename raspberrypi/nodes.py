@@ -42,8 +42,15 @@ STORAGE    = ("sd", "flash", "none")
 # (["wifi", "radio"]): the node answers on both, and the Pi uses the first
 # that's up (links.py). node_setup.py prefer N <link> reorders it.
 LINKS = ("radio", "wifi")
-WIFI_BOARDS = ("picow", "pico2w", "feather_esp32s2", "feather_esp32_v2")
+WIFI_BOARDS = ("picow", "pico2w", "feather_esp32s2", "feather_esp32_v2", "feather_m0_wifi")
 WIFI_FRAMEWORKS = ("arduino",)   # CircuitPython Wi-Fi isn't written yet
+
+# Boards where Wi-Fi takes a real share of a small flash, so node_setup.py
+# says what it costs and asks before putting it on: board -> the cost.
+WIFI_COST = {
+    "feather_m0_wifi": "its WiFi101 library takes about 18 KB of the M0's 256 KB flash "
+                       "(the firmware goes from about 95 KB to 113 KB)",
+}
 
 # Boards a node can be, by the "board" value in nodes.json:
 #   chip          — which UF2 bootloader drive it shows (BOOTLOADER_DRIVES)
@@ -63,6 +70,9 @@ BOARDS = {
     "feather_esp32s2":  {"chip": "esp32s2", "circuitpython": None,                       "arduino": "feather_esp32s2"},
     "feather_esp32_v2": {"chip": "esp32",   "circuitpython": None,                       "arduino": "feather_esp32_v2"},
     "feather_m0":       {"chip": "samd21",  "circuitpython": None,                       "arduino": "feather_m0"},
+    # The Feather M0 WiFi (Adafruit 3044): a Feather M0 with an ATWINC1500
+    # Wi-Fi module. Over USB it looks just like a plain one.
+    "feather_m0_wifi":  {"chip": "samd21",  "circuitpython": None,                       "arduino": "feather_m0_wifi"},
 }
 
 # The drive a board shows while it waits in its UF2 bootloader, by volume label.
