@@ -92,8 +92,13 @@ _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # 100%. Set with node_setup.py calibrate; either may be missing until it's
 # measured (the dashboard's usual scale fills in). The seesaw sensor reads
 # 0-1023ish, higher when wetter, but either way round works.
+#
+# While the Pi calibrates a sensor by itself (soil_calibration.py: put it in
+# dry soil, then water), its entry says so instead:
+# {"auto": {"since": <ISO time>, "watered": <ISO time it saw the watering, or null>}}.
 SOIL_SENSOR = re.compile(r"^s\d$")
 SOIL_POINTS = ("dry", "wet")
+_ISO = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -282,6 +287,14 @@ def check_node(node_id, node):
         for sensor, points in soil.items():
             if not SOIL_SENSOR.match(sensor):
                 fail(f'soil sensors are named "s0", "s1", ..., not "{sensor}"')
+            if isinstance(points, dict) and set(points) == {"auto"}:
+                auto = points["auto"]
+                if not (isinstance(auto, dict) and set(auto) <= {"since", "watered"}
+                        and isinstance(auto.get("since"), str) and _ISO.match(auto["since"])
+                        and (auto.get("watered") is None or
+                             (isinstance(auto["watered"], str) and _ISO.match(auto["watered"])))):
+                    fail(f'soil "{sensor}" auto must be {{"since": "YYYY-MM-DDTHH:MM:SS", "watered": ... or null}}')
+                continue
             if not isinstance(points, dict) or not set(points) <= set(SOIL_POINTS) or not all(
                     isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 65535
                     for v in points.values()):

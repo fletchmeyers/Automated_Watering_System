@@ -144,13 +144,21 @@ def offer_soil_calibration(path, node_id, usb_node, readings, wizard, db_file, g
         missing = [p for p in ("dry", "wet") if p not in have]
         if not missing:
             continue
+        if "auto" in have:
+            wizard.say(f"  Soil sensor {sensor} is calibrating itself: water it thoroughly once "
+                       "it has been in its dry soil a few minutes.")
+            continue
         wizard.say(f"  Soil sensor {sensor} has no {' or '.join(missing)} reading yet "
                    "(the dashboard's percent needs both).")
         point = wizard.choose("Calibrate it now?", [
+            ("auto", "Automatically: it's in dry soil; I'll water it in a few minutes"),
             ("dry", "Take its dry reading: it's in its pot, and the soil is due for watering"),
             ("wet", "Take its wet reading: it was watered 30-60 minutes ago"),
             ("skip", "Not now")], "skip")
         if point == "skip":
+            continue
+        if point == "auto":
+            soil_calibration.calibrate(path, node_id, sensor, "auto", wizard, db_file)
             continue
         wizard.say(f"[CHECK] Reading {sensor} {samples} times over {gap * (samples - 1)} s...")
         values = [p["m"] for p in take_readings(usb_node, node_id, samples, gap, sleep).get(sensor, [])

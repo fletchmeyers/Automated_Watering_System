@@ -16,3 +16,6 @@ raspberrypi/sensors.db*
 raspberrypi/nodes.json
 /nodes.json
 circuitpython/node_config.py
+
+# Soil sensors the Pi has already seen (soil_calibration.start_new_sensors)
+raspberrypi/soil_sensors_seen.json

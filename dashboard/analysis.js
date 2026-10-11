@@ -694,16 +694,17 @@ function toggleShareAxes() {
 }
 
 // Shared axes only matters when two picked fields measure the same thing:
-// otherwise it's plain and can't be clicked. When it matters it's teal while
-// they could share an axis, and red while they do.
+// otherwise it's greyed out. When it matters it's teal, with a tick while
+// they do share an axis.
 function updateShareAxesBtn() {
   const btn = document.getElementById('share-axes-btn');
   if (!btn) return;
   const keys = visibleAnalysisFields().filter(f => tsSelectedFields.has(f.id)).map(f => f.key);
   const shareable = new Set(keys).size < keys.length;
   btn.disabled = !shareable;
-  btn.classList.toggle('action-teal', shareable && !shareAxes);
-  btn.classList.toggle('action-red', shareable && shareAxes);
+  btn.classList.toggle('action-teal', shareable);
+  btn.classList.toggle('ticked', shareable && shareAxes);
+  btn.setAttribute('aria-pressed', String(shareable && shareAxes));
   btn.title = !shareable ? 'Pick two fields that measure the same thing (two soil moistures, say) to share an axis'
     : shareAxes ? 'Fields with the same unit share one axis: click to give each its own'
     : 'Fields with the same unit could share one axis: click to share it';

@@ -113,8 +113,8 @@
     </div>
     <div class="plot-actions">
       <button id="share-axes-btn" class="action-btn" onclick="toggleShareAxes()" type="button" disabled>Shared axes</button>
-      <button id="refresh-window-btn" class="action-btn" onclick="refreshWindow()" type="button" title="Move the time window up to now and plot it again">↻ Refresh window</button>
       <button id="clear-fields-btn" class="action-btn action-red" onclick="clearFields()" type="button" title="Untick every field">Clear selection</button>
+      <button id="refresh-window-btn" class="action-btn action-teal action-icon" onclick="refreshWindow()" type="button" title="Refresh the window: move it up to now and plot it again" aria-label="Refresh the time window">↻</button>
       <button id="plot-btn" onclick="runAnalysisPlot()" type="button">Plot</button>
     </div>
   </div>
@@ -144,6 +144,9 @@ loadNodes().then(() => {
   buildPingNodeSelect();
   refresh();
   setInterval(refresh, REFRESH_MS);
+  // The node list again every minute, so a sensor that finishes calibrating
+  // (or a node just added) shows without reloading the page.
+  setInterval(() => loadNodes().then(() => { if (currentPackets.length) renderAll(currentPackets); }), NODES_REFRESH_MS);
   initCardCustomization();
   initAnalysisPanel();
   initWeatherPanel();
