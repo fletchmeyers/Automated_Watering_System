@@ -259,3 +259,50 @@ def test_a_wifi_first_node_is_polled_over_wifi(service):
     svc, conn, tmp_path = service
     write_radio_status({20: True}, status_file=tmp_path / "radio.json")
     assert run_node(svc, 2) == ["poll", "poll"]
+
+
+# ── Changing a node's links with node_setup.py link ─────────────────────────
+
+def esp32_on_wifi(node_file):
+    data = json.loads(node_file.read_text())
+    data["nodes"]["3"] = {"name": "ESP32-V2 (Arduino)", "framework": "arduino",
+                          "board": "feather_esp32_v2", "link": "wifi",
+                          "sense_interval_s": 3, "log_interval_s": 60}   # no storage: none
+    node_file.write_text(json.dumps(data))
+
+
+def test_a_wifi_node_gains_the_radio_and_loses_it_again(node_file):
+    from test_node_list import Typing
+    esp32_on_wifi(node_file)
+    t = Typing("")                       # use the usual pins
+    node = node_wizard.set_links(node_file, 3, ["wifi", "radio"], t.wizard())
+    assert node["link"] == ["wifi", "radio"]
+    assert node["pins"] == {"radio_cs": 33, "radio_irq": 27, "radio_rst": 15}
+    assert node["storage"] == "none"     # not the SD card a radio node would default to
+    flags = arduino_build_flags(3, load_nodes(node_file)[3])
+    assert "-D NODE_LINK_WIFI" in flags and "-D RFM69_CS=33" in flags and "-D NODE_NO_RADIO" not in flags
+
+    node = node_wizard.set_links(node_file, 3, ["wifi"], Typing().wizard())   # no questions
+    assert node["link"] == "wifi"
+    assert "-D NODE_NO_RADIO" in arduino_build_flags(3, load_nodes(node_file)[3])
+
+
+def test_other_pins_can_be_given(node_file):
+    from test_node_list import Typing
+    esp32_on_wifi(node_file)
+    node = node_wizard.set_links(node_file, 3, ["radio", "wifi"], Typing("n", "14", "32", "").wizard())
+    assert node["pins"] == {"radio_cs": 14, "radio_irq": 32, "radio_rst": 15}
+
+
+@pytest.mark.parametrize("node_id, links, message", [
+    (3, [], "order of preference"),
+    (3, ["wifi", "wifi"], "order of preference"),
+    (3, ["lora"], "order of preference"),
+    (1, ["wifi", "radio"], "can't use Wi-Fi"),   # CircuitPython: no Wi-Fi yet
+    (99, ["wifi"], "isn't in"),
+])
+def test_impossible_links_are_refused(node_file, node_id, links, message):
+    from test_node_list import Typing
+    esp32_on_wifi(node_file)
+    with pytest.raises(NodeConfigError, match=message):
+        node_wizard.set_links(node_file, node_id, links, Typing().wizard())

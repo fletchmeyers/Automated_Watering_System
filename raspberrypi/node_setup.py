@@ -13,6 +13,9 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
     python3 node_setup.py calibrate 3 s1 dry — set soil sensor s1's dry (or wet)
                                          reading from its recent readings; see
                                          soil_calibration.py
+    python3 node_setup.py link 3 wifi radio — give node 3 Wi-Fi and the radio (in
+                                         that order of preference; asks for the
+                                         radio pins), or just one; then re-flash it
     python3 node_setup.py prefer 3 wifi — for a node with Wi-Fi and the radio:
                                          use Wi-Fi first (or radio), from the
                                          next poll on; no re-flash or restart
@@ -837,11 +840,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?",
-                        choices=["update", "add", "remove", "list", "prefer", "calibrate", "check"],
+                        choices=["update", "add", "remove", "list", "prefer", "link", "calibrate", "check"],
                         default="update")
-    parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer and calibrate: which node")
+    parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer, link and calibrate: which node")
     parser.add_argument("what", nargs="*",
                         help="for prefer: wifi or radio (the link to use first); "
+                             "for link: wifi and/or radio, in order of preference; "
                              "for calibrate: a soil sensor (s0, s1, s2) and dry, wet, auto or clear")
     parser.add_argument("--minutes", type=int, default=60,
                         help="for calibrate: how many minutes of readings to take the median of (default 60)")
@@ -876,6 +880,18 @@ def main():
             order = node_wizard.prefer_link(args.nodes, args.node_id, args.what[0])
             print(f"[SETUP] Node {args.node_id} now uses {' first, then '.join(order)}. "
                   "The Pi switches within a minute.")
+        elif args.action == "link":
+            if args.node_id is None or not args.what:
+                parser.error("say which node and links: node_setup.py link 3 wifi radio (or just one)")
+            try:
+                node = node_wizard.set_links(args.nodes, args.node_id, args.what, node_wizard.Wizard())
+            except (node_wizard.Cancelled, node_wizard.Back, EOFError, KeyboardInterrupt):
+                sys.exit("[SETUP] Nothing changed.")
+            print(f"[SETUP] Node {args.node_id} now has {' then '.join(links_of(node))}. With the board "
+                  "plugged in, re-flash it so the firmware matches: python3 node_setup.py")
+            if "radio" in links_of(node):
+                print("[SETUP] Then restart the radio loop so it knows the node: "
+                      "sudo systemctl restart garden-sensor")
         elif args.action == "check":
             check_sensors(args.nodes)
         elif args.action == "calibrate":

@@ -383,6 +383,14 @@ twice. To switch which comes first, with no re-flash or restart:
 
     python3 node_setup.py prefer 4 radio    # or: prefer 4 wifi
 
+To give an existing node the radio (or take it away), say which links it
+should have, in order of preference; it asks for the radio pins, and the
+board then needs re-flashing (and `garden-sensor` restarting, so the radio
+loop knows the node):
+
+    python3 node_setup.py link 3 wifi radio   # Wi-Fi first, the radio as backup
+    python3 node_setup.py link 3 wifi         # back to Wi-Fi only
+
 The ping test menu on the dashboard shows which link is in use now.
 
 **Calibrating soil sensors** — out of the box the dashboard shows every
