@@ -13,8 +13,12 @@ saver (nodes.json "battery_saver": true) only the preferred link stays on:
     SILENCE_MINUTES (listening is cheap), and goes off once the Pi is back
     on Wi-Fi.
 Only real commands count as hearing the Pi; its "still there?" pings don't.
-Polls carry the Pi's preferred link ("pf"), so a switch on the Pi needs no
-code update.
+
+The Pi sends the current settings with every poll, packed to fit a radio
+packet: "lp" is r or w (which link comes first), a capital letter for
+battery saver, then the Wi-Fi check hours if any ("r", "R", "W", "R24"). So
+node_setup.py prefer and saver take effect at the next poll, with no code
+update; until the first poll after a restart it uses node_config.py's.
 
 Written by Fletcher Meyers
 October 2026
@@ -36,10 +40,22 @@ class LinkPower:
         self._started = clock()
         self.reset()
 
+    def apply(self, lp):
+        '''The Pi's settings from a poll's "lp" (see above).'''
+        if not isinstance(lp, str) or not lp or lp[0] not in "rRwW":
+            return
+        preferred = "wifi" if lp[0] in "wW" else "radio"
+        saver = lp[0] in "RW"
+        hours = int(lp[1:]) if lp[1:].isdigit() else 0
+        if (preferred, saver, hours) != (self.preferred, self.saver, self.check_hours):
+            self.preferred, self.saver, self.check_hours = preferred, saver, hours
+            print(f"[LINKS] From the Pi: {'Wi-Fi' if preferred == 'wifi' else 'radio'} first, "
+                  f"battery saver {'on' if saver else 'off'}.")
+
     def heard(self, link, command):
         '''A command came in over link ("radio" or "wifi").'''
-        if command.get("pf") in ("radio", "wifi"):
-            self.preferred = command["pf"]
+        if "lp" in command:
+            self.apply(command["lp"])
         if command.get("t") == "ping":
             return   # pings don't keep a link on
         self._heard_at[link] = self._clock()

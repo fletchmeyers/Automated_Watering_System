@@ -151,10 +151,21 @@ def test_wifi_first_brings_the_radio_on_once_wifi_goes_quiet():
     assert power.plan() == (True, True)
 
 
-def test_polls_switch_the_preferred_link():
-    power = link_power.LinkPower(["radio", "wifi"], battery_saver=True, clock=Clock())
-    power.heard("radio", {"t": "poll", "pf": "wifi"})
+def test_the_pi_changes_the_settings_with_a_poll():
+    clock = Clock()
+    power = link_power.LinkPower(["radio", "wifi"], clock=clock)   # installed: both on
+    assert power.plan() == (True, True)
+    clock.t += 600
+    power.heard("radio", {"t": "poll", "lp": "R"})                # battery saver, radio first
+    assert power.plan() == (True, False)
+    power.heard("radio", {"t": "poll", "lp": "W"})                # Wi-Fi first now
     assert power.preferred == "wifi" and power.plan()[1] is True
+    power.heard("radio", {"t": "poll", "lp": "r"})                # battery saver off again
+    assert power.plan() == (True, True)
+    power.heard("radio", {"t": "poll", "lp": "R24"})
+    assert (power.saver, power.check_hours) == (True, 24)
+    power.heard("radio", {"t": "poll", "lp": "?"})                # nonsense is ignored
+    assert (power.preferred, power.saver) == ("radio", True)
 
 
 # ── wifi_link.py against a fake network ──────────────────────────────────────

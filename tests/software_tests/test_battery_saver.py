@@ -118,13 +118,34 @@ def test_the_questions_offer_battery_saver(tmp_path, monkeypatch):
 
 # ── Polls and who's asleep ───────────────────────────────────────────────────
 
-def test_a_poll_can_say_the_preferred_link(tmp_path, monkeypatch):
+def test_a_poll_can_carry_the_link_plan(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_indoor, "COMMAND_FILE", str(tmp_path / "command.json"))
     monkeypatch.setattr(sync_indoor, "POLL_RESULT_FILE", str(tmp_path / "result.json"))
-    sync_indoor.request_poll(3, prefer="radio")
-    assert json.loads((tmp_path / "command.json").read_text())["pf"] == "radio"
+    sync_indoor.request_poll(3, link_plan="R24")
+    assert json.loads((tmp_path / "command.json").read_text())["lp"] == "R24"
     sync_indoor.request_poll(1)
-    assert "pf" not in json.loads((tmp_path / "command.json").read_text())
+    assert "lp" not in json.loads((tmp_path / "command.json").read_text())
+
+
+@pytest.mark.parametrize("changes, plan", [
+    ({}, "r"),
+    ({"link": ["wifi", "radio"]}, "w"),
+    ({"battery_saver": True}, "R"),
+    ({"battery_saver": True, "wifi_check_hours": 24}, "R24"),
+    ({"link": ["wifi", "radio"], "battery_saver": True}, "W"),
+    ({"link": "radio"}, None),
+])
+def test_the_link_plan_code(changes, plan):
+    from nodes import link_plan
+    assert link_plan(esp32(**changes)) == plan
+
+
+def test_the_longest_poll_still_fits_one_radio_packet():
+    '''The radio carries at most 60 bytes; main.py sends commands compactly.'''
+    from nodes import link_plan
+    poll = {"t": "poll", "ts": "2026-10-12T17:00:00", "n": 254,
+            "lp": link_plan(esp32(battery_saver=True, wifi_check_hours=168))}
+    assert len(json.dumps(poll, separators=(",", ":"))) <= 60
 
 
 def test_a_sleep_either_service_sent_is_seen_by_both(tmp_path, monkeypatch):
@@ -200,7 +221,7 @@ def run_node(svc):
     return asyncio.run(scenario())
 
 
-def test_polls_say_the_preferred_link(service):
+def test_polls_carry_the_link_plan(service):
     svc, path, tmp_path = service
 
     async def scenario():
@@ -213,7 +234,7 @@ def test_polls_say_the_preferred_link(service):
         server.close()
         return command
     command = asyncio.run(scenario())
-    assert command["t"] == "poll" and command["pf"] == "wifi"
+    assert command["t"] == "poll" and command["lp"] == "W"   # Wi-Fi first, battery saver
 
 
 def test_the_wifi_service_puts_a_node_to_sleep_and_records_it(service, capsys):
