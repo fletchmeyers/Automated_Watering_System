@@ -359,17 +359,27 @@ bare board easy to test on the bench.
 [How nodes reach the Pi](#how-nodes-reach-the-pi-links-sleep-and-battery-saver)
 below for every option and command.
 
-**Watchdog (CircuitPython nodes)** — the node starts the chip's watchdog
-before it sets up its sensors and SD card, and feeds it on every pass of
-its loop (and with every packet it sends). If anything stops the code for
-8 seconds, such as a corroded sensor hanging the I2C bus, the board resets
-itself and carries on; if the code crashes, it prints the error on its
-console and resets 5 seconds later. After a watchdog reset the console says
-`[WATCHDOG] Restarted: the code had stopped`. Ctrl+C at the console turns
-the watchdog off until the next restart, so the console and `node_setup.py`
-work as before. To work at the console for a while without it, put an
-empty file named `no_watchdog` on the CIRCUITPY drive (and delete it before
-the node goes back outside). Arduino nodes don't have a watchdog yet.
+**Watchdog** — every node starts the chip's watchdog before it sets up its
+radio, sensors and SD card, and feeds it on every pass of its loop, with
+every packet it sends, and before anything that waits (joining Wi-Fi,
+reaching the Pi). If anything stops the code for too long, such as a
+corroded sensor hanging the I2C bus, the board resets itself and carries
+on. After a watchdog reset its console says
+`[WATCHDOG] Restarted: the code had stopped`.
+
+- **CircuitPython** (`circuitpython/node_watchdog.py`): 8 s. If the code
+  crashes it prints the error and resets 5 s later. Ctrl+C at the console
+  turns the watchdog off until the next restart, so the console and
+  `node_setup.py` work as before; to work at the console for a while
+  without it, put an empty file named `no_watchdog` on the CIRCUITPY drive
+  (and delete it before the node goes back outside).
+- **Arduino** (`arduino/src/node_watchdog.cpp`, the Adafruit SleepyDog
+  library): 8 s, or 16 s on the M0 (its Wi-Fi module can take 8 s to join).
+  A crash freezes the chip, which the watchdog then resets (an ESP32
+  restarts by itself anyway). The M0's standby sleep lasts minutes between
+  readings, so the watchdog is paused for standby and resumed on waking;
+  the other boards stay awake while "asleep" and keep feeding it. Build
+  with `-D NO_WATCHDOG` to leave it off for bench debugging.
 
 **Calibrating soil sensors** — out of the box the dashboard shows every
 soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
