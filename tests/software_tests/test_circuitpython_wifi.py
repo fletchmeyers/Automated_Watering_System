@@ -334,3 +334,22 @@ def test_failed_joins_back_off_so_the_radio_keeps_listening(network, monkeypatch
         link.receive()
     gaps = [b - a for a, b in zip(joins, joins[1:])]
     assert gaps[:4] == [30, 60, 120, 240] and max(gaps) == 300
+
+
+def test_unchanged_settings_arent_rewritten_and_a_radio_first_saver_isnt_waited_for(tmp_path, monkeypatch, capsys):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_mount(dev, where, read_only=False):
+        yield tmp_path
+    monkeypatch.setattr(node_setup, "mounted", fake_mount)
+    monkeypatch.setattr(node_setup, "sync_disks", lambda: None)
+    monkeypatch.setattr(node_setup, "wifi_settings", lambda: SETTINGS)
+    assert node_setup.write_circuitpython_wifi(SETTINGS) is True        # first time: written
+    written = (tmp_path / "settings.toml").stat().st_mtime_ns
+    assert node_setup.write_circuitpython_wifi(SETTINGS) is False       # same again: left alone
+    assert (tmp_path / "settings.toml").stat().st_mtime_ns == written   # (no needless code restart)
+
+    monkeypatch.setattr(node_setup, "wait_until", lambda *a, **k: pytest.fail("waited for nothing"))
+    node_setup.setup_wifi(1, framework="circuitpython", links=["radio", "wifi"], plan="R")
+    assert "no connection to wait for" in capsys.readouterr().out
