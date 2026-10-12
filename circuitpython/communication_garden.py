@@ -110,6 +110,11 @@ class SerialLink:
         return command if isinstance(command, dict) else None
 
 
+def feed():
+    '''Feeds the watchdog: code.py points this at node_watchdog.feed, so a long
+    run of packets (a big sync over USB, say) can't trip it.'''
+
+
 class PacketSender:
     def __init__(self, node_id, radio):
         self.node_id = node_id
@@ -130,12 +135,13 @@ class PacketSender:
     def send_raw(self, data):
         '''
         Send already-encoded bytes, splitting into fragments if they don't
-        fit in one radio packet. Each fragment is prefixed with a short
+        fit in one radio packet (feeding the watchdog first). Each fragment is prefixed with a short
         plain-text header "~<node>.<msg>.<i>.<k>|" (fragment i of k of message
         msg) that the Pi's FragmentReassembler stitches back together. Plain
         text rather than a JSON wrapper, since embedding JSON inside a JSON
         string would escape every quote and nearly double the size.
         '''
+        feed()
         try:
             limit = getattr(self.radio, "max_bytes", RADIO_MAX_BYTES)
             if limit is None or len(data) <= limit:

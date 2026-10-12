@@ -359,6 +359,18 @@ bare board easy to test on the bench.
 [How nodes reach the Pi](#how-nodes-reach-the-pi-links-sleep-and-battery-saver)
 below for every option and command.
 
+**Watchdog (CircuitPython nodes)** — the node starts the chip's watchdog
+before it sets up its sensors and SD card, and feeds it on every pass of
+its loop (and with every packet it sends). If anything stops the code for
+8 seconds, such as a corroded sensor hanging the I2C bus, the board resets
+itself and carries on; if the code crashes, it prints the error on its
+console and resets 5 seconds later. After a watchdog reset the console says
+`[WATCHDOG] Restarted: the code had stopped`. Ctrl+C at the console turns
+the watchdog off until the next restart, so the console and `node_setup.py`
+work as before. To work at the console for a while without it, put an
+empty file named `no_watchdog` on the CIRCUITPY drive (and delete it before
+the node goes back outside). Arduino nodes don't have a watchdog yet.
+
 **Calibrating soil sensors** — out of the box the dashboard shows every
 soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
 few pots. Calibrate a sensor with two readings in its own soil (not air or

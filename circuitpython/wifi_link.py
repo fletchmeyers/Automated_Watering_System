@@ -37,8 +37,13 @@ DEFAULT_PI_PORT = 5006
 RETRY_S       = 5    # between attempts to reach the Pi
 JOIN_REPORT_S = 30   # "still joining" every this long
 REJOIN_S      = 30   # start joining over if it hasn't worked
-JOIN_TIMEOUT  = 8    # seconds a join may take (the loop waits for it)
+JOIN_TIMEOUT  = 6    # seconds a join may take (the loop waits for it; the watchdog's limit is 8)
 _NO_DATA = (11, 116)   # EAGAIN, ETIMEDOUT: nothing to read yet
+
+
+def feed():
+    '''Feeds the watchdog before anything that waits: code.py points this at
+    node_watchdog.feed.'''
 
 
 class WifiLink:
@@ -97,6 +102,7 @@ class WifiLink:
 
     def _join(self):
         self._last_join = time.monotonic()
+        feed()
         try:
             wifi.radio.connect(self.ssid, self.password, timeout=JOIN_TIMEOUT)
             self._error = None
@@ -141,6 +147,7 @@ class WifiLink:
             self._pool = socketpool.SocketPool(wifi.radio)
         for address in self._pi_address():
             sock = self._pool.socket(self._pool.AF_INET, self._pool.SOCK_STREAM)
+            feed()
             try:
                 sock.settimeout(3)
                 sock.connect((address, self.port))
