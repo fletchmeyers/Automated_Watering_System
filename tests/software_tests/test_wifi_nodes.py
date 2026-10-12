@@ -350,3 +350,32 @@ def test_no_wifi_service_running():
         s.bind(("127.0.0.1", 0))
         free = s.getsockname()[1]
     assert wifi_nodes.ask_wifi_service({"t": "poll", "n": 3}, timeout=2, port=free) == {"status": "unavailable"}
+
+
+def test_a_late_pong_during_a_poll_isnt_stored_as_a_reading(service):
+    '''A ping that timed out gets its pong late; the next poll must skip it.'''
+    svc, conn, tmp_path = service
+
+    async def node(port):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b'{"t":"hello","q":0,"n":20}\n')
+        writer.write(b'{"t":"pong","q":1,"n":20,"pq":0}\n')     # the late one
+        await writer.drain()
+        poll = json.loads(await reader.readline())
+        for packet in ({"t": "ts", "v": poll["ts"]}, {"t": "sht", "tmp": 21.5, "rh": 40.0},
+                       {"t": "batch_end", "exp": 1, "snt": 1}):
+            packet.update(q=2, n=20)
+            writer.write((json.dumps(packet) + "\n").encode())
+        await writer.drain()
+        writer.close()
+
+    async def scenario():
+        server = await asyncio.start_server(svc.handle, "127.0.0.1", 0)
+        await asyncio.wait_for(node(server.sockets[0].getsockname()[1]), 10)
+        await asyncio.sleep(0.2)
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run(scenario())
+    types_stored = {t for (t,) in conn.execute("SELECT DISTINCT sensor_type FROM readings")}
+    assert types_stored == {"sht"}

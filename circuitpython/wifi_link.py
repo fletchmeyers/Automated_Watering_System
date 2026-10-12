@@ -36,7 +36,9 @@ except ImportError:   # a board without Wi-Fi
 DEFAULT_PI_PORT = 5006
 RETRY_S       = 5    # between attempts to reach the Pi
 JOIN_REPORT_S = 30   # "still joining" every this long
-REJOIN_S      = 30   # start joining over if it hasn't worked
+REJOIN_S      = 30   # start joining over if it hasn't worked...
+REJOIN_MAX_S  = 300  # ...doubling the wait after each failed try, up to this: each try
+                     # holds the loop (and the radio) up for as long as JOIN_TIMEOUT
 JOIN_TIMEOUT  = 6    # seconds a join may take (the loop waits for it; the watchdog's limit is 8)
 _NO_DATA = (11, 116)   # EAGAIN, ETIMEDOUT: nothing to read yet
 
@@ -66,6 +68,7 @@ class WifiLink:
         self._join_started = self._last_report = self._last_join = self._last_attempt = 0
         self._error = None
         self._sequence = 0
+        self._rejoin_wait = REJOIN_S
 
     @property
     def configured(self):
@@ -115,6 +118,7 @@ class WifiLink:
         if wifi.radio.connected:
             if not self._joined:
                 self._joined = True
+                self._rejoin_wait = REJOIN_S
                 print(f"[WIFI] Joined {self.ssid} as {wifi.radio.ipv4_address}")
             return True
         if self._joined:
@@ -126,8 +130,10 @@ class WifiLink:
             self._last_report = now
             print(f"[WIFI] Still joining {self.ssid} after {int(now - self._join_started)} s: "
                   f"{self._error or 'no answer yet'}.")
-        if now - self._last_join >= REJOIN_S:
+        if now - self._last_join >= self._rejoin_wait:
             self._join()
+            if not wifi.radio.connected:
+                self._rejoin_wait = min(self._rejoin_wait * 2, REJOIN_MAX_S)
         return False
 
     def _pi_address(self):
