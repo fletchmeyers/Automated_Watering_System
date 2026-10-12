@@ -27,6 +27,7 @@
 #include <RH_RF69.h>
 #include "board_config.h"
 #include "node_log.h"
+#include "node_watchdog.h"
 
 #ifndef LOG_INTERVAL_MS
   #define LOG_INTERVAL_MS (5UL * 60 * 1000)
@@ -74,6 +75,7 @@ class PacketSender {
     // PacketSender.send_raw() on the Pico, reassembled by the Pi's
     // FragmentReassembler.
     void send_raw(const uint8_t *data, size_t len) {
+      node_watchdog_feed();   // a long run of packets (a big USB sync) can't trip it
       if (serial) {
         serial->write(data, len);
         serial->write('\n');

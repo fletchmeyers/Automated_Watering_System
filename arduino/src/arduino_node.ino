@@ -19,6 +19,7 @@
 #include "node_sleep.h"
 #include "wifi_link.h"   // empty unless built with -D NODE_LINK_WIFI
 #include "link_power.h"  // empty unless it has both Wi-Fi and the radio
+#include "node_watchdog.h"
 
 RH_RF69 rf69(RFM69_CS, RFM69_INT);
 PacketSender sender(NODE_ID, &rf69);
@@ -39,6 +40,10 @@ void setup() {
   while (!Serial && millis() - serial_wait_start < 3000) {
     delay(10);
     }
+  // Before the radio, sensors and SD card, so one that hangs while being
+  // set up resets the board too (see node_watchdog.h); after the wait for
+  // USB, so its messages can be seen.
+  node_watchdog_begin();
 
 #ifdef SD_CS
   // Deselect the SD card before the radio touches the shared SPI bus.
@@ -95,9 +100,12 @@ void setup() {
   }
 #endif
 
+  node_watchdog_feed();
   init_sensors();
+  node_watchdog_feed();
   clock_begin();
   node_log_init();
+  node_watchdog_feed();
 
   last_sense_at = millis() - sense_interval_ms; // sense immediately on first loop
   last_log_at = millis() - LOG_INTERVAL_MS;      // log as soon as the clock is valid
@@ -105,6 +113,7 @@ void setup() {
 }
 
 void loop() {
+  node_watchdog_feed();
   unsigned long now = millis();
 
   // ── Sense cycle ──────────────────────────────────────────────────────

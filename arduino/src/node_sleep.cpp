@@ -1,5 +1,6 @@
 #include "packet_protocol.h"
 #include "node_sleep.h"
+#include "node_watchdog.h"
 
 uint32_t requested_wake = 0;
 
@@ -47,6 +48,7 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
   NVMCTRL->CTRLB.bit.SLEEPPRM = NVMCTRL_CTRLB_SLEEPPRM_DISABLED_Val;
 #endif
   rtc.attachInterrupt(on_alarm);
+  node_watchdog_pause();   // standby lasts minutes between readings: far past any watchdog
 
   while (clock_now() < wake) {
     uint32_t next = min(wake, clock_now() + (uint32_t)(LOG_INTERVAL_MS / 1000));
@@ -60,7 +62,10 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
     USBDevice.attach();
 #else
     // Bench mode: stay awake on a timer so the serial console keeps working.
-    while (clock_now() < next) delay(200);
+    while (clock_now() < next) {
+      node_watchdog_feed();
+      delay(200);
+    }
 #endif
     rtc.disableAlarm();
 
@@ -80,6 +85,7 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
   }
 
   rtc.detachInterrupt();
+  node_watchdog_resume();
   // RadioHead puts the radio back in receive mode on its next available().
   Serial.println(F("[SLEEP] Awake, radio back on."));
 }
@@ -101,7 +107,10 @@ void sleep_until(uint32_t wake, RH_RF69 &radio) {
 #endif
   while (clock_now() < wake) {
     uint32_t next = min(wake, clock_now() + (uint32_t)(LOG_INTERVAL_MS / 1000));
-    while (clock_now() < next) delay(200);
+    while (clock_now() < next) {
+      node_watchdog_feed();
+      delay(200);
+    }
     run_sense_cycle();
     node_log_snapshot(clock_now());
   }

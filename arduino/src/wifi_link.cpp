@@ -1,5 +1,6 @@
 #include "packet_protocol.h"
 #include "wifi_link.h"
+#include "node_watchdog.h"
 
 #ifdef NODE_LINK_WIFI
 
@@ -168,6 +169,7 @@ static bool save_settings(const char *s, const char *p, const char *h, const cha
 // ── Joining the network ──────────────────────────────────────────────────
 
 static void start_joining() {
+  node_watchdog_feed();   // the M0's join waits up to WINC_JOIN_MS
 #if defined(BOARD_ESP32)
   WiFi.setHostname((String("garden-node-") + NODE_ID).c_str());
   WiFi.mode(WIFI_STA);
@@ -258,6 +260,7 @@ static bool wifi_ready() {
 #if defined(BOARD_RP2) || defined(BOARD_HAS_WINC1500)
   if (now - last_begin >= rejoin_wait) {
     WiFi.disconnect();
+    node_watchdog_feed();
   #if defined(BOARD_RP2)
     WiFi.beginNoBlock(ssid.c_str(), password.c_str());
   #else
@@ -273,9 +276,9 @@ static bool wifi_ready() {
 // ── Reaching the Pi ──────────────────────────────────────────────────────
 
 #if defined(BOARD_ESP32)
-static bool connect_ip(IPAddress ip) { return client.connect(ip, pi_port, 3000); }
+static bool connect_ip(IPAddress ip) { node_watchdog_feed(); return client.connect(ip, pi_port, 3000); }
 #else
-static bool connect_ip(IPAddress ip) { return client.connect(ip, pi_port); }
+static bool connect_ip(IPAddress ip) { node_watchdog_feed(); return client.connect(ip, pi_port); }
 #endif
 
 // The Pi at its saved address, or — if that has changed — found by name
@@ -288,6 +291,7 @@ static bool connect_to_pi() {
   String name = pi_hostname;
   if (name.endsWith(".local")) name.remove(name.length() - 6);
   IPAddress found;
+  node_watchdog_feed();   // looking the Pi up by name waits up to 3 s
 #if defined(BOARD_ESP32)
   if (!mdns_started) {
     mdns_started = MDNS.begin((String("garden-node-") + NODE_ID).c_str());
