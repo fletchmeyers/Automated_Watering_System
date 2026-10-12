@@ -308,3 +308,18 @@ def test_sending_packets_and_joining_wifi_feed_it(network, monkeypatch):
 
 def test_the_watchdog_file_is_copied_to_the_board():
     assert "node_watchdog.py" in node_setup.CIRCUITPY_FILES
+
+
+def test_failed_joins_back_off_so_the_radio_keeps_listening(network, monkeypatch):
+    sock, radio = network
+    joins = []
+    radio.connect = lambda ssid, password, timeout=None: joins.append(clock[0])   # never joins
+    clock = [0.0]
+    monkeypatch.setattr(wifi_link.time, "monotonic", lambda: clock[0])
+    link = wifi_link.WifiLink(1)
+    link.start()
+    for second in range(0, 1200, 5):
+        clock[0] = float(second)
+        link.receive()
+    gaps = [b - a for a, b in zip(joins, joins[1:])]
+    assert gaps[:4] == [30, 60, 120, 240] and max(gaps) == 300

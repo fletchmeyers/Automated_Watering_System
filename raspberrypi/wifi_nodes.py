@@ -56,6 +56,12 @@ MAX_MISSES    = 3      # unanswered polls in a row before dropping the connectio
 CONTROL_PORT  = 5007   # on 127.0.0.1 only: on-demand polls and pings from flask_api.py
 PING_TIMEOUT  = 2      # seconds to wait for each pong
 
+# Replies that aren't readings. One can turn up during a poll if it came
+# too late for what it answered (a pong after its ping timed out), and must
+# not be stored as if it were a sensor.
+NOT_READINGS = {"hello", "pong", "sleep_ack", "wifi_config_ack", "info", "set_interval_ack",
+                "se", "data_ack"}
+
 # Which Wi-Fi nodes are connected right now, for node_setup.py, main.py and
 # the dashboard (links.py): {"<node>": {"ip", "since", "last_seen",
 # "last_reading"}}; last_seen is the last time it answered anything.
@@ -276,6 +282,8 @@ class WifiNodes:
             if not isinstance(packet, dict):
                 continue
             kind = packet.get("t")
+            if kind in NOT_READINGS:
+                continue   # e.g. a late pong: not part of this poll's answer
             if not self.store:
                 print(f"[WIFI] Node {node_id}: {json.dumps(packet)}")
                 if kind == "batch_end":
@@ -283,7 +291,7 @@ class WifiNodes:
                     if link is not None:
                         link.last_packets = got
                     return True
-                if "q" in packet and kind not in ("ts", "hello"):
+                if "q" in packet and kind != "ts":
                     got.append(packet)
                 continue
             if kind == "ts":
@@ -295,8 +303,6 @@ class WifiNodes:
                 if link is not None:
                     link.last_packets = written or []
                 return True
-            elif kind == "hello":
-                continue
             elif "q" in packet:
                 batch.collect(packet)
 
