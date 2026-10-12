@@ -247,3 +247,34 @@ def test_no_sleep_while_the_radio_is_in_use(service):
         server.close()
         return command
     assert asyncio.run(scenario())["t"] == "ping"   # main.py sends the sleep over the radio
+
+
+def test_the_log_says_how_a_two_link_node_is_being_used(service, capsys):
+    svc, path, tmp_path = service
+    from links import write_radio_status
+    data = json.loads(path.read_text())
+    data["nodes"]["3"]["link"] = ["radio", "wifi"]
+    path.write_text(json.dumps(data))
+    write_radio_status({3: True}, status_file=tmp_path / "radio.json")
+
+    async def scenario():
+        server = await asyncio.start_server(svc.handle, "127.0.0.1", 0)
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1])
+        writer.write(b'{"t":"hello","q":0,"n":3}\n')
+        await writer.drain()
+        await asyncio.wait_for(reader.readline(), 5)
+        writer.close()
+        server.close()
+    asyncio.run(scenario())
+    assert "Node 3: the radio is the link in use; pinging it over Wi-Fi" in capsys.readouterr().out
+
+
+def test_batch_log_lines_name_the_node(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(communication_indoor, "ARCHIVE_DIR", tmp_path)
+    batch = communication_indoor.BatchReceiver(tmp_path / "data.txt")
+    batch.open_batch("2026-10-12T17:00:00")
+    batch.collect({"t": "vbat", "n": 3, "q": 1, "v": 4.1})
+    batch.collect({"t": "s1", "n": 3, "q": 2, "m": 825})
+    batch.close_batch({"t": "batch_end", "n": 3, "exp": 2, "snt": 2})
+    batch.flush(radio=None)
+    assert "Wrote 2 packets from node 3 to file." in capsys.readouterr().out

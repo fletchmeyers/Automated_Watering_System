@@ -92,6 +92,7 @@ class WifiNodes:
         self.links = {}      # node ID -> its Link
         self.status = {}
         self.sleeper = SleepScheduler({})   # windows refreshed from the node list as it changes
+        self._polled = {}    # node ID -> True if Wi-Fi is the link in use (polled), False if only pinged
 
     def _write_status(self):
         try:
@@ -165,6 +166,7 @@ class WifiNodes:
                 async with link.lock:
                     if self._wifi_in_use(node_id) and await self._maybe_sleep(node_id, link):
                         continue
+                    self._say_role(node_id)
                     if self._wifi_in_use(node_id):
                         what = "a poll"
                         answered = await self.poll(node_id, reader, writer, batch)
@@ -183,6 +185,7 @@ class WifiNodes:
             if not self._asleep(node_id):
                 print(f"[WIFI] Node {node_id}'s connection dropped: {e}")
         finally:
+            self._polled.pop(node_id, None)
             if self.links.get(node_id) is link:
                 del self.links[node_id]
                 self.status.pop(str(node_id), None)
@@ -191,6 +194,19 @@ class WifiNodes:
                 print(f"[WIFI] Node {node_id} disconnected"
                       + (f" (asleep until {until.strftime(ISO_FORMAT)})." if until else "."))
             writer.close()
+
+    def _say_role(self, node_id):
+        '''Say (once, and again whenever it changes) whether a node with the
+        radio too is polled over Wi-Fi or only pinged while the radio's in use.'''
+        node = self.node_list.get().get(node_id, {})
+        if len(links_of(node)) < 2:
+            return
+        polled = self._wifi_in_use(node_id)
+        if self._polled.get(node_id) != polled:
+            self._polled[node_id] = polled
+            print(f"[WIFI] Node {node_id}: " + (
+                "Wi-Fi is the link in use; polling it over Wi-Fi every minute." if polled else
+                "the radio is the link in use; pinging it over Wi-Fi each minute to keep the backup ready."))
 
     def _asleep(self, node_id):
         return self.sleeper.asleep(node_id) or recorded_wake(node_id) is not None
