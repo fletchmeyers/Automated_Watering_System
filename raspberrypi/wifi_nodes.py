@@ -99,6 +99,7 @@ class WifiNodes:
         self.status = {}
         self.sleeper = SleepScheduler({})   # windows refreshed from the node list as it changes
         self._polled = {}    # node ID -> True if Wi-Fi is the link in use (polled), False if only pinged
+        self._empty = {}     # node ID -> True while its polls come back with nothing to report
 
     def _write_status(self):
         try:
@@ -300,6 +301,13 @@ class WifiNodes:
                 batch.close_batch(packet)
                 written = batch.flush(radio=None)   # no radio: nothing to ack over the air
                 self._seen(node_id, reading=bool(written))
+                if self._empty.get(node_id, False) != (not written):
+                    # Say so when a node starts (or stops) answering with no
+                    # readings: otherwise an empty answer logs nothing at all.
+                    self._empty[node_id] = not written
+                    print(f"[WIFI] Node {node_id} " + (
+                        "answers its polls with nothing to report (no sensors answering?)."
+                        if not written else "is sending readings again."))
                 if link is not None:
                     link.last_packets = written or []
                 return True
