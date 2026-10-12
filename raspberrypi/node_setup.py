@@ -721,7 +721,7 @@ def write_circuitpython_wifi(settings):
         sync_disks()
 
 
-def setup_wifi(node_id, timeout=60, framework="arduino"):
+def setup_wifi(node_id, timeout=60, framework="arduino", links=("wifi",)):
     '''Give a freshly set-up Wi-Fi node the network settings (they never touch
     git or the terminal): over USB to an Arduino node, into settings.toml on
     a CircuitPython one. Then wait for it to reach garden-wifi.'''
@@ -743,8 +743,15 @@ def setup_wifi(node_id, timeout=60, framework="arduino"):
             return None
     link = wait_until(connected, timeout=timeout, interval=2)
     if link:
-        print(f"[SETUP] Node {node_id} is connected over Wi-Fi from {link['ip']}; "
-              "the Pi polls it every minute.")
+        links = list(links)
+        if len(links) > 1 and links[0] == "radio":
+            how = ("the radio comes first, so the Pi polls it over the radio and pings it over "
+                   "Wi-Fi each minute, switching to Wi-Fi if the radio stops answering")
+        elif len(links) > 1:
+            how = "Wi-Fi comes first, so the Pi polls it over Wi-Fi every minute (the radio is the backup)"
+        else:
+            how = "the Pi polls it over Wi-Fi every minute"
+        print(f"[SETUP] Node {node_id} is connected over Wi-Fi from {link['ip']}; {how}.")
     else:
         print(f"[SETUP] Node {node_id} hasn't connected yet. Check the Pi's side with\n"
               "          sudo journalctl -u garden-wifi -n 30\n"
@@ -761,9 +768,16 @@ def check_sensors(path, expected_id=None, polls=3):
     sensors and what looks wrong, then (asked at a terminal) offer to
     calibrate its soil sensors from live readings.'''
     from usb_sync import find_node   # needs pyserial
+    # A node that has just restarted (new code or Wi-Fi settings) may be busy
+    # setting up or joining Wi-Fi for a few seconds: keep asking a while.
+    deadline = time.monotonic() + 20
     usb_node, info = find_node(serial_ports(), quiet=True)
+    while usb_node is None and time.monotonic() < deadline:
+        time.sleep(2)
+        usb_node, info = find_node(serial_ports(), quiet=True)
     if usb_node is None:
-        print("[CHECK] No node answered over USB, so its sensors can't be checked.")
+        print("[CHECK] No node answered over USB, so its sensors can't be checked "
+              "(try again with: python3 node_setup.py check).")
         return None
     try:
         node_id = info["n"]
@@ -819,7 +833,7 @@ def run(args, board=None):
         if "wifi" not in links_of(node):
             raise SetupError(f"Node {node_id} doesn't use Wi-Fi, so it has no Wi-Fi settings.")
         if not args.dry_run:
-            setup_wifi(node_id, framework=node["framework"])
+            setup_wifi(node_id, framework=node["framework"], links=links_of(node))
         return
 
     if target == "circuitpython":
@@ -844,7 +858,7 @@ def run(args, board=None):
         if args.dry_run:
             print("[SETUP] Would then send it the Pi's Wi-Fi network, password and address over USB.")
         elif running:
-            setup_wifi(node_id, framework=node["framework"])
+            setup_wifi(node_id, framework=node["framework"], links=links_of(node))
     if "radio" in links_of(node) and not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-sensor")

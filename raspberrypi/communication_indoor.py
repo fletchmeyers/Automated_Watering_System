@@ -507,12 +507,14 @@ class BatchReceiver:
             for pkt in self._received:
                 f.write(json.dumps(pkt) + "\n")
 
-        print(f"[BATCH] Wrote {len(self._received)} packets to file.")
+        nodes = sorted({str(p.get("n")) for p in self._received if p.get("n") is not None})
+        source = (f" from node{'s' if len(nodes) > 1 else ''} {', '.join(nodes)}") if nodes else ""
+        print(f"[BATCH] Wrote {len(self._received)} packets{source} to file.")
 
         if self.db_conn is not None:
             try:
                 db.insert_batch(self.db_conn, self._received)
-                print(f"[DB] Wrote {len(self._received)} packets to sensors.db.")
+                print(f"[DB] Wrote {len(self._received)} packets{source} to sensors.db.")
             except Exception as e:
                 print(f"[DB] Failed to write batch to sensors.db: {e}")
 
