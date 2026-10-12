@@ -151,10 +151,21 @@ def test_wifi_first_brings_the_radio_on_once_wifi_goes_quiet():
     assert power.plan() == (True, True)
 
 
-def test_polls_switch_the_preferred_link():
-    power = link_power.LinkPower(["radio", "wifi"], battery_saver=True, clock=Clock())
-    power.heard("radio", {"t": "poll", "pf": "wifi"})
+def test_the_pi_changes_the_settings_with_a_poll():
+    clock = Clock()
+    power = link_power.LinkPower(["radio", "wifi"], clock=clock)   # installed: both on
+    assert power.plan() == (True, True)
+    clock.t += 600
+    power.heard("radio", {"t": "poll", "lp": "R"})                # battery saver, radio first
+    assert power.plan() == (True, False)
+    power.heard("radio", {"t": "poll", "lp": "W"})                # Wi-Fi first now
     assert power.preferred == "wifi" and power.plan()[1] is True
+    power.heard("radio", {"t": "poll", "lp": "r"})                # battery saver off again
+    assert power.plan() == (True, True)
+    power.heard("radio", {"t": "poll", "lp": "R24"})
+    assert (power.saver, power.check_hours) == (True, 24)
+    power.heard("radio", {"t": "poll", "lp": "?"})                # nonsense is ignored
+    assert (power.preferred, power.saver) == ("radio", True)
 
 
 # ── wifi_link.py against a fake network ──────────────────────────────────────
@@ -323,3 +334,22 @@ def test_failed_joins_back_off_so_the_radio_keeps_listening(network, monkeypatch
         link.receive()
     gaps = [b - a for a, b in zip(joins, joins[1:])]
     assert gaps[:4] == [30, 60, 120, 240] and max(gaps) == 300
+
+
+def test_unchanged_settings_arent_rewritten_and_a_radio_first_saver_isnt_waited_for(tmp_path, monkeypatch, capsys):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_mount(dev, where, read_only=False):
+        yield tmp_path
+    monkeypatch.setattr(node_setup, "mounted", fake_mount)
+    monkeypatch.setattr(node_setup, "sync_disks", lambda: None)
+    monkeypatch.setattr(node_setup, "wifi_settings", lambda: SETTINGS)
+    assert node_setup.write_circuitpython_wifi(SETTINGS) is True        # first time: written
+    written = (tmp_path / "settings.toml").stat().st_mtime_ns
+    assert node_setup.write_circuitpython_wifi(SETTINGS) is False       # same again: left alone
+    assert (tmp_path / "settings.toml").stat().st_mtime_ns == written   # (no needless code restart)
+
+    monkeypatch.setattr(node_setup, "wait_until", lambda *a, **k: pytest.fail("waited for nothing"))
+    node_setup.setup_wifi(1, framework="circuitpython", links=["radio", "wifi"], plan="R")
+    assert "no connection to wait for" in capsys.readouterr().out

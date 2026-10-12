@@ -14,10 +14,14 @@
  *     SILENCE_MINUTES (listening is cheap), and goes off again once the Pi
  *     is back on Wi-Fi.
  * Only real commands count as hearing the Pi on a link; the Wi-Fi service's
- * "still there?" pings don't keep one on. Polls carry the Pi's preferred
- * link ("pf"), so node_setup.py prefer switches it without a re-flash; until
- * the first poll the preference is the one it was built with
- * (-D LINK_FIRST_WIFI, or the radio).
+ * "still there?" pings don't keep one on.
+ *
+ * The Pi sends the current settings with every poll, packed to fit a radio
+ * packet: "lp" is r or w (which link comes first), a capital letter for
+ * battery saver, then the Wi-Fi check hours if any ("r", "R", "W", "R24").
+ * So node_setup.py prefer and saver take effect at the next poll, with no
+ * re-flash. Until the first poll after a restart it uses what it was built
+ * with (-D LINK_FIRST_WIFI, -D BATTERY_SAVER, -D WIFI_CHECK_HOURS).
  */
 
 #ifndef LINK_POWER_H

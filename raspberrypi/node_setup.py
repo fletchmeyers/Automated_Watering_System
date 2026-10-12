@@ -19,7 +19,7 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
     python3 node_setup.py saver 2 on   — battery saver for a node with both links
                                          (off to undo; --wifi-check-hours N to let
                                          a radio-first node check Wi-Fi every N
-                                         hours); then re-flash it
+                                         hours); the node hears it at the next poll
     python3 node_setup.py prefer 3 wifi — for a node with Wi-Fi and the radio:
                                          use Wi-Fi first (or radio), from the
                                          next poll on; no re-flash or restart
@@ -74,7 +74,7 @@ import sensor_check
 import soil_calibration
 from db import DB_FILE
 from nodes import (
-    NodeConfigError, NODES_FILE, load_nodes, storage_of, links_of, circuitpython_config, circuitpython_uf2_url,
+    NodeConfigError, NODES_FILE, load_nodes, storage_of, links_of, link_plan, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
 )
 
@@ -707,7 +707,8 @@ def settings_toml_with(text, values):
 
 def write_circuitpython_wifi(settings):
     '''Put the Wi-Fi settings in settings.toml on the CIRCUITPY drive (they
-    never touch git or the terminal); CircuitPython restarts the code by itself.'''
+    never touch git or the terminal); CircuitPython restarts the code by
+    itself. Returns False if they were there already (nothing written).'''
     values = {"GARDEN_WIFI_SSID": settings["s"], "GARDEN_WIFI_PASSWORD": settings["p"],
               "GARDEN_PI_HOST": settings["h"], "GARDEN_PI_HOSTNAME": settings["hn"],
               "GARDEN_PI_PORT": settings["port"]}
@@ -717,11 +718,15 @@ def write_circuitpython_wifi(settings):
             text = path.read_text()
         except OSError:
             text = ""
-        path.write_text(settings_toml_with(text, values))
+        new_text = settings_toml_with(text, values)
+        if new_text == text:
+            return False
+        path.write_text(new_text)
         sync_disks()
+        return True
 
 
-def setup_wifi(node_id, timeout=60, framework="arduino", links=("wifi",)):
+def setup_wifi(node_id, timeout=60, framework="arduino", links=("wifi",), plan=None):
     '''Give a freshly set-up Wi-Fi node the network settings (they never touch
     git or the terminal): over USB to an Arduino node, into settings.toml on
     a CircuitPython one. Then wait for it to reach garden-wifi.'''
@@ -730,7 +735,12 @@ def setup_wifi(node_id, timeout=60, framework="arduino", links=("wifi",)):
     print(f"[SETUP] Giving node {node_id} the Wi-Fi settings for \"{settings['s']}\" "
           f"(Pi at {settings['h']}:{settings['port']})...")
     if framework == "circuitpython":
-        write_circuitpython_wifi(settings)
+        if not write_circuitpython_wifi(settings) and plan and plan.startswith("R"):
+            # Battery saver with the radio first keeps Wi-Fi off, and only
+            # turns it on for a while when the settings are new.
+            print(f"[SETUP] Node {node_id} already has these Wi-Fi settings, and battery saver keeps "
+                  "its Wi-Fi off (the radio comes first), so there's no connection to wait for.")
+            return
     elif not send_wifi_config(node_id, settings):
         raise SetupError("Couldn't give the node its Wi-Fi settings over USB: it didn't answer, "
                          "or didn't confirm them. Run node_setup.py again to retry.")
@@ -833,7 +843,8 @@ def run(args, board=None):
         if "wifi" not in links_of(node):
             raise SetupError(f"Node {node_id} doesn't use Wi-Fi, so it has no Wi-Fi settings.")
         if not args.dry_run:
-            setup_wifi(node_id, framework=node["framework"], links=links_of(node))
+            setup_wifi(node_id, framework=node["framework"], links=links_of(node),
+                       plan=link_plan(node))
         return
 
     if target == "circuitpython":
@@ -858,7 +869,8 @@ def run(args, board=None):
         if args.dry_run:
             print("[SETUP] Would then send it the Pi's Wi-Fi network, password and address over USB.")
         elif running:
-            setup_wifi(node_id, framework=node["framework"], links=links_of(node))
+            setup_wifi(node_id, framework=node["framework"], links=links_of(node),
+                       plan=link_plan(node))
     if "radio" in links_of(node) and not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-sensor")
@@ -964,8 +976,8 @@ def main():
             state = "on" if node.get("battery_saver") else "off"
             check = (f", checking Wi-Fi every {node['wifi_check_hours']} h" if node.get("wifi_check_hours")
                      else "")
-            print(f"[SETUP] Battery saver {state} for node {args.node_id}{check}. With the board plugged "
-                  "in, re-flash it so the firmware matches: python3 node_setup.py")
+            print(f"[SETUP] Battery saver {state} for node {args.node_id}{check}. The Pi tells the node "
+                  "with its next poll (within a minute); no re-flash needed.")
         elif args.action == "check":
             check_sensors(args.nodes)
         elif args.action == "calibrate":

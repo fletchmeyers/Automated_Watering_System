@@ -390,6 +390,20 @@ def sync_node_ids(nodes):
     return [n for n in radio_node_ids(nodes) if storage_of(nodes[n]) != "none"]
 
 
+def link_plan(node):
+    '''What polls tell a node with both links about how to use them, packed to
+    fit a radio packet (see arduino/src/link_power.h): r or w for the link
+    that comes first, a capital letter for battery saver, then the Wi-Fi
+    check hours if any. None for a node with one link.'''
+    links = links_of(node)
+    if len(links) < 2:
+        return None
+    code = "w" if links[0] == "wifi" else "r"
+    if node.get("battery_saver"):
+        code = code.upper() + (str(node["wifi_check_hours"]) if node.get("wifi_check_hours") else "")
+    return code
+
+
 def next_free_id(taken):
     '''The lowest node ID (1-254) not in taken, or None if they're all used.'''
     taken = {int(n) for n in taken}

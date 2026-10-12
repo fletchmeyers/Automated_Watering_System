@@ -580,20 +580,41 @@ Details worth remembering:
 
 - Only real commands (polls, sync, ...) count as the Pi using a link; the
   "still there?" pings `garden-wifi` sends don't keep Wi-Fi on.
-- `prefer` works with battery saver too: each poll tells the node which link
-  the Pi prefers, and it switches which one it keeps on (until its next
-  restart, when it starts from the order it was built with, and the Pi's
-  next poll corrects it).
+- **The Pi tells the node its settings with every poll** (which link comes
+  first, battery saver on or off, the Wi-Fi check interval), so `prefer`
+  and `saver` take effect within a minute, with no re-flash and nothing
+  plugged in. After a restart (a power cut, the watchdog) the node uses
+  what it was installed with until the Pi's first poll, usually under a
+  minute. The settings are packed into a short code to fit a radio packet
+  (`"lp"`: `r`/`w` for the link that comes first, a capital letter for
+  battery saver, then the check hours, e.g. `R24`).
 - After `node_setup.py` gives it new Wi-Fi settings, the node keeps Wi-Fi on
   for 5 minutes even if it's radio first, so setup can see it connect.
 - `wifi_check_hours` only matters with the radio first (with Wi-Fi first,
   Wi-Fi is always on anyway).
-- Battery saver is built into the node's code, so **re-flash after turning
-  it on or off**:
+- To turn it on or off (no re-flash; the node hears it at the next poll):
 
         python3 node_setup.py saver 2 on                         # Wi-Fi never checked
         python3 node_setup.py saver 2 on --wifi-check-hours 24   # check Wi-Fi once a day
         python3 node_setup.py saver 2 off
+
+- A node can only hear a change over the link it has on. With battery saver
+  and the radio first, Wi-Fi is off, so if the radio then fails the Pi has
+  no way to reach it until it's fixed (or until its next Wi-Fi check, with
+  `wifi_check_hours`).
+
+**Which setting for which spot** (for a node that has both links):
+
+| Where the node is | Setting |
+|---|---|
+| In the garden, out of Wi-Fi's reach | `link N radio wifi` + `saver N on`: the radio only; Wi-Fi off and never tried. (Or `link N radio` to leave Wi-Fi out of it entirely; that one needs a re-flash.) |
+| Indoors, where walls block the radio | `link N wifi radio` + `saver N on`: Wi-Fi, with the radio only listening (cheap) if Wi-Fi goes quiet |
+| Somewhere both reach, and power isn't a worry | `link N radio wifi` (or `wifi radio`), battery saver off: both on, the backup ready at once |
+| Both reach, on a small battery | battery saver on, with `--wifi-check-hours 24` if it's radio first and you want Wi-Fi tried once a day |
+
+Without battery saver a node with both links keeps **both on all the
+time**: it stays joined to Wi-Fi (and keeps retrying if it can't, every 5
+minutes at most once it's failing), and the Pi pings it each minute.
 
   Going down to one link (`link 2 radio`) turns battery saver off, since it
   has nothing left to choose between.
@@ -608,7 +629,7 @@ link is on during the day, and at night both are off.
 | `python3 node_setup.py add` | Add a node (links, battery saver, sleep window among the questions) | Sets it up | `garden-sensor`, for a radio node |
 | `python3 node_setup.py link N wifi radio` | Change a node's links (in order of preference) | Yes | `garden-sensor`, if it gained the radio |
 | `python3 node_setup.py prefer N radio` | Change which of its two links comes first | No | No |
-| `python3 node_setup.py saver N on [--wifi-check-hours H]` | Battery saver on (or `off`) | Yes | No |
+| `python3 node_setup.py saver N on [--wifi-check-hours H]` | Battery saver on (or `off`); the node hears it at the next poll | No | No |
 | `python3 node_setup.py --wifi-only` | Re-send the Wi-Fi settings to the plugged-in node | No | No |
 | `python3 node_setup.py list` | Each node's links, storage and sleep window | | |
 | `sudo journalctl -u garden-wifi -f` | Wi-Fi nodes connecting, polls, sleeps | | |

@@ -76,21 +76,21 @@ WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
 # ── Outbound commands ─────────────────────────────────────────────────────────
 
-def request_poll(node_id=1, prefer=None):
+def request_poll(node_id=1, link_plan=None):
     '''
     Write a poll command to the command file.
     Always includes the current time so the Pico silently updates its RTC —
     no separate sync/sync_ack round trip needed for routine clock maintenance.
-    prefer: for a node with both links, the one the Pi prefers ("pf"), which
-    a battery saver node keeps on (link_power.h).
+    link_plan: for a node with both links, how to use them ("lp", from
+    nodes.link_plan: which comes first, battery saver; see link_power.h).
     '''
     command = {
         "t":  "poll",
         "ts": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "n":  node_id,
     }
-    if prefer:
-        command["pf"] = prefer
+    if link_plan:
+        command["lp"] = link_plan
     Path(COMMAND_FILE).write_text(json.dumps(command))
     # Clear any stale result from a previous poll so wait_for_poll_result()
     # can't pick up an old file before this poll has actually completed.

@@ -27,7 +27,7 @@ from communication_indoor import (
 
 import db
 from links import NodeList, active_link, write_radio_status
-from nodes import links_of, load_nodes, radio_node_ids, sleep_windows, sync_node_ids
+from nodes import link_plan, load_nodes, radio_node_ids, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Nodes come from the Pi's nodes.json (python3 node_setup.py add, then restart).
@@ -97,10 +97,9 @@ def on_radio(node_id):
     return available(node_id) and radio_in_use(node_id)
 
 
-def preferred_link(node_id):
-    '''A node with both links is told which one the Pi prefers in each poll.'''
-    links = links_of(node_list.get().get(node_id, {}))
-    return links[0] if len(links) > 1 else None
+def node_link_plan(node_id):
+    '''A node with both links is told how to use them in each poll.'''
+    return link_plan(node_list.get().get(node_id, {}))
 
 
 radio_status = {"written": None, "at": 0.0}
@@ -206,7 +205,7 @@ while True:
         info_due = [n for n in info_timer.due_nodes() if on_radio(n)]
         sleep_cmd = sleeper.next_command(on_radio)
         if due:
-            request_poll(due[0], prefer=preferred_link(due[0]))
+            request_poll(due[0], link_plan=node_link_plan(due[0]))
             timer.mark_polled(due[0])
         elif sleep_cmd is not None:
             request_command(sleep_cmd)

@@ -45,7 +45,7 @@ from pathlib import Path
 import db
 from communication_indoor import BatchReceiver, ISO_FORMAT, SleepScheduler
 from links import NodeList, RADIO_STATUS_FILE, WIFI_STATUS_FILE, active_link
-from nodes import NODES_FILE, links_of, sleep_windows, wifi_node_ids
+from nodes import NODES_FILE, link_plan, links_of, sleep_windows, wifi_node_ids
 from sync_indoor import DATA_FILE, PING_PROGRESS_FILE, recorded_wake, update_node_info
 
 WIFI_PORT     = 5006   # also sent to each node by node_setup.py
@@ -254,9 +254,9 @@ class WifiNodes:
 
     def _poll_command(self, node_id):
         command = {"t": "poll", "ts": _now(), "n": node_id}
-        links = links_of(self.node_list.get().get(node_id, {}))
-        if len(links) > 1:
-            command["pf"] = links[0]   # which link a battery saver node keeps on
+        plan = link_plan(self.node_list.get().get(node_id, {}))
+        if plan:
+            command["lp"] = plan   # how the node uses its two links (link_power.h)
         return command
 
     async def poll(self, node_id, reader, writer, batch):
