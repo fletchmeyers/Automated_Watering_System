@@ -242,3 +242,69 @@ def test_no_settings_yet(monkeypatch, capsys):
     assert not link.configured
     link.start()
     assert not link.on and "No Wi-Fi settings yet" in capsys.readouterr().out
+
+
+# ── node_watchdog.py ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def chip(monkeypatch):
+    '''Fake microcontroller and watchdog modules: the dog records feeds.'''
+    import sys
+    import node_watchdog
+    dog = types.SimpleNamespace(timeout=None, mode=None, feeds=0, stopped=False)
+    dog.feed = lambda: setattr(dog, "feeds", dog.feeds + 1)
+    dog.deinit = lambda: setattr(dog, "stopped", True)
+    reasons = types.SimpleNamespace(WATCHDOG="watchdog", POWER_ON="power_on")
+    micro = types.SimpleNamespace(watchdog=dog, ResetReason=reasons,
+                                  cpu=types.SimpleNamespace(reset_reason="power_on"))
+    monkeypatch.setitem(sys.modules, "microcontroller", micro)
+    monkeypatch.setitem(sys.modules, "watchdog", types.SimpleNamespace(WatchDogMode=types.SimpleNamespace(RESET="reset")))
+    monkeypatch.setattr(node_watchdog.os, "listdir", lambda path: ["code.py", "lib"])
+    monkeypatch.setattr(node_watchdog, "_dog", None)
+    return node_watchdog, dog, micro
+
+
+def test_the_watchdog_resets_the_board_after_8_seconds(chip):
+    node_watchdog, dog, _ = chip
+    assert node_watchdog.start() and node_watchdog.running()
+    assert (dog.timeout, dog.mode) == (8, "reset")
+    node_watchdog.feed()
+    assert dog.feeds == 2                       # once when started, once here
+
+
+def test_ctrl_c_stops_it_for_the_console(chip):
+    node_watchdog, dog, _ = chip
+    node_watchdog.start()
+    node_watchdog.stop()
+    assert dog.stopped and not node_watchdog.running()
+    node_watchdog.feed()                        # harmless once stopped
+
+
+def test_a_no_watchdog_file_turns_it_off(chip, monkeypatch, capsys):
+    node_watchdog, dog, _ = chip
+    monkeypatch.setattr(node_watchdog.os, "listdir", lambda path: ["code.py", "no_watchdog"])
+    assert not node_watchdog.start() and dog.timeout is None
+    assert "Off" in capsys.readouterr().out
+
+
+def test_it_says_when_it_reset_the_board(chip, capsys):
+    node_watchdog, _, micro = chip
+    micro.cpu.reset_reason = "watchdog"
+    node_watchdog.start()
+    assert "hung" in capsys.readouterr().out
+
+
+def test_sending_packets_and_joining_wifi_feed_it(network, monkeypatch):
+    import communication_garden
+    fed = []
+    monkeypatch.setattr(communication_garden, "feed", lambda: fed.append("packet"))
+    monkeypatch.setattr(wifi_link, "feed", lambda: fed.append("wifi"))
+    link = wifi_link.WifiLink(1)
+    link.start()                                # joining feeds first
+    link.receive()                              # connecting feeds; the hello is a raw send
+    communication_garden.PacketSender(1, link).send({"t": "pong", "pq": 1})
+    assert fed[:2] == ["wifi", "wifi"] and fed[-1] == "packet"
+
+
+def test_the_watchdog_file_is_copied_to_the_board():
+    assert "node_watchdog.py" in node_setup.CIRCUITPY_FILES
