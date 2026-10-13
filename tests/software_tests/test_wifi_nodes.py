@@ -379,3 +379,30 @@ def test_a_late_pong_during_a_poll_isnt_stored_as_a_reading(service):
     asyncio.run(scenario())
     types_stored = {t for (t,) in conn.execute("SELECT DISTINCT sensor_type FROM readings")}
     assert types_stored == {"sht"}
+
+
+def test_an_empty_answer_is_logged_once(service, capsys):
+    '''A node with no sensors answers polls with an empty batch_end.'''
+    svc, conn, tmp_path = service
+
+    async def node(port):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b'{"t":"hello","q":0,"n":20}\n')
+        await writer.drain()
+        for q in range(1, 4):
+            await reader.readline()
+            writer.write((json.dumps({"t": "batch_end", "q": q, "n": 20, "exp": 0, "snt": 0}) + "\n").encode())
+            await writer.drain()
+        writer.close()
+
+    async def scenario():
+        server = await asyncio.start_server(svc.handle, "127.0.0.1", 0)
+        await asyncio.wait_for(node(server.sockets[0].getsockname()[1]), 10)
+        await asyncio.sleep(0.2)
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run(scenario())
+    out = capsys.readouterr().out
+    assert out.count("Node 20 answers its polls with nothing to report") == 1
+    assert "didn't answer" not in out
