@@ -36,9 +36,8 @@ STORAGE    = ("sd", "flash", "none")
 # garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins and
 # keep no log by default (nothing to sync once the Pi is reachable again).
 # Any node can have a nightly sleep_window: the sleep command goes over the
-# link in use, and Wi-Fi sleeps along with the radio (Arduino nodes only so
-# far: CircuitPython nodes don't sleep yet). Wi-Fi needs a board with a Wi-Fi
-# chip whose framework can use it there (WIFI_SUPPORT).
+# link in use, and Wi-Fi sleeps along with the radio. Wi-Fi needs a board
+# with a Wi-Fi chip whose framework can use it there (WIFI_SUPPORT).
 #
 # A node with both links can have "battery_saver": true, which keeps only
 # the link in use powered (arduino/src/link_power.h): with the radio first,

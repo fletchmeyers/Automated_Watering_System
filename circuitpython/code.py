@@ -5,6 +5,10 @@ Main loop: read sensors on a timer, keep latest reading in memory, log to SD
 on a slower timer.
 Listen for Pi commands at all times and dispatch them immediately.
 
+A "sleep" command from the Pi (its nightly sleep_window) switches the radio
+and Wi-Fi off until the wake time it gives, still logging a reading every
+LOG_INTERVAL so the next day's sync collects the night (sleep_until()).
+
 The chip's watchdog (node_watchdog.py) starts first, before the sensors and
 SD card are set up, and is fed on every pass: if anything hangs for 8 s the
 board resets itself, and if the code crashes it prints why and resets, so a
@@ -31,6 +35,7 @@ from communication_garden import (
     SENSORS, PacketSender, SerialLink, store_latest_reading,
     append_to_sd, send_latest, send_sync_chunk, send_storage_info,
 )
+import sync_garden
 from sync_garden import check_for_command, dispatch_command
 from wifi_link import WifiLink
 from link_power import LinkPower
@@ -90,31 +95,70 @@ def handle(command, reply_sender):
         SENSE_INTERVAL = new_interval
 
 
+def sense(now):
+    '''Read every sensor, keep it for the next poll, and log it if due.'''
+    global last_sense_at, last_log_at
+    last_sense_at = now
+    ts      = get_timestamp()
+    packets = []
+
+    for sensor_name, sensor_fn in SENSORS:
+        try:
+            packets.append(sensor_fn())
+        except Exception as e:
+            print(f"[ERROR] Sensor '{sensor_name}' failed: {e}")
+
+    store_latest_reading(packets)
+
+    # Polls get every reading; the SD log only keeps one every
+    # LOG_INTERVAL, since everything on it has to go back over the radio.
+    # A board without a battery-backed clock reads 2000 until the Pi's
+    # first poll sets it — don't log readings with that date.
+    if now - last_log_at >= LOG_INTERVAL and ts >= "2024":
+        last_log_at = now
+        append_to_sd(packets, ts)
+
+
+def sleep_until(wake):
+    '''The Pi's sleep command (already answered): radio and Wi-Fi off until
+    wake ("YYYY-MM-DDTHH:MM:SS" on this node's clock), logging a reading
+    every LOG_INTERVAL. The chip itself stays awake, like the Arduino Pico
+    nodes: CircuitPython's deeper sleeps restart code.py on waking, and the
+    radio and Wi-Fi are most of the power anyway. Ctrl+C still works.'''
+    global radio_on
+    print(f"[SLEEP] Radio and Wi-Fi off until {wake} (the chip stays awake, "
+          f"logging a reading every {LOG_INTERVAL} s).")
+    if rfm69 is not None:
+        rfm69.sleep()
+    radio_on = False
+    if wifi_link is not None and wifi_link.on:
+        wifi_link.stop()
+
+    while get_timestamp() < wake:
+        node_watchdog.feed()
+        now = time.monotonic()
+        if now - last_log_at >= LOG_INTERVAL:
+            sense(now)
+        time.sleep(1)
+
+    # Links back on: the radio's next receive() switches it on; with both
+    # links, loop_once() powers whichever link_power.py wants, counting
+    # quiet time from now.
+    radio_on = rfm69 is not None
+    if power is not None:
+        power.reset()
+    elif wifi_link is not None and wifi_link.configured:
+        wifi_link.start()
+    print(f"[SLEEP] Awake at {get_timestamp()}, links back on.")
+
+
 def loop_once():
-    global last_sense_at, last_log_at, radio_on
+    global radio_on
     now = time.monotonic()
 
     # ── Sense cycle ────────────────────────────────────────────────────────
     if now - last_sense_at >= SENSE_INTERVAL:
-        last_sense_at = now
-        ts      = get_timestamp()
-        packets = []
-
-        for sensor_name, sensor_fn in SENSORS:
-            try:
-                packets.append(sensor_fn())
-            except Exception as e:
-                print(f"[ERROR] Sensor '{sensor_name}' failed: {e}")
-
-        store_latest_reading(packets)
-
-        # Polls get every reading; the SD log only keeps one every
-        # LOG_INTERVAL, since everything on it has to go back over the radio.
-        # A board without a battery-backed clock reads 2000 until the Pi's
-        # first poll sets it — don't log readings with that date.
-        if now - last_log_at >= LOG_INTERVAL and ts >= "2024":
-            last_log_at = now
-            append_to_sd(packets, ts)
+        sense(now)
 
     # ── Which links are powered (battery saver switches one off) ──────────
     if power is not None:
@@ -156,6 +200,12 @@ def loop_once():
         if command is not None:
             command.setdefault("n", NODE_ID)   # over a cable, it can only be for us
             handle(command, usb_sender)
+
+    # ── Sleep, if the Pi asked for it (the ack has already gone out) ──────
+    if sync_garden.requested_wake is not None:
+        wake = sync_garden.requested_wake
+        sync_garden.requested_wake = None
+        sleep_until(wake)
 
 
 try:
