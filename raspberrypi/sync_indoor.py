@@ -47,22 +47,33 @@ SYNC_REQUEST_FILE = "/tmp/pico_sync_request.json"
 # sleep command as soon as the radio is free.
 SLEEP_REQUEST_FILE = "/tmp/pico_sleep_request.json"
 
-# Held by usb_sync.py while it pulls a node's log over USB: {"n": node, "pid": its
-# process}. main.py leaves that node's radio sync alone until it's gone.
+# Held by usb_sync.py while it talks to a node over USB: {"n": node (None
+# while it's still finding out which node), "pid": its process}. main.py
+# leaves that node's radio sync alone until it's gone.
 USB_SYNC_FILE = "/tmp/garden_usb_sync.json"
+# Held by node_setup.py while it runs ({"pid": ...}): usb_sync.py's watcher
+# (the garden-usb service) leaves the USB ports alone until it's gone.
+NODE_SETUP_FILE = "/tmp/garden_node_setup.json"
+
+
+def held_by(path):
+    '''What a running process wrote to path to say it's using something, or
+    None. A file left behind by a process that died without cleaning up is
+    ignored.'''
+    try:
+        held = json.loads(Path(path).read_text())
+        os.kill(held["pid"], 0)        # raises if that process is gone
+        return held
+    except PermissionError:
+        return held                    # running, just as another user
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def usb_sync_node():
-    '''The node usb_sync.py is syncing right now, or None. A file left behind
-    by a usb_sync.py that died without cleaning up is ignored.'''
-    try:
-        held = json.loads(Path(USB_SYNC_FILE).read_text())
-        os.kill(held["pid"], 0)        # raises if that process is gone
-        return held["n"]
-    except PermissionError:
-        return held["n"]               # running, just as another user
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+    '''The node usb_sync.py is syncing right now, or None.'''
+    held = held_by(USB_SYNC_FILE)
+    return held.get("n") if held else None
 
 
 # Latest state reported by each node, for the dashboard: {"<node>": {"ub",

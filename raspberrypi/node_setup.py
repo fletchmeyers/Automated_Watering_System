@@ -73,6 +73,7 @@ import node_wizard
 import sensor_check
 import soil_calibration
 from db import DB_FILE
+from sync_indoor import NODE_SETUP_FILE, USB_SYNC_FILE, held_by
 from nodes import (
     NodeConfigError, NODES_FILE, load_nodes, storage_of, links_of, link_plan, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
@@ -909,6 +910,24 @@ def list_nodes(path):
               + (f", asleep {sleep[0]}-{sleep[1]}" if sleep else ""))
 
 
+@contextmanager
+def usb_turn():
+    '''node_setup.py's turn on the USB ports: first wait for a backlog pull
+    already under way (usb_sync.py, or the garden-usb service), then keep
+    garden-usb off the ports until this finishes.'''
+    if held_by(USB_SYNC_FILE):
+        print("[SETUP] A node's backlog is being pulled over USB; waiting for that to finish "
+              "(sudo journalctl -u garden-usb -f to watch it)...")
+        while held_by(USB_SYNC_FILE):
+            time.sleep(2)
+    flag = Path(NODE_SETUP_FILE)
+    flag.write_text(json.dumps({"pid": os.getpid()}))
+    try:
+        yield
+    finally:
+        flag.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -979,7 +998,8 @@ def main():
             print(f"[SETUP] Battery saver {state} for node {args.node_id}{check}. The Pi tells the node "
                   "with its next poll (within a minute); no re-flash needed.")
         elif args.action == "check":
-            check_sensors(args.nodes)
+            with usb_turn():
+                check_sensors(args.nodes)
         elif args.action == "calibrate":
             if (args.node_id is None or len(args.what) != 2
                     or args.what[1] not in ("dry", "wet", "clear", "auto")):
@@ -989,7 +1009,8 @@ def main():
                                        node_wizard.Wizard(), DB_FILE, minutes=args.minutes,
                                        until=args.until, value=args.value)
         else:
-            run(args)
+            with usb_turn():
+                run(args)
     except (NodeConfigError, SetupError) as e:
         sys.exit(f"[SETUP] {e}")
     except subprocess.CalledProcessError as e:

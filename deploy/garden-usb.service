@@ -1,0 +1,18 @@
+[Unit]
+Description=Garden USB sync (pulls a node's backlog when it's plugged into the Pi)
+After=garden-sensor.service
+
+[Service]
+Type=simple
+User=<username>
+WorkingDirectory=/home/<username>/Automated_Watering_System/raspberrypi
+# Write each print() to the journal immediately, so journalctl shows when it
+# actually happened rather than when Python's output buffer next filled.
+Environment=PYTHONUNBUFFERED=1
+# The serial ports need the user in the dialout group (node_setup.py does too).
+ExecStart=/usr/bin/python3 /home/<username>/Automated_Watering_System/raspberrypi/usb_sync.py --watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

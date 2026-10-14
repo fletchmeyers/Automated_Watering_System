@@ -2,11 +2,20 @@
 Python 3 running on Raspberry Pi 3B
 
 Pull a node's whole sync backlog over a USB cable instead of the radio:
-much faster, for when a node has days of readings waiting. Plug the node
-into the Pi and run:
+much faster, for when a node has days of readings waiting. The garden-usb
+service does it by itself whenever a node is plugged into the Pi:
 
-    python3 usb_sync.py              — find the node on any USB serial port
+    python3 usb_sync.py --watch      — the service: watch for nodes being
+                                       plugged in and pull each one's backlog
+    python3 usb_sync.py              — once, now: find the node on any USB
+                                       serial port
     python3 usb_sync.py /dev/ttyACM0 — or name the port
+
+The watcher asks each board that appears for its "info" (a few seconds
+after it appears, so it has started), and pulls its log if anything is
+waiting; then leaves that board alone until it's unplugged and plugged in
+again. It stays off the ports while node_setup.py runs (NODE_SETUP_FILE),
+and node_setup.py waits for a pull under way to finish.
 
 It sends the same "sync" requests as the radio side (see send_sync_chunk()
 in communication_garden.py), just much bigger chunks with nothing lost on
@@ -33,11 +42,15 @@ from pathlib import Path
 
 import db
 from communication_indoor import store_sync_lines
-from sync_indoor import USB_SYNC_FILE, save_node_info
+from sync_indoor import NODE_SETUP_FILE, USB_SYNC_FILE, held_by, save_node_info
 
 CHUNK_LINES   = 200   # lines per request — nothing is lost over USB, so go big
 REPLY_TIMEOUT = 10    # seconds to wait for the end of a chunk
 MAX_RETRIES   = 3
+
+WATCH_EVERY   = 3     # seconds between looks at the USB ports
+SETTLE        = 5     # seconds a new board gets to start up before it's asked
+GIVE_UP       = 60    # seconds a new board keeps being asked before it's left alone
 
 
 class UsbNode:
@@ -188,11 +201,123 @@ def sync_node(node, node_id, db_conn, chunk_lines=CHUNK_LINES, report_every=2000
     return stored
 
 
+def hold(node_id):
+    '''Tell main.py (and node_setup.py) this process is using a node's USB.'''
+    Path(USB_SYNC_FILE).write_text(json.dumps({"n": node_id, "pid": os.getpid()}))
+
+
+def release():
+    Path(USB_SYNC_FILE).unlink(missing_ok=True)
+
+
+def pull_backlog(node, info):
+    '''Everything node (found by find_node, with its info reply) has waiting,
+    into the database. Returns the number of lines stored.'''
+    node_id = info["n"]
+    save_node_info(info)
+    hold(node_id)
+    # Give main.py a moment to see the flag and drop any radio chunk
+    # request it already had in flight to this node.
+    time.sleep(3)
+    db_conn = db.get_connection()
+    db_conn.execute("PRAGMA busy_timeout = 30000")   # main.py writes too
+    started = time.monotonic()
+    try:
+        stored = sync_node(node, node_id, db_conn)
+    finally:
+        db_conn.close()
+    minutes = (time.monotonic() - started) / 60
+    print(f"[USB] Done: {stored:,} lines from node {node_id} in {minutes:.1f} min.")
+    info, _ = node.ask({"t": "info"}, "info", timeout=3)
+    if info is not None:
+        save_node_info(info)
+    return stored
+
+
+def usb_devices():
+    '''The USB serial ports plugged in now, by board: {board: [ports]}. A
+    CircuitPython board has two (its console, then the data port boot.py
+    adds), so its ports are listed last first: the data port is asked, and
+    nothing gets typed into its console.'''
+    from serial.tools import list_ports
+    boards = {}
+    for p in list_ports.comports():
+        if not p.device.startswith(("/dev/ttyACM", "/dev/ttyUSB")):
+            continue
+        key = p.serial_number or (p.location or p.device).split(":")[0]
+        boards.setdefault(key, []).append(p.device)
+    return {key: sorted(ports, reverse=True) for key, ports in boards.items()}
+
+
+class Watcher:
+    '''The garden-usb service: pulls each node's backlog as it's plugged in.'''
+
+    def __init__(self, devices=usb_devices, find=find_node, pull=pull_backlog, clock=time.monotonic):
+        self._devices = devices
+        self._find = find
+        self._pull = pull
+        self._clock = clock
+        self._boards = {}   # board -> {"since": first seen, "done": left alone until unplugged}
+
+    def step(self):
+        '''One look at the ports: ask (and pull) any board that's due.'''
+        now = self._clock()
+        boards = self._devices()
+        for key in list(self._boards):
+            if key not in boards:
+                del self._boards[key]   # unplugged: next time it's plugged in, ask again
+        for key, ports in boards.items():
+            state = self._boards.setdefault(key, {"since": now, "done": False})
+            if state["done"] or now - state["since"] < SETTLE:
+                continue
+            if held_by(NODE_SETUP_FILE) or held_by(USB_SYNC_FILE):
+                return   # node_setup.py (or a usb_sync.py by hand) has the ports: wait
+            if self._visit(ports) or now - state["since"] >= GIVE_UP:
+                state["done"] = True
+
+    def _visit(self, ports):
+        '''Ask the board on ports for its info, and pull its log if anything
+        is waiting. True once it has answered (or isn't worth asking again).'''
+        hold(None)   # node_setup.py waits while this talks to the board
+        node = None
+        try:
+            node, info = self._find(ports, quiet=True)
+            if node is None:
+                return False   # still starting up, or not a garden node
+            waiting = info.get("ub") or 0
+            if not waiting:
+                print(f"[USB] Node {info['n']} plugged in on {node.port.port}; nothing waiting to sync.")
+                return True
+            print(f"[USB] Node {info['n']} plugged in on {node.port.port} with {waiting:,} bytes "
+                  "waiting; pulling them over USB.")
+            self._pull(node, info)
+            return True
+        except Exception as e:
+            print(f"[USB] Pulling from {ports[0]} failed: {e}")
+            return True   # don't keep at it; unplug and plug in to try again
+        finally:
+            release()
+            if node is not None:
+                node.port.close()
+
+    def run(self):
+        print("[USB] Watching for nodes plugged in over USB.")
+        while True:
+            self.step()
+            time.sleep(WATCH_EVERY)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("port", nargs="?", help="serial port (default: try each /dev/ttyACM* and /dev/ttyUSB*)")
+    parser.add_argument("--watch", action="store_true",
+                        help="keep running, pulling each node's backlog as it's plugged in (garden-usb)")
     args = parser.parse_args()
+
+    if args.watch:
+        Watcher().run()
+        return
 
     paths = [args.port] if args.port else sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
     if not paths:
@@ -201,29 +326,10 @@ def main():
     node, info = find_node(paths)
     if node is None:
         sys.exit("[USB] No node answered. A Pico needs boot.py copied over and a reset first.")
-    node_id = info["n"]
-    save_node_info(info)
-
-    flag = Path(USB_SYNC_FILE)
-    flag.write_text(json.dumps({"n": node_id, "pid": os.getpid()}))
     try:
-        # Give main.py a moment to see the flag and drop any radio chunk
-        # request it already had in flight to this node.
-        time.sleep(3)
-        db_conn = db.get_connection()
-        db_conn.execute("PRAGMA busy_timeout = 30000")   # main.py writes too
-        started = time.monotonic()
-        try:
-            stored = sync_node(node, node_id, db_conn)
-        finally:
-            db_conn.close()
-        minutes = (time.monotonic() - started) / 60
-        print(f"[USB] Done: {stored:,} lines from node {node_id} in {minutes:.1f} min.")
-        info, _ = node.ask({"t": "info"}, "info", timeout=3)
-        if info is not None:
-            save_node_info(info)
+        pull_backlog(node, info)
     finally:
-        flag.unlink(missing_ok=True)
+        release()
         node.port.close()
 
 
