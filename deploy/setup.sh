@@ -93,7 +93,8 @@ CF_DIR=""
 if [ -n "$RESTORE" ]; then
     step "Restoring $RESTORE"
     sudo systemctl stop garden-radio garden-api garden-wifi garden-usb 2>/dev/null || true
-    BUNDLE=$(mktemp -d)
+    # Unpacked on the SD card: /tmp is held in RAM, too small for sensors.db.
+    BUNDLE=$(mktemp -d "$HOME/.garden_restore.XXXXXX")
     trap 'sudo rm -rf "$BUNDLE"' EXIT
     sudo tar -xzf "$RESTORE" -C "$BUNDLE"
     sudo chown -R "$USER_NAME:" "$BUNDLE"
