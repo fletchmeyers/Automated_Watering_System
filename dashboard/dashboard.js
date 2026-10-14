@@ -820,11 +820,10 @@ function renderNodePanels(byNode) {
           <div class="node-panel-title"></div>
           <div class="node-metrics"></div>
           <div class="node-panel-tools">
-            <button type="button" class="node-action-btn" id="refresh-btn-${n}" onclick="triggerRefresh(${n})"
-                    title="Poll this node now, over its link in use">↺ refresh</button>
+            <button type="button" class="node-action-btn refresh-btn" id="refresh-btn-${n}" onclick="triggerRefresh(${n})"
+                    title="Refresh: poll this node now, over its link in use" aria-label="Refresh"><span class="refresh-icon">↺</span></button>
             <button type="button" class="node-action-btn" id="ping-btn-${n}" onclick="runPingTest(${n})"
                     title="Ping this node 10 times, over its link in use">⇄ ping test</button>
-            <span class="ping-result" id="ping-result-${n}"></span>
             <label class="node-color" title="This node's color on the dashboard (kept in this browser)">
               <input type="color" class="node-color-picker" value="${info.color}"
                      oninput="setNodeColor(${n}, this.value, false)" onchange="setNodeColor(${n}, this.value)">
@@ -835,6 +834,7 @@ function renderNodePanels(byNode) {
           </div>
         </div>
         <div class="poll-progress" id="poll-progress-${n}" hidden aria-live="polite"></div>
+        <div class="poll-progress ping-box" id="ping-box-${n}" hidden aria-live="polite"></div>
         <div class="node-panel-body">
           ${nodePanelSection(`node-panel-${n}-system`, wifi ? 'Wi-Fi &amp; System' : 'Radio &amp; System',
                              `<span class="node-badge">${wifi ? 'Wi-Fi' : 'RFM69'}</span>`)}
@@ -1098,13 +1098,12 @@ async function fetchPollProgress(rid) {
 async function triggerRefresh(nodeId) {
   const btn = document.getElementById(`refresh-btn-${nodeId}`);
   if (!btn) return;
-  const original = btn.textContent;
   btn.disabled = true;
-  const finish = () => { btn.textContent = original; btn.disabled = false; };
+  btn.classList.add('busy');   // the arrow spins
+  const finish = () => { btn.classList.remove('busy'); btn.disabled = false; };
 
   // If API_BASE hasn't been set up, there's nothing to poll — just reload.
   if (!API_BASE || API_BASE.includes('YOURDOMAIN')) {
-    btn.textContent = '↺ refreshing...';
     await refresh();
     finish();
     return;
@@ -1113,7 +1112,6 @@ async function triggerRefresh(nodeId) {
   const rid = Math.random().toString(36).slice(2, 10);
   let progress = localPollProgress('active', 'sending...');
   renderPollProgress(nodeId, progress);
-  btn.textContent = '↺ refreshing...';
 
   let ended = false;
   const timer = setInterval(async () => {
@@ -1148,8 +1146,8 @@ async function triggerRefresh(nodeId) {
       ...localPollProgress('warn', `try again in ${wait} s`),
       title: `${nodeInfo(nodeId).name} was refreshed under 30 s ago`,
     });
-    btn.textContent = `↺ wait ${wait}s`;
-    setTimeout(finish, wait * 1000);
+    btn.classList.remove('busy');
+    setTimeout(finish, wait * 1000);   // stays disabled until it may refresh again
     return;
   }
 
@@ -1174,75 +1172,107 @@ async function triggerRefresh(nodeId) {
   finish();
 }
 
-// ── Radio ping test (independent of refresh — result comes straight back in
-//    the HTTP response) ──
+// ── Ping test: a box in the node's row, like Refresh's ──
+// One dot per ping: grey not sent yet, teal on its way, green answered (its
+// round trip in ms under it), red no answer. The box's edge is green for
+// every pong, amber for most (70%+), red for fewer. It stays until closed.
+
+function pingDots(results, count) {
+  return `<ol class="ping-dots">${Array.from({ length: count }, (_, i) => {
+    const r = results[i];
+    const state = r ? (r.ok ? 'ok' : 'miss') : i === results.length ? 'active' : 'wait';
+    // (answered pings only get their round trip with the final result)
+    const rtt = !r ? '' : !r.ok ? '–' : r.rtt_ms != null ? Math.round(r.rtt_ms) : '';
+    return `<li class="ping-dot pd-${state}" title="${r ? (r.ok ? `ping ${i + 1}: ${rtt} ms` : `ping ${i + 1}: no answer`) : ''}">
+      <span class="pd-mark"></span><span class="pd-rtt">${rtt}</span></li>`;
+  }).join('')}</ol>`;
+}
+
+function renderPingBox(nodeId, { title, cls, results = [], count = 10, summary = '' }) {
+  const el = document.getElementById(`ping-box-${nodeId}`);
+  if (!el) return;   // the row was closed meanwhile
+  el.className = `poll-progress ping-box ${cls}`;
+  el.innerHTML = `
+    <div class="pp-head">
+      <span class="pp-title">${title}</span>
+      <button type="button" class="pp-close" onclick="hidePingBox(${nodeId})" title="Close">×</button>
+    </div>
+    ${count ? pingDots(results, count) : ''}
+    ${summary ? `<div class="ping-summary">${summary}</div>` : ''}`;
+  el.hidden = false;
+}
+
+function hidePingBox(nodeId) {
+  const el = document.getElementById(`ping-box-${nodeId}`);
+  if (el) el.hidden = true;
+}
 
 async function runPingTest(nodeId) {
   const btn = document.getElementById(`ping-btn-${nodeId}`);
-  const resultEl = document.getElementById(`ping-result-${nodeId}`);
-  if (!btn || !resultEl) return;
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '⇄ pinging...';
-  resultEl.textContent = '';
+  if (!btn) return;
+  const name = escapeText(nodeInfo(nodeId).name);
+  const link = linkLabel(nodeInfo(nodeId));
+  const fail = why => renderPingBox(nodeId, { title: `Couldn't ping ${name}: ${why}`, cls: 'is-failed', count: 0 });
 
   if (!API_BASE || API_BASE.includes('YOURDOMAIN')) {
-    resultEl.textContent = 'API not configured';
-    resultEl.style.color = 'var(--red)';
-    btn.textContent = original;
-    btn.disabled = false;
+    fail('the API isn\'t set up');
     return;
   }
+  btn.disabled = true;
 
-  let progressTimer = null;
+  // While it runs, /api/ping_progress counts pings done and pongs back; each
+  // tick's new pings are marked from those counts (answered ones first), and
+  // the final answer replaces them with the real list.
+  const live = [];
+  renderPingBox(nodeId, { title: `Pinging ${name} ${link}...`, cls: 'is-active', results: live });
+  const timer = setInterval(async () => {
+    try {
+      const p = await (await fetch(`${API_BASE}/api/ping_progress`, { cache: 'no-store' })).json();
+      if (p.status !== 'running' || p.done <= live.length) return;
+      let newHits = p.hits - live.filter(r => r.ok).length;
+      while (live.length < Math.min(p.done, p.count)) live.push({ ok: newHits-- > 0, rtt_ms: null });
+      renderPingBox(nodeId, { title: `Pinging ${name} ${link}...`, cls: 'is-active', results: live,
+                              count: p.count, summary: `${p.hits} of ${p.done} answered so far` });
+    } catch (e) {
+      // Non-fatal — skip this tick; the final result still lands.
+    }
+  }, 300);
+
   try {
-    progressTimer = setInterval(async () => {
-      try {
-        const pResp = await fetch(`${API_BASE}/api/ping_progress`);
-        const p = await pResp.json();
-        if (p.status === 'running') {
-          resultEl.style.color = 'var(--muted)';
-          resultEl.textContent = `${p.hits}/${p.done} pong so far (of ${p.count})...`;
-        }
-      } catch (e) {
-        // Non-fatal — just skip this tick, the final result below still lands.
-      }
-    }, 300);
-
     const resp = await fetch(`${API_BASE}/api/ping_test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ node_id: nodeId }),
     });
     const data = await resp.json();
-    clearInterval(progressTimer);
+    clearInterval(timer);
 
     if (resp.status === 429) {
-      const wait = Math.ceil(data.retry_after || 5);
-      resultEl.textContent = `wait ${wait}s`;
-      resultEl.style.color = 'var(--amber)';
+      renderPingBox(nodeId, { title: `${name} was pinged a moment ago: try again in ${Math.ceil(data.retry_after || 5)} s`,
+                              cls: 'is-warn', count: 0 });
     } else if (data.status !== 'ok') {
-      resultEl.textContent = {
+      fail({
         timeout: 'no response',
-        offline: 'not connected to Wi-Fi',
-        unavailable: 'Wi-Fi service not running',
-      }[data.status] || 'test failed';
-      resultEl.style.color = 'var(--red)';
+        offline: 'not connected to the Pi over Wi-Fi',
+        unavailable: "the Pi's Wi-Fi service (garden-wifi) isn't running",
+      }[data.status] || 'the test failed');
     } else {
-      const pct = Math.round((data.hits / data.count) * 100);
-      const color = pct === 100 ? 'var(--green)' : pct >= 70 ? 'var(--amber)' : 'var(--red)';
-      const rttStr = data.avg_rtt_ms != null ? `${data.avg_rtt_ms}ms avg` : 'no pongs';
-      resultEl.style.color = color;
-      resultEl.textContent = `${data.hits}/${data.count} pong · ${rttStr}`;
+      const pct = data.hits / data.count;
+      const rtts = (data.results || []).filter(r => r.ok && r.rtt_ms != null).map(r => r.rtt_ms);
+      const summary = rtts.length
+        ? `average ${Math.round(data.avg_rtt_ms)} ms · fastest ${Math.round(Math.min(...rtts))} ms · slowest ${Math.round(Math.max(...rtts))} ms`
+        : 'no pongs came back';
+      renderPingBox(nodeId, {
+        title: `${name}: ${data.hits}/${data.count} pongs ${link}`,
+        cls: pct === 1 ? 'is-done' : pct >= 0.7 ? 'is-warn' : 'is-failed',
+        results: data.results || [], count: data.count, summary,
+      });
     }
   } catch (e) {
-    if (progressTimer) clearInterval(progressTimer);
+    clearInterval(timer);
     console.error('ping test failed', e);
-    resultEl.textContent = 'error';
-    resultEl.style.color = 'var(--red)';
+    fail("couldn't reach the Pi's API");
   }
-
-  btn.textContent = original;
   btn.disabled = false;
 }
 // ── Live card customization (hide/show, reorder, combine) ──────────────────

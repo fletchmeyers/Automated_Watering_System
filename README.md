@@ -578,7 +578,12 @@ and red where it failed, with why: asleep until a given time (it fails at
 once, rather than waiting), no answer in 45 s over the radio, not connected
 over Wi-Fi, a service not running. A node that answers with no readings (no
 sensors answering) ends amber. A clean refresh tidies itself away after a
-few seconds; anything else stays until closed (×). The progress comes from
+few seconds; anything else stays until closed (×).
+
+**⇄ ping test** in the same row sends the node 10 pings over its link in
+use and opens a box like Refresh's: a dot per ping (green answered, with its
+round trip in ms under it; red no answer; teal on its way), then the
+average, fastest and slowest. It stays until closed. The progress comes from
 `/api/poll_progress`, which the Pi's services write as the poll moves along
 (`POLL_PROGRESS_FILE` in `sync_indoor.py`).
 
