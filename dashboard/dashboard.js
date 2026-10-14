@@ -855,8 +855,9 @@ function renderNodePanels(byNode) {
       ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
     ];
     const reported = store?.at ? `storage reported ${minutesAgo(store.at) || store.at}` : 'no storage report yet';
+    const why = store?.sleep_reason ? ` (${store.sleep_reason})` : '';   // e.g. a low battery's day sleep
     const note = (asleep
-      ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)} — logging to storage, radio off · ${reported}`
+      ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)}${why} — logging to storage, radio off · ${reported}`
       : reported) + ` · ${linkLabel(info)}`;
 
     // The node's name, battery and storage share the top line with its color

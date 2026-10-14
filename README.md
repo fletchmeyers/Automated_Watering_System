@@ -612,6 +612,27 @@ set yet, the wake time has already passed, or it's more than 16 hours away.
 While asleep a node only answers Ctrl+C on its USB console (CircuitPython)
 or a reset; the Pi leaves it alone until the wake time.
 
+**Low battery: sleeping through the day.** A node with a sleep window and a
+LiPo on a MAX17048 gauge (its `batt` readings; `"battery"` is `batt` or not
+given) also sleeps through the day when its charge is low:
+
+- When it's awake outside its window and has a battery reading from the
+  last 10 minutes under **25%** (in practice, the first poll after it wakes
+  in the morning), the Pi sends it back to sleep until **15 minutes before
+  its window starts**.
+- It wakes then to check in: the Pi polls it, so the dashboard has its
+  battery and readings, and syncs what it can. The window then puts it to
+  sleep for the night, and the next morning's reading decides again.
+- With no fresh reading it stays awake (it never sleeps on old news), and
+  it isn't sent to sleep within 30 minutes of the check-in.
+- The dashboard says why: "asleep until 18:45 (battery 18%, under 25%)".
+
+Change the level per node with `"low_battery_sleep": 40` in `nodes.json`,
+or turn it off with `false`; then restart `garden-sensor` (the Wi-Fi
+service picks it up by itself). Only the charge counts for now; the
+outside temperature and light (which drain or recharge a battery) may come
+into it later.
+
 ### Battery saver
 
 For a node with both links on a small battery: `"battery_saver": true`

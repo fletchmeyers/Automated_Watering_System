@@ -93,6 +93,17 @@ def latest_rowid(conn):
     return conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM readings").fetchone()[0]
 
 
+def latest_value(conn, node_id, sensor_type, key, since, recent_rows=20000):
+    '''node_id's newest sensor_type/key reading taken at or after since (an
+    ISO timestamp), or None. Only the last recent_rows rows are searched (the
+    table has no index, and anything that recent is near the end).'''
+    row = conn.execute(
+        "SELECT value FROM readings WHERE rowid > (SELECT COALESCE(MAX(rowid), 0) FROM readings) - ? "
+        "AND node_id = ? AND sensor_type = ? AND key = ? AND ts >= ? ORDER BY ts DESC LIMIT 1",
+        (recent_rows, node_id, sensor_type, key, since)).fetchone()
+    return row[0] if row else None
+
+
 def query_readings(conn, minutes=None, start=None, end=None,
                     sensor_type=None, node_id=None, after=None, upto=None):
     '''
