@@ -316,26 +316,38 @@ class SleepScheduler:
     the node answers before switching its radio off, so a lost ack and a
     sleeping node look exactly the same from here.
 
-    Low battery: low_battery is {node_id: percent} (nodes.low_battery_sleep)
-    and battery(node_id, since) its newest charge reading since then, or
-    None. A node that's awake outside its window with a reading from the
-    last FRESH_MINUTES below its percent (in practice, the first poll after
-    it wakes in the morning) is sent back to sleep until CHECKIN_MINUTES
-    before its next window: it wakes, answers its polls and syncs a little,
-    and the window then puts it to sleep for the night. Without a fresh
-    reading it stays awake. Not within MIN_DAY_SLEEP_MINUTES of the check-in,
-    so the check-in itself is never slept through.
+    Low battery, on a dark day: low_battery is {node_id: percent}
+    (nodes.low_battery_sleep), battery(node_id, since) its newest charge
+    reading since then (or None), light(node_id, since) its newest light
+    reading in lux (or None: no light sensor), and daylight(start, end)
+    whether the forecasts agree those hours will be dark
+    (weather_outlook.dark_day: (True/False, why)). A node that's awake
+    outside its window is sent to sleep when all three say so:
+      - a battery reading from the last FRESH_MINUTES under its percent,
+      - no light reading from the last FRESH_MINUTES of SUNNY_LUX or more
+        (its own sensor outranks the forecasts), and
+      - the forecasts agree the hours it would sleep through are dark.
+    It sleeps DAY_SLEEP_HOURS at most, then wakes to check in: its next
+    poll brings fresh readings, and the rest of the day is decided again.
+    The last stretch ends CHECKIN_MINUTES before its window, and the window
+    then puts it to sleep for the night. Not within MIN_DAY_SLEEP_MINUTES of
+    that check-in, so the check-in itself is never slept through. Without
+    daylight (tests, or an older setup) the forecasts aren't asked.
     '''
     CHECKIN_MINUTES       = 15
     FRESH_MINUTES         = 10
     MIN_DAY_SLEEP_MINUTES = 30
-    MAX_SLEEP_HOURS       = 15   # the nodes refuse more than 16 h (SLEEP_MAX_S)
+    DAY_SLEEP_HOURS       = 3
+    SUNNY_LUX             = 20000   # brighter than any overcast day: the sun's out
+    MAX_SLEEP_HOURS       = 15      # the nodes refuse more than 16 h (SLEEP_MAX_S)
 
     def __init__(self, windows, wake_grace=90, retry_after=600, now_fn=datetime.now,
-                 low_battery=None, battery=None):
+                 low_battery=None, battery=None, light=None, daylight=None):
         self.windows     = dict(windows)
         self.low_battery = dict(low_battery or {})
         self.battery     = battery
+        self.light       = light
+        self.daylight    = daylight
         self.wake_grace  = wake_grace    # seconds after wake before commands resume
         self.retry_after = retry_after
         self._now        = now_fn
@@ -345,6 +357,7 @@ class SleepScheduler:
         self._checked_at   = {}          # node ID -> when its battery was last looked at
         self._why          = {}          # node ID -> why it's asleep, if not its window
         self._low          = {}          # node ID -> (wake, why, decided at): a low battery's day sleep
+        self._said         = {}          # node ID -> the last reason it stayed awake, as logged
 
     @staticmethod
     def _at(day, hhmm):
@@ -371,7 +384,8 @@ class SleepScheduler:
         return start if start > now else start + timedelta(days=1)
 
     def day_sleep(self, node_id, now):
-        '''(wake, why) if node_id's battery says sleep through the day; else None.'''
+        '''(wake, why) if node_id should sleep through (part of) the day:
+        a low battery on a dark day (see the class notes); else None.'''
         level = self.low_battery.get(node_id)
         if level is None or self.battery is None or node_id not in self.windows:
             return None
@@ -379,24 +393,43 @@ class SleepScheduler:
         checkin = min(checkin, now + timedelta(hours=self.MAX_SLEEP_HOURS))
         if checkin - now < timedelta(minutes=self.MIN_DAY_SLEEP_MINUTES):
             return None
-        # A low battery stands for a few minutes, until the command can go
-        # out (a poll may be due first); the database is asked at most once
-        # a minute (this runs on every pass of the radio loop).
+        wake = min(checkin, now + timedelta(hours=self.DAY_SLEEP_HOURS))
+        # A decision to sleep stands for a few minutes, until the command can
+        # go out (a poll may be due first); the readings are looked at at
+        # most once a minute (this runs on every pass of the radio loop).
         decided = self._low.get(node_id)
         if decided is not None and now - decided[2] < timedelta(minutes=5):
-            return checkin, decided[1]
+            return wake, decided[1]
         last = self._checked_at.get(node_id)
         if last is not None and now - last < timedelta(minutes=1):
             return None
         self._checked_at[node_id] = now
+        self._low.pop(node_id, None)
         since = (now - timedelta(minutes=self.FRESH_MINUTES)).strftime(ISO_FORMAT)
         charge = self.battery(node_id, since)
         if charge is None or charge >= level:
-            self._low.pop(node_id, None)
+            self._said.pop(node_id, None)
             return None
-        why = f"battery {charge:.0f}%, under {level}%"
-        self._low[node_id] = (checkin, why, now)
-        return checkin, why
+        lux = self.light(node_id, since) if self.light else None
+        if lux is not None and lux >= self.SUNNY_LUX:
+            return self._stay_awake(node_id, f"its light sensor says it's sunny ({lux:.0f} lux)")
+        if self.daylight is not None:
+            dark, outlook = self.daylight(now, wake)
+            if not dark:
+                return self._stay_awake(node_id, outlook)
+        why = f"battery {charge:.0f}%, under {level}%" + (", dark day" if self.daylight else "")
+        self._low[node_id] = (wake, why, now)
+        self._said.pop(node_id, None)
+        return wake, why
+
+    def _stay_awake(self, node_id, reason):
+        '''A low battery that isn't slept on: say why, once (until the reason
+        changes; not just its numbers, which move as the day goes on).'''
+        kind = reason.split(" (")[0]
+        if self._said.get(node_id) != kind:
+            self._said[node_id] = kind
+            print(f"[SLEEP] Node {node_id}'s battery is low, but it stays awake to charge: {reason}.")
+        return None
 
     def sleep_reason(self, node_id):
         '''Why node_id is asleep, if it's for something other than its window.'''
@@ -458,8 +491,8 @@ class SleepScheduler:
         self._requested.pop(node_id, None)
         self._low.pop(node_id, None)
         if self._why.get(node_id):
-            print(f"[SLEEP] Node {node_id} asleep until {wake_str} ({self._why[node_id]}): it checks "
-                  "in then, before its night's sleep.")
+            print(f"[SLEEP] Node {node_id} asleep until {wake_str} ({self._why[node_id]}); it checks "
+                  "in then, and the day is decided again.")
         else:
             print(f"[SLEEP] Node {node_id} asleep until {wake_str}.")
 

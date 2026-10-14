@@ -634,26 +634,46 @@ set yet, the wake time has already passed, or it's more than 16 hours away.
 While asleep a node only answers Ctrl+C on its USB console (CircuitPython)
 or a reset; the Pi leaves it alone until the wake time.
 
-**Low battery: sleeping through the day.** A node with a sleep window and a
-LiPo on a MAX17048 gauge (its `batt` readings; `"battery"` is `batt` or not
-given) also sleeps through the day when its charge is low:
+**Low battery: sleeping through a dark day.** A node with a sleep window
+and a LiPo on a MAX17048 gauge (its `batt` readings; `"battery"` is `batt`
+or not given) sleeps through the day when its battery is low **and** the
+day won't charge it. While it's awake outside its window, the Pi sends it
+to sleep only when all three agree:
 
-- When it's awake outside its window and has a battery reading from the
-  last 10 minutes under **25%** (in practice, the first poll after it wakes
-  in the morning), the Pi sends it back to sleep until **15 minutes before
-  its window starts**.
-- It wakes then to check in: the Pi polls it, so the dashboard has its
-  battery and readings, and syncs what it can. The window then puts it to
-  sleep for the night, and the next morning's reading decides again.
-- With no fresh reading it stays awake (it never sleeps on old news), and
-  it isn't sent to sleep within 30 minutes of the check-in.
-- The dashboard says why: "asleep until 18:45 (battery 18%, under 25%)".
+1. **Its battery is low:** a reading from the last 10 minutes under
+   **25%**.
+2. **The forecasts agree it's dark:** every weather source that answered
+   (at least 2 of them; ones older than 3 hours don't count) averages
+   **75% cloud or more** over the hours it would sleep through. `garden-api`
+   fetches all five every 30 minutes (Open-Meteo and the NWS need no key;
+   WeatherAPI, OpenWeatherMap and Tomorrow.io use the keys in
+   `/etc/garden-api.env`, and are left out without one) and keeps their
+   hourly cloud cover in `/tmp/garden_weather_outlook.json`
+   (`raspberrypi/weather_outlook.py`). Too few answers, or one that
+   disagrees, and the node stays awake.
+3. **Its own light sensor doesn't say it's sunny:** a node with an LTR390
+   reading 20,000 lux or more in the last 10 minutes stays awake whatever
+   the forecasts say. (Another node's sensor isn't used, since it might
+   not be nearby. Arduino nodes send the sensor's raw count rather than
+   lux, so the threshold is only rough for them.)
 
-Change the level per node with `"low_battery_sleep": 40` in `nodes.json`,
-or turn it off with `false`; then restart `garden-sensor` (the Wi-Fi
-service picks it up by itself). Only the charge counts for now; the
-outside temperature and light (which drain or recharge a battery) may come
-into it later.
+It then sleeps **3 hours at most** and wakes to check in: the Pi polls it
+(fresh battery and light readings) and decides again for the next stretch,
+so a day that brightens wakes it up to charge. The last stretch ends **15
+minutes before its window**, and the window then puts it to sleep for the
+night. It isn't sent to sleep within 30 minutes of that check-in.
+
+The log says why either way: `Node 2 asleep until 2026-10-14T10:03:00
+(battery 18%, under 25%, dark day)`, or `Node 2's battery is low, but it
+stays awake to charge: not all forecasts say it's dark (nws 88%,
+weatherapi 40% cloud)`. The dashboard's row shows the reason while it
+sleeps.
+
+Change the battery level per node with `"low_battery_sleep": 40` in
+`nodes.json`, or turn it off with `false`; then restart `garden-sensor`
+(the Wi-Fi service picks it up by itself). The cloud and light levels are
+`DARK_CLOUD` in `weather_outlook.py` and `SUNNY_LUX` in
+`communication_indoor.py`.
 
 ### Battery saver
 
