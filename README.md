@@ -554,14 +554,15 @@ first, **with no re-flash and no restart** (both services re-read
 
     python3 node_setup.py prefer 3 radio      # or: prefer 3 wifi
 
-The dashboard's ping test menu shows each node's link in use right now,
-e.g. "ESP32-V2 · Wi-Fi (radio backup)", and Refresh and the ping test go
-over it.
+Each node's row on the dashboard (click its chip in the header) shows its
+link in use right now, e.g. "over Wi-Fi (the radio backup)", and its
+Refresh and ping test buttons go over it.
 
 ### Refresh, step by step
 
-The dashboard's **↺ refresh** polls the node picked beside it, any node,
-over its link in use, and shows each step under the header as it happens:
+**↺ refresh** in a node's row (click its chip in the header to open it)
+polls that node over its link in use, and shows each step in the row as it
+happens:
 
 | Step | Done when |
 |---|---|
