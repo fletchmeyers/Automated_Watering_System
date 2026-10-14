@@ -22,7 +22,7 @@ _META_KEYS = {"t", "q", "n", "ts"}
 def get_connection():
     '''
     Open a connection to sensors.db. Call this once per process (e.g. once
-    at startup in main.py) and reuse the connection — don't open a fresh
+    at startup in radio_nodes.py) and reuse the connection — don't open a fresh
     one per packet.
     '''
     return sqlite3.connect(DB_FILE)

@@ -118,7 +118,7 @@ def test_an_unanswering_radio_or_a_stopped_radio_loop_is_down(status):
     write, link = status
     write(wifi_seen=30, radio_reachable=False)
     assert link(["radio", "wifi"]) == "wifi"
-    write(wifi_seen=30, radio_reachable=True, radio_written=600)   # main.py stopped writing
+    write(wifi_seen=30, radio_reachable=True, radio_written=600)   # radio_nodes.py stopped writing
     assert link(["radio", "wifi"]) == "wifi"
 
 

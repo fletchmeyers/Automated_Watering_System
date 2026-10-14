@@ -4,7 +4,7 @@ Python 3 running on Raspberry Pi 3B
 Outbound command functions: poll nodes, request bulk sync, set interval.
 Also provides sensor_health_report() for diagnostics.
 
-Usage (while main.py is running):
+Usage (while radio_nodes.py is running):
     python3 sync_indoor.py            — request a poll, wait for new data, run health report
     python3 sync_indoor.py sync [N]   — start an SD sync session for node N (default 1) now
     python3 sync_indoor.py info       — show each node's last reported log storage
@@ -26,7 +26,7 @@ from pathlib import Path
 DATA_FILE    = Path(__file__).parent / "data_from_pico.txt"
 COMMAND_FILE = "/tmp/pico_command.json"
 
-# Fresh poll results, written by main.py the instant a poll's batch completes,
+# Fresh poll results, written by radio_nodes.py the instant a poll's batch completes,
 # so /api/poll can return real sensor values to the browser straight away.
 POLL_RESULT_FILE = "/tmp/pico_poll_result.json"
 
@@ -39,16 +39,16 @@ PING_RESULT_FILE   = "/tmp/pico_ping_result.json"
 # can poll this for a live "x/y pong" readout while a test is running.
 PING_PROGRESS_FILE = "/tmp/pico_ping_progress.json"
 
-# Manual "sync now" request — main.py's SyncManager picks it up and starts a
+# Manual "sync now" request — radio_nodes.py's SyncManager picks it up and starts a
 # session right away instead of waiting for the next hour.
 SYNC_REQUEST_FILE = "/tmp/pico_sync_request.json"
 
-# Manual "sleep now" request — main.py's SleepScheduler sends the node a
+# Manual "sleep now" request — radio_nodes.py's SleepScheduler sends the node a
 # sleep command as soon as the radio is free.
 SLEEP_REQUEST_FILE = "/tmp/pico_sleep_request.json"
 
 # Held by usb_sync.py while it talks to a node over USB: {"n": node (None
-# while it's still finding out which node), "pid": its process}. main.py
+# while it's still finding out which node), "pid": its process}. radio_nodes.py
 # leaves that node's radio sync alone until it's gone.
 USB_SYNC_FILE = "/tmp/garden_usb_sync.json"
 # Held by node_setup.py while it runs ({"pid": ...}): usb_sync.py's watcher
@@ -86,7 +86,7 @@ WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
 
 # ── A manual poll's progress (the dashboard's Refresh) ────────────────────────
-# flask_api.py starts it; main.py (radio) or wifi_nodes.py (Wi-Fi) moves it
+# flask_api.py starts it; radio_nodes.py (radio) or wifi_nodes.py (Wi-Fi) moves it
 # along as the poll goes out and the node answers; /api/poll_progress hands
 # it to the dashboard, which draws one step per entry in POLL_STEPS. Each
 # step is "wait" (not started), "active", "done", "warn" (done, with a
@@ -217,8 +217,8 @@ def request_poll(node_id=1, link_plan=None):
 
 def request_bulk_sync(node_id=1):
     '''
-    Ask main.py to start an SD sync session for node_id now, rather than
-    waiting for its next hourly session. The session itself runs in main.py
+    Ask radio_nodes.py to start an SD sync session for node_id now, rather than
+    waiting for its next hourly session. The session itself runs in radio_nodes.py
     (SyncManager in communication_indoor.py), one chunk at a time.
     '''
     Path(SYNC_REQUEST_FILE).write_text(json.dumps({"n": node_id}))
@@ -231,7 +231,7 @@ def request_sync_chunk(command):
 
 
 def request_sleep(node_id, minutes):
-    '''Ask main.py to put node_id to sleep for `minutes`, starting now.'''
+    '''Ask radio_nodes.py to put node_id to sleep for `minutes`, starting now.'''
     Path(SLEEP_REQUEST_FILE).write_text(json.dumps({"n": node_id, "minutes": minutes}))
     print(f"[SLEEP] Sleep requested for node {node_id} ({minutes} min).")
 
@@ -250,7 +250,7 @@ def request_info(node_id):
 
 
 def update_node_info(node_id, **fields):
-    '''Merge fields into node_id's entry in NODE_INFO_FILE (main.py and the
+    '''Merge fields into node_id's entry in NODE_INFO_FILE (radio_nodes.py and the
     Wi-Fi service both write it, so it's replaced whole, never half-written).'''
     info = get_node_info()
     info.setdefault(str(node_id), {}).update(fields)
@@ -279,7 +279,7 @@ def record_sensors_off(node_id, names, now=None):
 
 def recorded_wake(node_id, grace_s=90, now=None):
     '''If NODE_INFO_FILE says node_id is asleep (whichever service sent the
-    sleep: main.py over the radio, or the Wi-Fi service), when it wakes;
+    sleep: radio_nodes.py over the radio, or the Wi-Fi service), when it wakes;
     else None. Like SleepScheduler.asleep(), it counts as asleep until
     grace_s after waking.'''
     until = get_node_info().get(str(node_id), {}).get("sleep_until")
@@ -323,7 +323,7 @@ def request_set_interval(seconds, node_id=1):
 
 def request_ping_test(node_id=1, count=10):
     '''
-    Write a ping test request. main.py picks this up on its next loop
+    Write a ping test request. radio_nodes.py picks this up on its next loop
     iteration (only when nothing else is pending) and runs count back-to-back
     ping/pong round trips, writing the result to PING_RESULT_FILE when done.
     '''
@@ -338,12 +338,12 @@ def request_ping_test(node_id=1, count=10):
 def wait_for_poll_result(timeout=WAIT_TIMEOUT, node_id=None):
     '''
     Block until POLL_RESULT_FILE appears, then return its parsed packet list.
-    Used by /api/poll to hand back real sensor values the moment main.py has
+    Used by /api/poll to hand back real sensor values the moment radio_nodes.py has
     them. With node_id, stops early (None) once that node's poll progress
-    has failed: main.py gave up on it.
+    has failed: radio_nodes.py gave up on it.
     '''
     print(f"[POLL] Waiting up to {timeout}s for poll result...")
-    # [] (written by main.py when the node answered with no readings) is an
+    # [] (written by radio_nodes.py when the node answered with no readings) is an
     # answer too; only None means it never came.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -377,12 +377,12 @@ def get_ping_progress():
         return None
 
 
-# ── Wait helpers (for use alongside a running main.py) ───────────────────────
+# ── Wait helpers (for use alongside a running radio_nodes.py) ───────────────────────
 
 def wait_for_new_data(timeout=WAIT_TIMEOUT):
     '''
     Block until a new line appears in the data file, then return.
-    Used after request_poll() to confirm main.py forwarded the command
+    Used after request_poll() to confirm radio_nodes.py forwarded the command
     and the Pico responded.
     '''
     filepath = DATA_FILE
@@ -408,7 +408,7 @@ def wait_for_new_data(timeout=WAIT_TIMEOUT):
 
 def wait_for_interval_ack(timeout=WAIT_TIMEOUT):
     '''
-    Block until the command file disappears, indicating main.py received
+    Block until the command file disappears, indicating radio_nodes.py received
     a set_interval_ack from the Pico.
     '''
     print(f"[INTERVAL] Waiting up to {timeout}s for interval ack...")
@@ -523,7 +523,7 @@ if __name__ == "__main__":
     elif args[0] == "sync":
         node_id = int(args[1]) if len(args) > 1 else 1
         request_bulk_sync(node_id)
-        print("[SYNC] Progress is logged by main.py — journalctl -u garden-sensor -f")
+        print("[SYNC] Progress is logged by radio_nodes.py — journalctl -u garden-radio -f")
 
     elif args[0] == "health":
         sensor_health_report()
@@ -533,7 +533,7 @@ if __name__ == "__main__":
             print("Usage: python3 sync_indoor.py sleep <node> <minutes>")
             sys.exit(1)
         request_sleep(int(args[1]), int(args[2]))
-        print("[SLEEP] Progress is logged by main.py — journalctl -u garden-sensor -f")
+        print("[SLEEP] Progress is logged by radio_nodes.py — journalctl -u garden-radio -f")
 
     elif args[0] == "info":
         info = get_node_info()

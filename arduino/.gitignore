@@ -1,1 +1,3 @@
 .pio/
+# Written by PlatformIO on every build (paths and flags for the editor)
+.vscode/c_cpp_properties.json

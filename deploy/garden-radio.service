@@ -1,5 +1,5 @@
 [Unit]
-Description=Garden Sensor Main Loop
+Description=Garden radio nodes (polls nodes over the RFM69 radio; garden-wifi does Wi-Fi)
 After=network.target
 
 [Service]
@@ -9,7 +9,7 @@ WorkingDirectory=/home/<username>/Automated_Watering_System/raspberrypi
 # Write each print() to the journal immediately, so journalctl shows when it
 # actually happened rather than when Python's output buffer next filled.
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/<username>/env/bin/python3 /home/<username>/Automated_Watering_System/raspberrypi/main.py
+ExecStart=/home/<username>/env/bin/python3 /home/<username>/Automated_Watering_System/raspberrypi/radio_nodes.py
 Restart=on-failure
 RestartSec=10
 

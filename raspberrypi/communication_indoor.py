@@ -189,7 +189,7 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5, report_progress=True)
     burst of sub-second round trips, and bending it to fit would add more
     complexity than it'd save.
 
-    Only call this when cmd.pending is None (same guard main.py already uses
+    Only call this when cmd.pending is None (same guard radio_nodes.py already uses
     before issuing a scheduled poll) so this can't collide with a command
     CommandManager is mid-flight on.
 
@@ -694,7 +694,7 @@ class SyncManager:
     lines, so a large backlog is worked through over many hours rather than
     tying up the radio. Sessions for different nodes run side by side, taking
     turns chunk by chunk, so one node's backlog doesn't hold up another's.
-    main.py only asks for the next chunk when nothing else is pending, so
+    radio_nodes.py only asks for the next chunk when nothing else is pending, so
     scheduled polls slot in between chunks.
 
     A chunk's lines are buffered and only stored once its "se" (sync end)

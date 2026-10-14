@@ -9,10 +9,10 @@ says hello ({"t":"hello","n":<id>}). From then on the Pi is in charge, as
 with the radio: every POLL_INTERVAL it sends the node a poll, and the node
 answers with the same packets it would send over the radio — a "ts" header,
 one packet per sensor, then batch_end — one JSON object per line. Readings
-are stored exactly as main.py stores radio ones (BatchReceiver: sensors.db,
+are stored exactly as radio_nodes.py stores radio ones (BatchReceiver: sensors.db,
 the day's archive file, data_from_pico.txt).
 
-It runs separately from main.py's radio loop, so neither can hold the other
+It runs separately from radio_nodes.py's radio loop, so neither can hold the other
 up. nodes.json is read again whenever it changes, so a newly added Wi-Fi
 node, or a changed link preference, needs no restart.
 
@@ -22,7 +22,7 @@ first in its list that's up); otherwise it's just pinged each minute, so
 its connection is known to be alive if the radio fails.
 
 A node with a sleep_window is put to sleep from here while Wi-Fi is the
-link in use (the same SleepScheduler as main.py's), and recorded in
+link in use (the same SleepScheduler as radio_nodes.py's), and recorded in
 node_info.json as asleep, so neither service polls it until it wakes. It
 leaves Wi-Fi while it sleeps and reconnects when it wakes.
 
@@ -66,7 +66,7 @@ PING_TIMEOUT  = 2      # seconds to wait for each pong
 NOT_READINGS = {"hello", "pong", "sleep_ack", "wifi_config_ack", "info", "set_interval_ack",
                 "se", "data_ack"}
 
-# Which Wi-Fi nodes are connected right now, for node_setup.py, main.py and
+# Which Wi-Fi nodes are connected right now, for node_setup.py, radio_nodes.py and
 # the dashboard (links.py): {"<node>": {"ip", "since", "last_seen",
 # "last_reading"}}; last_seen is the last time it answered anything.
 STATUS_FILE = WIFI_STATUS_FILE
@@ -342,7 +342,7 @@ class WifiNodes:
     async def ping(self, node_id, count=10, timeout=PING_TIMEOUT, progress_file=PING_PROGRESS_FILE,
                    quiet=False):
         '''count pings over the node's connection, each waiting up to timeout
-        for its pong: the same result as main.py's radio ping test. quiet:
+        for its pong: the same result as radio_nodes.py's radio ping test. quiet:
         a connection check, not a test (no progress file, nothing printed).'''
         link = self.links[node_id]
         results = []
@@ -434,7 +434,7 @@ async def serve(port=WIFI_PORT, nodes_file=NODES_FILE, store=True, control_port=
     db_conn = None
     if store:
         db_conn = db.get_connection()
-        db_conn.execute("PRAGMA busy_timeout = 30000")   # main.py writes too
+        db_conn.execute("PRAGMA busy_timeout = 30000")   # radio_nodes.py writes too
     nodes = WifiNodes(db_conn, nodes_file=nodes_file, store=store)
     nodes._write_status()
     server = await asyncio.start_server(nodes.handle, host="0.0.0.0", port=port)

@@ -2,12 +2,10 @@ import pytest
 import json
 import time
 from unittest.mock import MagicMock, patch
-from garden.sync_garden import (
+from sync_garden import (
     _parse_iso_timestamp,
     check_for_command,
-    handle_sync,
     handle_set_interval,
-    interruptible_sleep,
 )
 
 
@@ -105,90 +103,6 @@ def test_check_for_command_non_utf8_payload():
     assert result is None
 
 
-# ── handle_sync ───────────────────────────────────────────────────────────────
-
-def test_handle_sync_sets_rtc():
-    rtc = MagicMock()
-    sender = MagicMock()
-    get_timestamp_fn = MagicMock(return_value="2026-03-12T10:00:00")
-    command = {"t": "sync", "ts": "2026-03-12T10:00:00"}
-    handle_sync(command, rtc, sender, get_timestamp_fn)
-    assert rtc.datetime is not None
-
-
-def test_handle_sync_sends_ack():
-    rtc = MagicMock()
-    sender = MagicMock()
-    get_timestamp_fn = MagicMock(return_value="2026-03-12T10:00:00")
-    command = {"t": "sync", "ts": "2026-03-12T10:00:00"}
-    handle_sync(command, rtc, sender, get_timestamp_fn)
-    sender.send.assert_called_once()
-    sent_packet = sender.send.call_args[0][0]
-    assert sent_packet["t"] == "sync_ack"
-    assert sent_packet["ts"] == "2026-03-12T10:00:00"
-
-
-def test_handle_sync_missing_ts_field():
-    """Missing ts field should return early without touching RTC or sending ack."""
-    rtc = MagicMock()
-    sender = MagicMock()
-    handle_sync({"t": "sync"}, rtc, sender, MagicMock())
-    sender.send.assert_not_called()
-    rtc.assert_not_called()
-    assert rtc.method_calls == []
-
-
-def test_handle_sync_bad_timestamp():
-    """Malformed timestamp should return early without sending ack."""
-    rtc = MagicMock()
-    sender = MagicMock()
-    handle_sync({"t": "sync", "ts": "not-a-timestamp"}, rtc, sender, MagicMock())
-    sender.send.assert_not_called()
-
-
-def test_handle_sync_ack_uses_get_timestamp_fn():
-    """The ack ts should come from get_timestamp_fn, not the command ts."""
-    rtc = MagicMock()
-    sender = MagicMock()
-    get_timestamp_fn = MagicMock(return_value="2026-03-12T10:00:05")
-    handle_sync({"t": "sync", "ts": "2026-03-12T10:00:00"}, rtc, sender, get_timestamp_fn)
-    sent_packet = sender.send.call_args[0][0]
-    assert sent_packet["ts"] == "2026-03-12T10:00:05"
-
-
-# ── interruptible_sleep ───────────────────────────────────────────────────────
-
-def test_interruptible_sleep_no_command():
-    """Should return None after sleeping the full duration."""
-    radio = MagicMock()
-    radio.receive.return_value = None
-    result = interruptible_sleep(radio, duration=1.0, chunk=0.5)
-    assert result is None
-    assert radio.receive.call_count == 2  # 1.0s / 0.5s chunks
-
-
-def test_interruptible_sleep_returns_command_immediately():
-    """Should return as soon as a command is received."""
-    radio = MagicMock()
-    command = {"t": "sync", "ts": "2026-03-12T10:00:00"}
-    payload = b"\x00\x00\x00\x00" + json.dumps(command).encode("utf-8")
-    radio.receive.return_value = payload
-    result = interruptible_sleep(radio, duration=10.0, chunk=0.5)
-    assert result == command
-    assert radio.receive.call_count == 1  # returned on first chunk
-
-
-def test_interruptible_sleep_returns_command_mid_sleep():
-    """Should return early when command arrives partway through sleep."""
-    radio = MagicMock()
-    command = {"t": "sync", "ts": "2026-03-12T10:00:00"}
-    payload = b"\x00\x00\x00\x00" + json.dumps(command).encode("utf-8")
-    # First two chunks return nothing, third returns a command
-    radio.receive.side_effect = [None, None, payload]
-    result = interruptible_sleep(radio, duration=10.0, chunk=0.5)
-    assert result == command
-    assert radio.receive.call_count == 3
-
 # ── handle_set_interval ───────────────────────────────────────────────────────
 
 def test_handle_set_interval_returns_new_value():
@@ -204,12 +118,12 @@ def test_handle_set_interval_sends_ack():
     assert sent_packet["t"] == "set_interval_ack"
     assert sent_packet["v"] == 60
 
-def test_handle_set_interval_zero_allowed():
-    """v=0 means indefinite sleep — must be accepted and acked."""
+def test_handle_set_interval_zero_rejected():
+    """The interval must be a positive number of seconds (sleep has its own command)."""
     sender = MagicMock()
     result = handle_set_interval({"t": "set_interval", "v": 0}, sender)
-    assert result == 0
-    sender.send.assert_called_once()
+    assert result is None
+    sender.send.assert_not_called()
 
 def test_handle_set_interval_negative_rejected():
     sender = MagicMock()

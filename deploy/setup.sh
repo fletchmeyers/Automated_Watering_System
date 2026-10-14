@@ -78,7 +78,7 @@ sudo raspi-config nonint do_i2c 0
 echo "   SPI and I2C enabled (active after the reboot at the end)"
 
 # ── 3. Python environments ───────────────────────────────────────────────────
-step "Radio venv (~/env, for main.py)"
+step "Radio venv (~/env, for radio_nodes.py)"
 [ -d "$HOME/env" ] || python3 -m venv "$HOME/env"
 "$HOME/env/bin/pip" install -q --upgrade pip
 "$HOME/env/bin/pip" install -q adafruit-circuitpython-rfm69
@@ -92,7 +92,7 @@ pip install -q --user flask flask-cors requests gunicorn --break-system-packages
 CF_DIR=""
 if [ -n "$RESTORE" ]; then
     step "Restoring $RESTORE"
-    sudo systemctl stop garden-sensor garden-api garden-wifi garden-usb 2>/dev/null || true
+    sudo systemctl stop garden-radio garden-api garden-wifi garden-usb 2>/dev/null || true
     BUNDLE=$(mktemp -d)
     trap 'sudo rm -rf "$BUNDLE"' EXIT
     sudo tar -xzf "$RESTORE" -C "$BUNDLE"
@@ -226,5 +226,5 @@ step "Done"
 echo "   Time zone: $(timedatectl show -p Timezone --value)"
 echo "   Now reboot:  sudo reboot"
 echo "   Then check:  ls /dev/spidev0.0"
-echo "                sudo journalctl -u garden-sensor -f"
+echo "                sudo journalctl -u garden-radio -f"
 echo "                curl https://api.fletchermeyers.com/api/health"

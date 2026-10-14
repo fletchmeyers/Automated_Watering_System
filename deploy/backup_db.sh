@@ -49,7 +49,7 @@ fi
 
 # Snapshot as the repo's user, not root: if root opened the live database
 # and SQLite had to create its -wal/-shm files, they'd be owned by root and
-# main.py could no longer write. .backup is consistent even mid-write.
+# radio_nodes.py could no longer write. .backup is consistent even mid-write.
 runuser -u "$GARDEN_USER" -- sqlite3 "$DB" ".backup '$SNAP'"
 CHECK=$(sqlite3 "$SNAP" "PRAGMA quick_check;")
 if [ "$CHECK" != "ok" ]; then

@@ -5,8 +5,8 @@ import os
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from indoor.sync_indoor import sensor_health_report, request_sync, COMMAND_FILE
-from indoor.communication_indoor import CommandManager
+from sync_indoor import sensor_health_report, COMMAND_FILE
+from communication_indoor import CommandManager
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -38,11 +38,10 @@ def test_health_report_empty_file():
 
 
 def test_health_report_only_control_packets():
-    """ts/sync/sync_ack packets should be excluded — result should be empty."""
+    """ts headers and se (end of a sync chunk) aren't sensors — result should be empty."""
     path = make_data_file([
         {"t": "ts", "v": "2026-03-12T10:00:00"},
-        {"t": "sync_ack", "ts": "2026-03-12T10:00:01"},
-        {"t": "sync", "ts": "2026-03-12T10:00:02"},
+        {"t": "se", "g": 1, "o": 512, "c": 8, "m": 1},
     ])
     try:
         result = sensor_health_report(path)
@@ -135,7 +134,7 @@ def test_forward_no_command_file(tmp_path):
     """Returns False and does not transmit when no command file exists."""
     cmd_file = tmp_path / "pico_command.json"
     mock_radio = MagicMock()
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         result = cmd.check_and_forward(mock_radio)
     assert result is False
@@ -147,7 +146,7 @@ def test_forward_sends_command(tmp_path):
     cmd_file = tmp_path / "pico_command.json"
     cmd_file.write_text('{"t": "sync", "ts": "2026-03-12T10:00:00"}')
     mock_radio = MagicMock()
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         result = cmd.check_and_forward(mock_radio)
     assert result is True
@@ -159,7 +158,7 @@ def test_forward_respects_retry_cooldown(tmp_path):
     cmd_file = tmp_path / "pico_command.json"
     cmd_file.write_text('{"t": "sync", "ts": "2026-03-12T10:00:00"}')
     mock_radio = MagicMock()
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         cmd.check_and_forward(mock_radio)   # first send
         result = cmd.check_and_forward(mock_radio)  # immediate retry — should be blocked
@@ -173,7 +172,7 @@ def test_forward_handles_radio_error(tmp_path):
     cmd_file.write_text('{"t": "sync", "ts": "2026-03-12T10:00:00"}')
     mock_radio = MagicMock()
     mock_radio.send.side_effect = RuntimeError("radio error")
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         result = cmd.check_and_forward(mock_radio)
     assert result is False
@@ -186,7 +185,7 @@ def test_forward_handles_corrupt_command_file(tmp_path):
     cmd_file = tmp_path / "pico_command.json"
     cmd_file.write_text("not valid json{{{")
     mock_radio = MagicMock()
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         result = cmd.check_and_forward(mock_radio)
     assert result is False
@@ -195,14 +194,14 @@ def test_forward_handles_corrupt_command_file(tmp_path):
 
 # ── CommandManager.handle_ack ─────────────────────────────────────────────────
 
-def test_handle_ack_sync_ack_clears_pending(tmp_path):
-    """sync_ack matching a pending sync command should clear it and delete the file."""
+def test_handle_ack_se_clears_a_pending_sync(tmp_path):
+    """se (the end of a sync chunk) answers a pending sync: clear it and delete the file."""
     cmd_file = tmp_path / "pico_command.json"
-    cmd_file.write_text('{"t": "sync", "ts": "2026-03-12T10:00:00"}')
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    cmd_file.write_text('{"t": "sync", "n": 1, "k": 8}')
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         cmd.pending = {"t": "sync"}
-        result = cmd.handle_ack({"t": "sync_ack", "ts": "2026-03-12T10:00:01"})
+        result = cmd.handle_ack({"t": "se", "g": 1, "o": 512, "c": 8, "m": 1})
     assert result is True
     assert cmd.pending is None
     assert not cmd_file.exists()
@@ -212,7 +211,7 @@ def test_handle_ack_set_interval_ack_clears_pending(tmp_path):
     """set_interval_ack with matching v should clear pending and delete file."""
     cmd_file = tmp_path / "pico_command.json"
     cmd_file.write_text('{"t": "set_interval", "v": 60}')
-    with patch("indoor.communication_indoor.COMMAND_FILE", str(cmd_file)):
+    with patch("communication_indoor.COMMAND_FILE", str(cmd_file)):
         cmd = CommandManager()
         cmd.pending = {"t": "set_interval", "v": 60}
         result = cmd.handle_ack({"t": "set_interval_ack", "v": 60})
@@ -238,15 +237,20 @@ def test_handle_ack_unrelated_packet_returns_false():
     assert cmd.pending is not None  # still pending
 
 
-# ── request_sync ──────────────────────────────────────────────────────────────
+# ── set_interval.py ───────────────────────────────────────────────────────────
 
-def test_request_sync_writes_command_file(tmp_path):
+def test_set_interval_script_addresses_the_node(tmp_path, monkeypatch):
+    import set_interval
+    import sync_indoor
     cmd_file = tmp_path / "pico_command.json"
-    with patch("indoor.sync_indoor.COMMAND_FILE", str(cmd_file)), \
-         patch("indoor.sync_indoor.datetime") as mock_dt:
-        mock_dt.now.return_value.strftime.return_value = "2026-03-12T10:00:00"
-        request_sync()
-    assert cmd_file.exists()
-    data = json.loads(cmd_file.read_text())
-    assert data["t"] == "sync"
-    assert data["ts"] == "2026-03-12T10:00:00"
+    monkeypatch.setattr(sync_indoor, "COMMAND_FILE", str(cmd_file))
+    monkeypatch.setattr(set_interval, "wait_for_interval_ack", lambda: True)
+    set_interval.main(["set_interval.py", "2", "10"])
+    assert json.loads(cmd_file.read_text()) == {"t": "set_interval", "v": 10, "n": 2}
+
+
+@pytest.mark.parametrize("argv", [["x"], ["x", "10"], ["x", "2", "0"], ["x", "two", "10"]])
+def test_set_interval_script_rejects_bad_arguments(argv):
+    import set_interval
+    with pytest.raises(SystemExit):
+        set_interval.main(argv)

@@ -18,7 +18,7 @@ inline as you find gaps, the same way this rewrite happened.
 
 ```
 Automated_Watering_System/
-  raspberrypi/     — Pi-side code: main.py, flask_api.py, db.py; the Pi's
+  raspberrypi/     — Pi-side code: radio_nodes.py, flask_api.py, db.py; the Pi's
                      sensors.db and logs also live here (gitignored)
   dashboard/       — the web dashboard (index.html, JS, CSS) served by GitHub Pages
   circuitpython/   — the garden Pico (node 1), laid out like its CIRCUITPY
@@ -26,6 +26,9 @@ Automated_Watering_System/
   arduino/         — PlatformIO project for Arduino-based nodes (node 2+)
   deploy/          — systemd unit templates and install.sh
   tests/           — software_tests (pytest) and hardware_tests per board
+                     (run them all with: python -m pytest tests/software_tests;
+                     the API's need Flask, so they run on the Pi and are
+                     skipped elsewhere)
   index.html       — redirects GitHub Pages visitors to dashboard/index.html
 ```
 
@@ -47,7 +50,7 @@ script, and path reference below assumes this exact location.
   `push_data.sh` are retired.)
 - **Workflow for new features**: branch off `main` → develop → open a PR
   into `main` → on the Pi, `git pull` and restart whichever service changed
-  (`garden-sensor` and/or `garden-api`; if `deploy/` changed, run
+  (`garden-radio` and/or `garden-api`; if `deploy/` changed, run
   `deploy/install.sh` instead) → confirm it works → delete the
   feature branch. To try a branch on the Pi before merging it, check it out
   there (`git fetch && git checkout <branch>`), then switch back to `main`
@@ -135,7 +138,7 @@ These are genuinely separate on purpose — one needs hardware access, the
 other doesn't, and mixing them causes `pip install --user` errors (a venv
 hides user site-packages).
 
-### 2.1 Radio/hardware venv (for `main.py`)
+### 2.1 Radio/hardware venv (for `radio_nodes.py`)
 
 ```bash
 python3 -m venv ~/env
@@ -161,9 +164,14 @@ systemd units below reference full paths rather than bare commands.
 
 ## Part 3: systemd services
 
-Two services, `garden-sensor` (`main.py`, the radio loop) and `garden-api`
-(the Flask API under gunicorn). Templates live in `deploy/`; `install.sh`
-fills in your username, installs and enables them, and (re)starts both.
+Four services: `garden-radio` (`radio_nodes.py`, the nodes on the radio),
+`garden-wifi` (`wifi_nodes.py`, its counterpart for the nodes on Wi-Fi),
+`garden-api` (the Flask API under gunicorn) and `garden-usb` (pulls a
+node's backlog when it's plugged in). Templates live in `deploy/`;
+`install.sh` fills in your username, installs and enables them, and
+(re)starts them all. (`garden-radio` was `garden-sensor`, and
+`radio_nodes.py` was `main.py`, until October 2026; `install.sh` removes
+the old unit.)
 Run it as your normal user — it calls `sudo` itself:
 
 ```bash
@@ -177,7 +185,7 @@ if it finds any there (the October 2026 folder rename).
 Watch live output:
 
 ```bash
-sudo journalctl -u garden-sensor -f
+sudo journalctl -u garden-radio -f
 sudo journalctl -u garden-api -f
 sudo journalctl -u garden-wifi -f
 sudo journalctl -u garden-usb -f     # nodes plugged in over USB
@@ -263,8 +271,8 @@ Every node's settings live in the Pi's node list,
 `sleep_window`. It's the Pi's own file, not in git (so adding a node never
 needs a commit), and it's in both backups (`deploy/backup.sh` and the
 nightly USB stick). A fresh Pi starts it from `nodes.example.json`, the two
-garden nodes. `main.py` takes its node list from it (restart
-`garden-sensor` after changing it), `wifi_nodes.py` which nodes may connect
+garden nodes. `radio_nodes.py` takes its node list from it (restart
+`garden-radio` after changing it), `wifi_nodes.py` which nodes may connect
 over Wi-Fi, the dashboard names and colors (through `/api/nodes`), and
 `node_setup.py` builds each node's settings from it. Sensors aren't
 listed: both firmwares look for every sensor they know at boot and use
@@ -439,7 +447,7 @@ thrown out. The hardware check after setup (`python3 node_setup.py
 check`) also offers to take either reading from live readings while the
 node is plugged into the Pi.
 
-**Bench testing** — don't add test boards to `nodes.json` (`main.py` would
+**Bench testing** — don't add test boards to `nodes.json` (`radio_nodes.py` would
 start polling them). `tests/hardware_tests/` has bench files with the same
 board IDs (9–12) as Arduino or CircuitPython nodes; point the script at one:
 
@@ -448,11 +456,11 @@ python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_arduino.json -
 ```
 
 A node with a mistake in `nodes.json` is skipped (with a warning) rather
-than stopping `main.py` or `node_setup.py` from running for the others.
+than stopping `radio_nodes.py` or `node_setup.py` from running for the others.
 
 The dashboard reads node names, colors and battery labels from the Pi's
 list too (`/api/nodes`; its built-in list is only used if the Pi can't be
-reached), so a new node needs no other edits: restart `garden-sensor` on
+reached), so a new node needs no other edits: restart `garden-radio` on
 the Pi so it starts polling a radio node (a Wi-Fi node is picked up by
 itself).
 
@@ -484,7 +492,7 @@ the Pi's commands (poll, ping, sync, info, sleep, ...).
 
 | | RFM69 radio | Wi-Fi |
 |---|---|---|
-| On the Pi | `main.py` (`garden-sensor` service) | `raspberrypi/wifi_nodes.py` (`garden-wifi` service), TCP port 5006 |
+| On the Pi | `radio_nodes.py` (`garden-radio` service) | `raspberrypi/wifi_nodes.py` (`garden-wifi` service), TCP port 5006 |
 | Range | Long (the garden) | The house Wi-Fi's reach |
 | Power on the node | Low: about 16 mA listening | High: tens of mA (M0 WiFi) to 80–130 mA (ESP32) while connected |
 | Wiring | An RFM69HCW (FeatherWing or breakout): CS, IRQ (G0 on a breakout), RST and SPI | None: the board's own Wi-Fi chip |
@@ -522,7 +530,7 @@ node that's already in the list:
 Changing the links changes what's built into the node's code, so **re-flash
 it afterwards** (plug it in, `python3 node_setup.py`), and if it just gained
 the radio, restart the radio loop so it starts polling it:
-`sudo systemctl restart garden-sensor`. Where it logs is kept as it was.
+`sudo systemctl restart garden-radio`. Where it logs is kept as it was.
 
 ### Wi-Fi settings
 
@@ -564,9 +572,9 @@ polls it over **the first link in its list that's up**
 - **Wi-Fi is up** while `garden-wifi` has heard from the node in the last
   3 minutes (it pings a connected node each minute even when the radio is
   in use, to know).
-- **The radio is up** while `main.py` counts the node as reachable: 3
+- **The radio is up** while `radio_nodes.py` counts the node as reachable: 3
   missed commands in a row and it's not, until it answers one of the checks
-  `main.py` sends every 5 minutes. If `main.py` isn't running at all, the
+  `radio_nodes.py` sends every 5 minutes. If `radio_nodes.py` isn't running at all, the
   radio counts as down after 3 minutes.
 - If neither is up, the first link keeps trying.
 
@@ -589,7 +597,7 @@ happens:
 | Step (not started → under way → done) | Done when |
 |---|---|
 | Reach the Pi → Reaching the Pi → Reached the Pi | The Pi's API has the request |
-| Send to node → Sending to node → Sent to node | `main.py` sent the poll over the radio ("queued" while it finishes whatever it was doing), or `garden-wifi` sent it over Wi-Fi |
+| Send to node → Sending to node → Sent to node | `radio_nodes.py` sent the poll over the radio ("queued" while it finishes whatever it was doing), or `garden-wifi` sent it over Wi-Fi |
 | Wait for answer → Waiting for node to answer → Node answered | The first packet of the node's answer arrived |
 | Receive readings → Receiving readings → Readings received | Its readings came in (a running count while they do) |
 | Save readings → Saving readings → Readings saved | They're in the database (and on the dashboard) |
@@ -627,7 +635,7 @@ sync collects them (nodes with storage). Both services record the sleep in
 and the dashboard shows it as asleep. On waking it rejoins Wi-Fi by itself.
 
 To sleep a node now (bench tests): `python3 sync_indoor.py sleep <node> <minutes>`
-(this goes through `main.py`, so only to a node on the radio at the time).
+(this goes through `radio_nodes.py`, so only to a node on the radio at the time).
 
 A node refuses to sleep (and the Pi asks again later) if its clock isn't
 set yet, the wake time has already passed, or it's more than 16 hours away.
@@ -670,7 +678,7 @@ weatherapi 40% cloud)`. The dashboard's row shows the reason while it
 sleeps.
 
 Change the battery level per node with `"low_battery_sleep": 40` in
-`nodes.json`, or turn it off with `false`; then restart `garden-sensor`
+`nodes.json`, or turn it off with `false`; then restart `garden-radio`
 (the Wi-Fi service picks it up by itself). The cloud and light levels are
 `DARK_CLOUD` in `weather_outlook.py` and `SUNNY_LUX` in
 `communication_indoor.py`.
@@ -738,18 +746,18 @@ link is on during the day, and at night both are off.
 
 | Command (in `raspberrypi/`) | What it does | Re-flash? | Restart? |
 |---|---|---|---|
-| `python3 node_setup.py add` | Add a node (links, battery saver, sleep window among the questions) | Sets it up | `garden-sensor`, for a radio node |
-| `python3 node_setup.py link N wifi radio` | Change a node's links (in order of preference) | Yes | `garden-sensor`, if it gained the radio |
+| `python3 node_setup.py add` | Add a node (links, battery saver, sleep window among the questions) | Sets it up | `garden-radio`, for a radio node |
+| `python3 node_setup.py link N wifi radio` | Change a node's links (in order of preference) | Yes | `garden-radio`, if it gained the radio |
 | `python3 node_setup.py prefer N radio` | Change which of its two links comes first | No | No |
 | `python3 node_setup.py saver N on [--wifi-check-hours H]` | Battery saver on (or `off`); the node hears it at the next poll | No | No |
 | `python3 node_setup.py --wifi-only` | Re-send the Wi-Fi settings to the plugged-in node | No | No |
 | `python3 node_setup.py list` | Each node's links, storage and sleep window | | |
 | `sudo journalctl -u garden-wifi -f` | Wi-Fi nodes connecting, polls, sleeps | | |
-| `sudo journalctl -u garden-sensor -f` | Radio polls, pings, sleeps | | |
+| `sudo journalctl -u garden-radio -f` | Radio polls, pings, sleeps | | |
 | `sudo journalctl -u garden-usb -f` | Nodes plugged in by USB, and their backlogs pulled | | |
 
 **After pulling new code on the Pi**, restart the services
-(`sudo systemctl restart garden-sensor garden-wifi garden-api garden-usb`): running
+(`sudo systemctl restart garden-radio garden-wifi garden-api garden-usb`): running
 services keep the old code until then. A Wi-Fi node that's turned away with
 "isn't a Wi-Fi node in nodes.json" in `garden-wifi`'s log is usually a
 `garden-wifi` still running code from before that board could use Wi-Fi.
@@ -786,7 +794,7 @@ cd ~/Automated_Watering_System/raspberrypi
 python3 usb_sync.py              # finds the node on any USB serial port
 ```
 
-`main.py` keeps running; while a USB pull runs, it leaves that node's radio
+`radio_nodes.py` keeps running; while a USB pull runs, it leaves that node's radio
 sync alone, and afterwards carries on from wherever the node got to. Lines
 are stored exactly as radio sync stores them. Needs `python3-serial`
 (installed by `setup.sh`; otherwise `sudo apt install python3-serial`), and
@@ -833,12 +841,12 @@ Do these **now**, while a card is known-good — not after the next failure.
    sudo journalctl -u garden-backup -n 20 --no-pager
    systemctl list-timers garden-backup     # when the next run is due
    ```
-   To restore one: stop `garden-sensor`, then
+   To restore one: stop `garden-radio`, then
    `gunzip -c sensors_<date>.db.gz > ~/Automated_Watering_System/raspberrypi/sensors.db`,
    delete any `sensors.db-wal`/`-shm` next to it, and start the service.
    (For a one-off copy by hand, use
    `sqlite3 sensors.db ".backup /path/copy.db"`. Never copy `sensors.db`
-   directly while `garden-sensor` is running: it's a live WAL-mode
+   directly while `garden-radio` is running: it's a live WAL-mode
    database, and a raw copy can catch it half-written.)
 3. **Cloudflare Tunnel credentials** (`/etc/cloudflared/*.json`,
    `cert.pem`, `config.yml`) — back these up somewhere off the Pi. There's

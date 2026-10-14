@@ -30,7 +30,7 @@ except ImportError:
     SENSE_INTERVAL = 3   # seconds between sensor reads; updated via set_interval command
     LOG_INTERVAL = 60    # seconds between SD log writes (a subset of sensor reads) —
                          # every logged line goes back over the radio, so keep this
-                         # well under SYNC_LINES_PER_HOUR in main.py
+                         # well under SYNC_LINES_PER_HOUR in radio_nodes.py
     USE_SD = True
     PINS = {
         "spi_sck": "GP18", "spi_mosi": "GP19", "spi_miso": "GP16",
