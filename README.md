@@ -564,13 +564,16 @@ Refresh and ping test buttons go over it.
 polls that node over its link in use, and shows each step in the row as it
 happens:
 
-| Step | Done when |
+| Step (not started → under way → done) | Done when |
 |---|---|
-| Reached the Pi | The Pi's API has the request |
-| Sent to node | `main.py` sent the poll over the radio ("queued" while it finishes whatever it was doing), or `garden-wifi` sent it over Wi-Fi |
-| Node answered | The first packet of the node's answer arrived |
-| Readings | Its readings came in (a running count while they do) |
-| Saved | They're in the database (and on the dashboard) |
+| Reach the Pi → Reaching the Pi → Reached the Pi | The Pi's API has the request |
+| Send to node → Sending to node → Sent to node | `main.py` sent the poll over the radio ("queued" while it finishes whatever it was doing), or `garden-wifi` sent it over Wi-Fi |
+| Wait for answer → Waiting for node to answer → Node answered | The first packet of the node's answer arrived |
+| Receive readings → Receiving readings → Readings received | Its readings came in (a running count while they do) |
+| Save readings → Saving readings → Readings saved | They're in the database (and on the dashboard) |
+
+A step that fails says what didn't happen ("Not sent", "No answer", ...);
+one that finished with a caveat says that ("No readings", "Nothing to save").
 
 Grey is a step not started yet, teal the one under way, green done, amber
 done with a caveat (or a radio poll sent again because no answer came yet),

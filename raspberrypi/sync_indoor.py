@@ -187,8 +187,8 @@ def poll_progress_answered(node_id, written):
         poll_progress(node_id, "data", note=f"{len(written)} reading{'s' * (len(written) != 1)}")
         poll_progress(node_id, "saved")
     else:
-        poll_progress(node_id, "data", "warn", "none: no sensors answering?")
-        poll_progress(node_id, "saved", "warn", "nothing to save")
+        poll_progress(node_id, "data", "warn", "no sensors answering?")
+        poll_progress(node_id, "saved", "warn")
 
 
 # ── Outbound commands ─────────────────────────────────────────────────────────

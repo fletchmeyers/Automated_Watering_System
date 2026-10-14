@@ -1016,9 +1016,21 @@ async function refresh() {
 // (sync_indoor.POLL_STEPS on the Pi): grey not started, teal under way,
 // green done, amber done with a caveat (or sent again), red where it failed.
 const POLL_STEPS = ['pi', 'sent', 'heard', 'data', 'saved'];
+// Each step's label says where it's got to: what will happen (not started),
+// what's happening (under way, or sent again), what happened (done), or
+// what went wrong.
 const POLL_STEP_LABELS = {
-  pi: 'Reached the Pi', sent: 'Sent to node', heard: 'Node answered', data: 'Readings', saved: 'Saved',
+  pi:    { wait: 'Reach the Pi',     active: 'Reaching the Pi',            done: 'Reached the Pi',    failed: "Didn't reach the Pi" },
+  sent:  { wait: 'Send to node',     active: 'Sending to node',            done: 'Sent to node',      failed: 'Not sent' },
+  heard: { wait: 'Wait for answer',  active: 'Waiting for node to answer', done: 'Node answered',     failed: 'No answer' },
+  data:  { wait: 'Receive readings', active: 'Receiving readings',         done: 'Readings received', warn: 'No readings',     failed: 'Readings cut off' },
+  saved: { wait: 'Save readings',    active: 'Saving readings',            done: 'Readings saved',    warn: 'Nothing to save', failed: 'Not saved' },
 };
+
+function stepLabel(step, state) {
+  const labels = POLL_STEP_LABELS[step];
+  return labels[state === 'retry' ? 'active' : state] || labels.done;
+}
 const POLL_PROGRESS_MS = 400;
 const pollProgressHide = {};   // node -> its timer to tidy a finished strip away
 
@@ -1073,7 +1085,7 @@ function renderPollProgress(nodeId, progress) {
       const time = typeof step.t === 'number' && step.state !== 'wait' ? `${step.t.toFixed(1)} s` : '';
       return `<li class="pp-step pp-${escapeText(step.state)}">
         <span class="pp-dot"></span>
-        <span class="pp-label">${POLL_STEP_LABELS[s]}</span>
+        <span class="pp-label">${stepLabel(s, step.state)}</span>
         <span class="pp-note">${escapeText(step.note || '')}</span>
         <span class="pp-time">${time}</span>
       </li>`;
