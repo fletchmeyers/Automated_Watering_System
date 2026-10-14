@@ -29,7 +29,7 @@ from communication_indoor import (
 
 import db
 from links import NodeList, active_link, write_radio_status
-from nodes import link_plan, load_nodes, radio_node_ids, sleep_windows, sync_node_ids
+from nodes import link_plan, load_nodes, low_battery_sleep, radio_node_ids, sleep_windows, sync_node_ids
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Nodes come from the Pi's nodes.json (python3 node_setup.py add, then restart).
@@ -79,7 +79,11 @@ batch = BatchReceiver(DATA_FILE, db_conn=db_conn)
 timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL)
 info_timer = PollingTimer(NODE_IDS, poll_interval=INFO_INTERVAL)
 health = NodeHealth(NODE_IDS)
-sleeper = SleepScheduler(SLEEP_WINDOWS)
+# Low battery: the newest battery charge (MAX17048 "batt" readings) decides
+# whether a node sleeps through the day (nodes.low_battery_sleep).
+sleeper = SleepScheduler(
+    SLEEP_WINDOWS, low_battery=low_battery_sleep(NODES),
+    battery=lambda n, since: db.latest_value(db_conn, n, "batt", "soc", since))
 
 
 def available(node_id):
@@ -123,7 +127,8 @@ def share_radio_status():
 
 def record_sleep(node_id):
     until = sleeper.asleep_until(node_id)
-    update_node_info(node_id, sleep_until=until.strftime("%Y-%m-%dT%H:%M:%S") if until else None)
+    update_node_info(node_id, sleep_until=until.strftime("%Y-%m-%dT%H:%M:%S") if until else None,
+                     sleep_reason=sleeper.sleep_reason(node_id))
 frags = FragmentReassembler()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────

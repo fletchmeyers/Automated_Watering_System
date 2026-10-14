@@ -315,15 +315,36 @@ class SleepScheduler:
     retry_after seconds. A sleep command that times out counts as accepted:
     the node answers before switching its radio off, so a lost ack and a
     sleeping node look exactly the same from here.
+
+    Low battery: low_battery is {node_id: percent} (nodes.low_battery_sleep)
+    and battery(node_id, since) its newest charge reading since then, or
+    None. A node that's awake outside its window with a reading from the
+    last FRESH_MINUTES below its percent (in practice, the first poll after
+    it wakes in the morning) is sent back to sleep until CHECKIN_MINUTES
+    before its next window: it wakes, answers its polls and syncs a little,
+    and the window then puts it to sleep for the night. Without a fresh
+    reading it stays awake. Not within MIN_DAY_SLEEP_MINUTES of the check-in,
+    so the check-in itself is never slept through.
     '''
-    def __init__(self, windows, wake_grace=90, retry_after=600, now_fn=datetime.now):
+    CHECKIN_MINUTES       = 15
+    FRESH_MINUTES         = 10
+    MIN_DAY_SLEEP_MINUTES = 30
+    MAX_SLEEP_HOURS       = 15   # the nodes refuse more than 16 h (SLEEP_MAX_S)
+
+    def __init__(self, windows, wake_grace=90, retry_after=600, now_fn=datetime.now,
+                 low_battery=None, battery=None):
         self.windows     = dict(windows)
+        self.low_battery = dict(low_battery or {})
+        self.battery     = battery
         self.wake_grace  = wake_grace    # seconds after wake before commands resume
         self.retry_after = retry_after
         self._now        = now_fn
         self._asleep_until = {}          # node ID -> datetime it wakes
         self._not_before   = {}          # node ID -> no sleep command before this
         self._requested    = {}          # node ID -> wake datetime for a manual sleep
+        self._checked_at   = {}          # node ID -> when its battery was last looked at
+        self._why          = {}          # node ID -> why it's asleep, if not its window
+        self._low          = {}          # node ID -> (wake, why, decided at): a low battery's day sleep
 
     @staticmethod
     def _at(day, hhmm):
@@ -343,6 +364,43 @@ class SleepScheduler:
         if now < end:                         # crosses midnight, morning side
             return end
         return None
+
+    def next_window_start(self, node_id, now):
+        '''When node_id's window next starts (now is outside it).'''
+        start = self._at(now, self.windows[node_id][0])
+        return start if start > now else start + timedelta(days=1)
+
+    def day_sleep(self, node_id, now):
+        '''(wake, why) if node_id's battery says sleep through the day; else None.'''
+        level = self.low_battery.get(node_id)
+        if level is None or self.battery is None or node_id not in self.windows:
+            return None
+        checkin = self.next_window_start(node_id, now) - timedelta(minutes=self.CHECKIN_MINUTES)
+        checkin = min(checkin, now + timedelta(hours=self.MAX_SLEEP_HOURS))
+        if checkin - now < timedelta(minutes=self.MIN_DAY_SLEEP_MINUTES):
+            return None
+        # A low battery stands for a few minutes, until the command can go
+        # out (a poll may be due first); the database is asked at most once
+        # a minute (this runs on every pass of the radio loop).
+        decided = self._low.get(node_id)
+        if decided is not None and now - decided[2] < timedelta(minutes=5):
+            return checkin, decided[1]
+        last = self._checked_at.get(node_id)
+        if last is not None and now - last < timedelta(minutes=1):
+            return None
+        self._checked_at[node_id] = now
+        since = (now - timedelta(minutes=self.FRESH_MINUTES)).strftime(ISO_FORMAT)
+        charge = self.battery(node_id, since)
+        if charge is None or charge >= level:
+            self._low.pop(node_id, None)
+            return None
+        why = f"battery {charge:.0f}%, under {level}%"
+        self._low[node_id] = (checkin, why, now)
+        return checkin, why
+
+    def sleep_reason(self, node_id):
+        '''Why node_id is asleep, if it's for something other than its window.'''
+        return self._why.get(node_id) if self.asleep(node_id) else None
 
     def asleep(self, node_id):
         until = self._asleep_until.get(node_id)
@@ -366,9 +424,14 @@ class SleepScheduler:
             if node_id in self._not_before and now < self._not_before[node_id]:
                 continue
             wake = self._requested.get(node_id) or self.window_wake(node_id, now)
+            why = None
+            if wake is None:
+                self._requested.pop(node_id, None)
+                wake, why = self.day_sleep(node_id, now) or (None, None)
             if wake is None or wake <= now:
                 self._requested.pop(node_id, None)
                 continue
+            self._why[node_id] = why
             return {"t": "sleep", "n": node_id, "w": wake.strftime(ISO_FORMAT)}
         return None
 
@@ -393,7 +456,12 @@ class SleepScheduler:
             return
         self._asleep_until[node_id] = wake
         self._requested.pop(node_id, None)
-        print(f"[SLEEP] Node {node_id} asleep until {wake_str}.")
+        self._low.pop(node_id, None)
+        if self._why.get(node_id):
+            print(f"[SLEEP] Node {node_id} asleep until {wake_str} ({self._why[node_id]}): it checks "
+                  "in then, before its night's sleep.")
+        else:
+            print(f"[SLEEP] Node {node_id} asleep until {wake_str}.")
 
 
 def _is_iso(value):

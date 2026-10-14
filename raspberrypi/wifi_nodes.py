@@ -45,7 +45,7 @@ from pathlib import Path
 import db
 from communication_indoor import BatchReceiver, ISO_FORMAT, SleepScheduler
 from links import NodeList, RADIO_STATUS_FILE, WIFI_STATUS_FILE, active_link
-from nodes import NODES_FILE, link_plan, links_of, sleep_windows, wifi_node_ids
+from nodes import NODES_FILE, link_plan, links_of, low_battery_sleep, sleep_windows, wifi_node_ids
 from sync_indoor import (
     DATA_FILE, PING_PROGRESS_FILE, poll_progress, poll_progress_answered, poll_progress_failed,
     poll_progress_reading, poll_progress_sent, recorded_wake, update_node_info,
@@ -100,7 +100,9 @@ class WifiNodes:
         self.data_file = data_file
         self.links = {}      # node ID -> its Link
         self.status = {}
-        self.sleeper = SleepScheduler({})   # windows refreshed from the node list as it changes
+        # Windows and low-battery levels are refreshed from the node list as it changes.
+        self.sleeper = SleepScheduler({}, battery=(
+            (lambda n, since: db.latest_value(db_conn, n, "batt", "soc", since)) if db_conn else None))
         self._polled = {}    # node ID -> True if Wi-Fi is the link in use (polled), False if only pinged
         self._empty = {}     # node ID -> True while its polls come back with nothing to report
 
@@ -224,6 +226,7 @@ class WifiNodes:
     async def _maybe_sleep(self, node_id, link):
         '''Send a sleep command if the node is due one; True if it went to sleep.'''
         self.sleeper.windows = sleep_windows(self.node_list.get())
+        self.sleeper.low_battery = low_battery_sleep(self.node_list.get())
         command = self.sleeper.next_command(lambda n: n == node_id)
         if command is None:
             return False
@@ -234,7 +237,8 @@ class WifiNodes:
         else:
             self.sleeper.handle_ack(ack)
         until = self.sleeper.asleep_until(node_id)
-        update_node_info(node_id, sleep_until=until.strftime(ISO_FORMAT) if until else None)
+        update_node_info(node_id, sleep_until=until.strftime(ISO_FORMAT) if until else None,
+                         sleep_reason=self.sleeper.sleep_reason(node_id))
         return until is not None
 
     @staticmethod

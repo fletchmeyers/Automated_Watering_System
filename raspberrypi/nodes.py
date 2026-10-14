@@ -39,6 +39,13 @@ STORAGE    = ("sd", "flash", "none")
 # link in use, and Wi-Fi sleeps along with the radio. Wi-Fi needs a board
 # with a Wi-Fi chip whose framework can use it there (WIFI_SUPPORT).
 #
+# A node with a sleep_window and a LiPo on a MAX17048 gauge ("batt"
+# readings: its battery is "batt", or not given) also sleeps through the day
+# when its battery is low: below "low_battery_sleep" percent (default
+# LOW_BATTERY_SLEEP), the Pi sends it back to sleep until a check-in just
+# before its next window (communication_indoor.SleepScheduler). false turns
+# that off.
+#
 # A node with both links can have "battery_saver": true, which keeps only
 # the link in use powered (arduino/src/link_power.h): with the radio first,
 # Wi-Fi stays off, unless "wifi_check_hours": N turns it on every N hours to
@@ -347,6 +354,15 @@ def check_node(node_id, node):
                 or not all(isinstance(t, str) and _HHMM.match(t) for t in window)):
             fail('sleep_window must be ["HH:MM", "HH:MM"]')
 
+    low = node.get("low_battery_sleep")
+    if low is not None and low is not False:
+        if not isinstance(low, int) or isinstance(low, bool) or not 1 <= low <= 99:
+            fail("low_battery_sleep must be a battery percentage from 1 to 99, or false")
+        if window is None:
+            fail("low_battery_sleep needs a sleep_window (the node checks in just before it)")
+        if (node.get("battery") or {}).get("type", "batt") != "batt":
+            fail('low_battery_sleep needs a MAX17048 battery gauge (battery type "batt")')
+
 
 def wifi_able(board, framework):
     '''Whether a node on this board and framework can be a Wi-Fi node.'''
@@ -382,6 +398,22 @@ def wifi_node_ids(nodes):
 
 def sleep_windows(nodes):
     return {n: tuple(node["sleep_window"]) for n, node in nodes.items() if node.get("sleep_window")}
+
+
+LOW_BATTERY_SLEEP = 25   # percent: below this, a node with a LiPo gauge sleeps through the day
+
+
+def low_battery_sleep(nodes):
+    '''{node: percent} for the nodes that sleep through the day when their
+    battery is below that: a sleep_window and a MAX17048 ("batt") gauge,
+    unless "low_battery_sleep" is false.'''
+    levels = {}
+    for n, node in nodes.items():
+        level = node.get("low_battery_sleep", LOW_BATTERY_SLEEP)
+        if (node.get("sleep_window") and level is not False
+                and (node.get("battery") or {}).get("type", "batt") == "batt"):
+            levels[n] = level
+    return levels
 
 
 def sync_node_ids(nodes):
