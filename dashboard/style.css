@@ -435,12 +435,11 @@
   .node-action-btn:hover:not(:disabled) { border-color: var(--text); color: var(--text); }
   .node-action-btn:disabled { cursor: default; }
 
-  .ping-result {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .ping-result:empty { display: none; }
+  /* Refresh is just its arrow, which spins while a refresh runs */
+  .refresh-btn { font-size: 13px; padding: 1px 8px; line-height: 18px; }
+  .refresh-icon { display: inline-block; }
+  .refresh-btn.busy .refresh-icon { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Refresh progress: one dot per step of the poll ───────────────────
      grey: not started · teal: under way · green: done · amber: done with a
@@ -542,6 +541,39 @@
   .pp-failed .pp-dot::after { content: '✕'; }
   .pp-failed .pp-note { color: var(--red); }
   .pp-warn .pp-note, .pp-retry .pp-note { color: var(--amber); }
+
+  /* The ping test's box: a dot per ping, the round trip under each */
+  .ping-dots {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+    gap: 4px;
+    max-width: 520px;
+  }
+  .ping-dot {
+    --step-color: var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+  }
+  .pd-mark {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--step-color);
+    background: var(--bg2);
+  }
+  .pd-rtt { font-family: var(--font-mono); font-size: 10px; color: var(--muted); min-height: 13px; }
+  .pd-active { --step-color: var(--teal); }
+  .pd-ok     { --step-color: var(--green); }
+  .pd-miss   { --step-color: var(--red); }
+  .pd-active .pd-mark { background: var(--teal); box-shadow: 0 0 6px var(--teal); animation: pulse 1.2s ease-in-out infinite; }
+  .pd-ok .pd-mark, .pd-miss .pd-mark { background: var(--step-color); }
+  .pd-miss .pd-rtt { color: var(--red); }
+  .ping-summary { margin-top: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  .ping-box .pp-head:last-child { margin-bottom: 0; }
 
   @media (max-width: 700px) {
     .poll-progress { padding: 10px 10px 12px; }

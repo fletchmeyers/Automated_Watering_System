@@ -338,6 +338,8 @@ class WifiNodes:
         a connection check, not a test (no progress file, nothing printed).'''
         link = self.links[node_id]
         results = []
+        if progress_file and not quiet:
+            Path(progress_file).unlink(missing_ok=True)   # not the last test's count
         for q in range(count):
             sent_at = time.monotonic()
             await self._send(link.writer, {"t": "ping", "q": q, "n": node_id})
