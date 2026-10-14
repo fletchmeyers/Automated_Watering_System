@@ -229,11 +229,17 @@ class WifiNodes:
 
     async def _maybe_sleep(self, node_id, link):
         '''Send a sleep command if the node is due one; True if it went to sleep.'''
+        return (await self._sleep(node_id, link))[0] is not None
+
+    async def _sleep(self, node_id, link):
+        '''Send node_id a sleep command if it's due one (its window, a low
+        battery, or a sleep asked for by hand) and record the outcome.
+        Returns (when it wakes, or None; its sleep_ack, or None).'''
         self.sleeper.windows = sleep_windows(self.node_list.get())
         self.sleeper.low_battery = low_battery_sleep(self.node_list.get())
         command = self.sleeper.next_command(lambda n: n == node_id)
         if command is None:
-            return False
+            return None, None
         await self._send(link.writer, command)
         ack = await self._reply(link, "sleep_ack", self.reply_timeout)
         if ack is None:
@@ -243,7 +249,7 @@ class WifiNodes:
         until = self.sleeper.asleep_until(node_id)
         update_node_info(node_id, sleep_until=until.strftime(ISO_FORMAT) if until else None,
                          sleep_reason=self.sleeper.sleep_reason(node_id))
-        return until is not None
+        return until, ack
 
     @staticmethod
     async def _reply(link, kind, timeout):
@@ -383,13 +389,17 @@ class WifiNodes:
                 "results": results, "node_id": node_id}
 
     async def run_request(self, request):
-        '''A request from flask_api.py: {"t": "poll" or "ping", "n": node}.'''
+        '''A request from flask_api.py or sync_indoor.py: {"t": "poll",
+        "ping" or "sleep", "n": node} ("sleep" with "minutes": sleep it now,
+        by hand, over Wi-Fi).'''
         node_id = request.get("n")
         link = self.links.get(node_id)
         if link is None:
             return {"status": "offline"}
         try:
             async with link.lock:
+                if request.get("t") == "sleep":
+                    return await self._sleep_now(node_id, link, request.get("minutes"))
                 if request.get("t") == "poll":
                     batch = BatchReceiver(self.data_file, db_conn=self.db_conn)
                     if await self.poll(node_id, link.reader, link.writer, batch, progress=True):
@@ -403,6 +413,19 @@ class WifiNodes:
                 poll_progress_failed(node_id, "the Wi-Fi connection dropped")
             return {"status": "offline"}
         return {"status": "error", "error": f"unknown request {request.get('t')!r}"}
+
+    async def _sleep_now(self, node_id, link, minutes):
+        '''Sleep node_id for minutes, starting now (sync_indoor.py sleep).'''
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
+            return {"status": "error", "error": "minutes must be a whole number above 0"}
+        if self._asleep(node_id):
+            return {"status": "error", "error": "it's asleep already"}
+        self.sleeper.request_now(node_id, minutes)
+        until, ack = await self._sleep(node_id, link)
+        if until is None:
+            why = (ack or {}).get("why", "no reason given")
+            return {"status": "refused", "why": why}
+        return {"status": "ok", "until": until.strftime(ISO_FORMAT), "acked": ack is not None}
 
     async def control(self, reader, writer):
         '''One request on the control port, one reply, then close.'''
