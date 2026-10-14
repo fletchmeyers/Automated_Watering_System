@@ -165,7 +165,9 @@
     align-items: center;
     gap: 4px 8px;
   }
-  .node-panel-title .node-row-note { flex-basis: 100%; margin-top: 2px; }
+  /* The note wraps under the name rather than widening the column: a long
+     one (asleep, and why) would squeeze the readings beside it */
+  .node-panel-title .node-row-note { flex-basis: 100%; margin-top: 2px; contain: inline-size; }
   .node-panel-head .node-row-ago { margin-left: 0; }
   @media (max-width: 700px) {
     /* Name, then the buttons on a line of their own, then the readings */
