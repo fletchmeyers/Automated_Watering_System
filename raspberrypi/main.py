@@ -28,6 +28,7 @@ from communication_indoor import (
 )
 
 import db
+import weather_outlook
 from links import NodeList, active_link, write_radio_status
 from nodes import link_plan, load_nodes, low_battery_sleep, radio_node_ids, sleep_windows, sync_node_ids
 
@@ -81,9 +82,13 @@ info_timer = PollingTimer(NODE_IDS, poll_interval=INFO_INTERVAL)
 health = NodeHealth(NODE_IDS)
 # Low battery: the newest battery charge (MAX17048 "batt" readings) decides
 # whether a node sleeps through the day (nodes.low_battery_sleep).
+# It also needs the forecasts to agree it's a dark day (weather_outlook.py,
+# kept fresh by garden-api), and no sunny reading from its own light sensor.
 sleeper = SleepScheduler(
     SLEEP_WINDOWS, low_battery=low_battery_sleep(NODES),
-    battery=lambda n, since: db.latest_value(db_conn, n, "batt", "soc", since))
+    battery=lambda n, since: db.latest_value(db_conn, n, "batt", "soc", since),
+    light=lambda n, since: db.latest_value(db_conn, n, "uv", "lux", since),
+    daylight=lambda start, end: weather_outlook.dark_day(start, end))
 
 
 def available(node_id):

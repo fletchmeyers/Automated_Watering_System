@@ -43,6 +43,7 @@ from datetime import datetime
 from pathlib import Path
 
 import db
+import weather_outlook
 from communication_indoor import BatchReceiver, ISO_FORMAT, SleepScheduler
 from links import NodeList, RADIO_STATUS_FILE, WIFI_STATUS_FILE, active_link
 from nodes import NODES_FILE, link_plan, links_of, low_battery_sleep, sleep_windows, wifi_node_ids
@@ -101,8 +102,11 @@ class WifiNodes:
         self.links = {}      # node ID -> its Link
         self.status = {}
         # Windows and low-battery levels are refreshed from the node list as it changes.
-        self.sleeper = SleepScheduler({}, battery=(
-            (lambda n, since: db.latest_value(db_conn, n, "batt", "soc", since)) if db_conn else None))
+        self.sleeper = SleepScheduler(
+            {},
+            battery=(lambda n, since: db.latest_value(db_conn, n, "batt", "soc", since)) if db_conn else None,
+            light=(lambda n, since: db.latest_value(db_conn, n, "uv", "lux", since)) if db_conn else None,
+            daylight=lambda start, end: weather_outlook.dark_day(start, end))
         self._polled = {}    # node ID -> True if Wi-Fi is the link in use (polled), False if only pinged
         self._empty = {}     # node ID -> True while its polls come back with nothing to report
 

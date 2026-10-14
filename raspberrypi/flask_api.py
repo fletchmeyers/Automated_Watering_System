@@ -40,6 +40,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 import soil_calibration
+import weather_outlook
 from links import active_link
 from nodes import NodeConfigError, link_plan, load_nodes, public_nodes
 from wifi_nodes import ask_wifi_service
@@ -345,6 +346,11 @@ def _background():
 
 
 threading.Thread(target=_background, daemon=True).start()
+
+# Every forecast's cloud cover, for the low-battery day sleep (main.py and
+# garden-wifi read the file; only this service has the keys).
+threading.Thread(target=weather_outlook.keep_refreshed, daemon=True, args=(
+    GARDEN_LAT, GARDEN_LON, WEATHER_API_KEYS)).start()
 
 
 @app.route("/api/available_fields", methods=["GET"])
