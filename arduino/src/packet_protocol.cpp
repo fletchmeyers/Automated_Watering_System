@@ -1,5 +1,6 @@
 #include "packet_protocol.h"
 #include "node_sleep.h"
+#include "sensor_guard.h"
 
 // ── Sensor list ──────────────────────────────────────────────────────────
 // Board-specific entries live here (not in the header) since this is where
@@ -51,15 +52,22 @@ void init_sensors() {
   }
 }
 
+// Each sensor that's present and not offline (sensor_guard.h) is read and
+// timed; a failed read leaves nothing for the poll, a slow one is kept.
 void run_sense_cycle() {
   latest_count = 0;
   for (size_t i = 0; i < SENSOR_COUNT && latest_count < MAX_SENSORS; i++) {
-    if (!SENSOR_LIST[i].ok) continue;
+    SensorEntry &sensor = SENSOR_LIST[i];
+    if (!sensor.ok || !sensor_due(sensor)) continue;
 
     latest_readings[latest_count].clear();
     JsonObject obj = latest_readings[latest_count].to<JsonObject>();
-    SENSOR_LIST[i].read_fn(obj);
-    latest_tags[latest_count] = SENSOR_LIST[i].tag;
+    uint32_t started = millis();
+    bool ok = sensor.read_fn(obj);
+    sensor_result(sensor, ok, millis() - started);
+    node_watchdog_feed();   // a few slow sensors in a row mustn't add up to a reset
+    if (!ok) continue;
+    latest_tags[latest_count] = sensor.tag;
     latest_count++;
   }
 }
@@ -69,7 +77,11 @@ void send_latest(PacketSender &sender, const char *timestamp) {
   // or before the first sense cycle). An empty batch_end tells the Pi the
   // node heard it; staying silent makes the Pi time out and, after a few
   // polls, decide the node is unreachable.
-  if (latest_count == 0) {
+  // Sensors taken offline (sensor_guard.h) are listed after the readings.
+  char offline[64];
+  sensors_offline(offline, sizeof(offline));
+  size_t total = latest_count + (offline[0] ? 1 : 0);
+  if (total == 0) {
     sender.send_batch_end(0, 0);
     return;
   }
@@ -85,8 +97,15 @@ void send_latest(PacketSender &sender, const char *timestamp) {
     delay(100);
     sent++;
   }
+  if (offline[0]) {
+    JsonDocument off_doc;
+    off_doc["s"] = offline;
+    sender.send(off_doc, "off");
+    delay(100);
+    sent++;
+  }
 
-  sender.send_batch_end(latest_count, sent);
+  sender.send_batch_end(total, sent);
 }
 
 // ── Clock ────────────────────────────────────────────────────────────────

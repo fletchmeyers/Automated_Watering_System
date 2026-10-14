@@ -40,11 +40,20 @@ extern Adafruit_SHT4x    sht40;
 extern Adafruit_SGP40    sgp40;
 extern Adafruit_INA238   ina_0, ina_1, ina_2, ina_3;
 
+// read_fn returns false when the read plainly didn't work (the library
+// said so, or gave its can't-reach-it value: 65535 from the seesaw, NaN from
+// the battery gauge or power monitors); sensor_guard.h counts those, and
+// slow reads, towards taking the sensor offline.
 struct SensorEntry {
   const char *tag;                  // packet "t" value, e.g. "vbat"
   bool (*init_fn)();                // returns true if the sensor is present
-  void (*read_fn)(JsonObject &pkt); // fills in the rest of the packet fields
+  bool (*read_fn)(JsonObject &pkt); // fills in the rest of the packet fields; false if it failed
   bool ok;                          // set by init_fn at startup
+  // sensor_guard.cpp's bookkeeping (zero to start)
+  uint8_t strikes;                  // bad reads in a row
+  bool off;                         // taken offline
+  uint8_t tries;                    // retries since
+  uint32_t retry_at;                // clock_now() to try it again
 };
 
 // Soil moisture is the middle of SOIL_SAMPLES quick touch reads: a few
@@ -62,36 +71,40 @@ inline uint16_t soil_moisture(Adafruit_seesaw &soil) {
   return reads[SOIL_SAMPLES / 2];
 }
 
-inline bool soil_0_init() { return soil_0.begin(SOIL_ADDR_0); }
-inline void soil_0_read(JsonObject &pkt) {
-  pkt["m"]   = soil_moisture(soil_0);
-  pkt["tmp"] = soil_0.getTemp();
+// The seesaw's touchRead() gives 65535 when it can't reach the sensor.
+inline bool soil_read(Adafruit_seesaw &soil, JsonObject &pkt) {
+  uint16_t m = soil_moisture(soil);
+  if (m == 65535) return false;
+  pkt["m"]   = m;
+  pkt["tmp"] = soil.getTemp();
+  return true;
 }
+
+inline bool soil_0_init() { return soil_0.begin(SOIL_ADDR_0); }
+inline bool soil_0_read(JsonObject &pkt) { return soil_read(soil_0, pkt); }
 
 inline bool soil_1_init() { return soil_1.begin(SOIL_ADDR_1); }
-inline void soil_1_read(JsonObject &pkt) {
-  pkt["m"]   = soil_moisture(soil_1);
-  pkt["tmp"] = soil_1.getTemp();
-}
+inline bool soil_1_read(JsonObject &pkt) { return soil_read(soil_1, pkt); }
 
 inline bool soil_2_init() { return soil_2.begin(SOIL_ADDR_2); }
-inline void soil_2_read(JsonObject &pkt) {
-  pkt["m"]   = soil_moisture(soil_2);
-  pkt["tmp"] = soil_2.getTemp();
-}
+inline bool soil_2_read(JsonObject &pkt) { return soil_read(soil_2, pkt); }
 
 inline bool max17_init() { return max17.begin(); }
-inline void max17_read(JsonObject &pkt) {
-  pkt["v"]   = max17.cellVoltage();
+inline bool max17_read(JsonObject &pkt) {
+  float v = max17.cellVoltage();
+  if (isnan(v)) return false;
+  pkt["v"]   = v;
   pkt["soc"] = max17.cellPercent();
+  return true;
 }
 
 inline bool ltr_init() { return ltr.begin(); }
-inline void ltr_read(JsonObject &pkt) {
+inline bool ltr_read(JsonObject &pkt) {
   ltr.setMode(LTR390_MODE_ALS);
   pkt["lux"] = ltr.readALS();
   ltr.setMode(LTR390_MODE_UVS);
   pkt["uv"]  = ltr.readUVS();
+  return true;   // no failure value to check: only a slow read counts
 }
 
 // Shared with sgp40_read() below for humidity compensation — updated every
@@ -103,18 +116,22 @@ static float last_temp_c = 25.0;
 static float last_rh_pct = 50.0;
 
 inline bool sht40_init() { return sht40.begin(); }
-inline void sht40_read(JsonObject &pkt) {
+inline bool sht40_read(JsonObject &pkt) {
   sensors_event_t humidity, temp;
-  sht40.getEvent(&humidity, &temp);
+  if (!sht40.getEvent(&humidity, &temp)) return false;
   pkt["tmp"] = temp.temperature;
   pkt["rh"]  = humidity.relative_humidity;
   last_temp_c = temp.temperature;
   last_rh_pct = humidity.relative_humidity;
+  return true;
 }
 
 inline bool sgp40_init() { return sgp40.begin(); }
-inline void sgp40_read(JsonObject &pkt) {
-  pkt["voc"] = sgp40.measureRaw(last_temp_c, last_rh_pct);
+inline bool sgp40_read(JsonObject &pkt) {
+  uint16_t raw = sgp40.measureRaw(last_temp_c, last_rh_pct);
+  if (raw == 0) return false;   // the library's failure value
+  pkt["voc"] = raw;
+  return true;
 }
 
 inline bool ina_0_init() { return ina_0.begin(0x40); }
@@ -122,9 +139,16 @@ inline bool ina_1_init() { return ina_1.begin(0x41); }
 inline bool ina_2_init() { return ina_2.begin(0x44); }
 inline bool ina_3_init() { return ina_3.begin(0x45); }
 
-inline void ina_0_read(JsonObject &pkt) { pkt["v"] = ina_0.readBusVoltage(); pkt["ma"] = ina_0.readCurrent(); }
-inline void ina_1_read(JsonObject &pkt) { pkt["v"] = ina_1.readBusVoltage(); pkt["ma"] = ina_1.readCurrent(); }
-inline void ina_2_read(JsonObject &pkt) { pkt["v"] = ina_2.readBusVoltage(); pkt["ma"] = ina_2.readCurrent(); }
-inline void ina_3_read(JsonObject &pkt) { pkt["v"] = ina_3.readBusVoltage(); pkt["ma"] = ina_3.readCurrent(); }
+inline bool ina_read(Adafruit_INA238 &ina, JsonObject &pkt) {
+  float v = ina.readBusVoltage();
+  if (isnan(v)) return false;
+  pkt["v"]  = v;
+  pkt["ma"] = ina.readCurrent();
+  return true;
+}
+inline bool ina_0_read(JsonObject &pkt) { return ina_read(ina_0, pkt); }
+inline bool ina_1_read(JsonObject &pkt) { return ina_read(ina_1, pkt); }
+inline bool ina_2_read(JsonObject &pkt) { return ina_read(ina_2, pkt); }
+inline bool ina_3_read(JsonObject &pkt) { return ina_read(ina_3, pkt); }
 
 #endif

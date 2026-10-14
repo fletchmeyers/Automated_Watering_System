@@ -383,8 +383,8 @@ on. After a watchdog reset its console says
   the other boards stay awake while "asleep" and keep feeding it. Build
   with `-D NO_WATCHDOG` to leave it off for bench debugging.
 
-**Sensors with bad connections** (CircuitPython nodes so far,
-`circuitpython/sensor_guard.py`) — the watchdog catches a sensor that hangs
+**Sensors with bad connections** (`circuitpython/sensor_guard.py`,
+`arduino/src/sensor_guard.cpp`) — the watchdog catches a sensor that hangs
 the code outright; this catches one that keeps failing or dragging (pins
 going corroded, say) without stopping it. A sensor whose read fails, or
 takes over 1 s, **3 times in a row** is taken offline: the node stops
@@ -398,7 +398,12 @@ banner on the sensor's card and lists them in the node's row. The node's
 console says `[SENSOR] sht offline: 3 bad reads in a row (the last took
 2.3 s)`. The VOC sensor's temperature/humidity compensation uses the SHT40
 reading it just took rather than reading the SHT40 again, so a bad SHT40
-doesn't drag it down too.
+doesn't drag it down too. A failed read is one the library reports (an
+exception in CircuitPython; on Arduino, the SHT40 saying so, 65535 from a
+soil sensor, NaN from the battery gauge or power monitors, 0 from the VOC
+sensor); the light sensor has no failure value on Arduino, so only slow
+reads count for it there. Arduino nodes time their retries on the node's
+clock, which keeps counting through the M0's standby sleep.
 
 **Calibrating soil sensors** — out of the box the dashboard shows every
 soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
