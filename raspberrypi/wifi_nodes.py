@@ -46,7 +46,10 @@ import db
 from communication_indoor import BatchReceiver, ISO_FORMAT, SleepScheduler
 from links import NodeList, RADIO_STATUS_FILE, WIFI_STATUS_FILE, active_link
 from nodes import NODES_FILE, link_plan, links_of, sleep_windows, wifi_node_ids
-from sync_indoor import DATA_FILE, PING_PROGRESS_FILE, recorded_wake, update_node_info
+from sync_indoor import (
+    DATA_FILE, PING_PROGRESS_FILE, poll_progress, poll_progress_answered, poll_progress_failed,
+    poll_progress_reading, poll_progress_sent, recorded_wake, update_node_info,
+)
 
 WIFI_PORT     = 5006   # also sent to each node by node_setup.py
 POLL_INTERVAL = 60     # seconds between polls, the same as radio nodes
@@ -260,19 +263,27 @@ class WifiNodes:
             command["lp"] = plan   # how the node uses its two links (link_power.h)
         return command
 
-    async def poll(self, node_id, reader, writer, batch):
-        '''Ask for the latest reading; True once its batch_end has arrived and it's stored.'''
+    async def poll(self, node_id, reader, writer, batch, progress=False):
+        '''Ask for the latest reading; True once its batch_end has arrived and
+        it's stored. progress: it's the dashboard's Refresh, which shows each
+        step (sync_indoor.poll_progress).'''
         await self._send(writer, self._poll_command(node_id))
+        if progress:
+            poll_progress_sent(node_id, "wifi")
         link = self.links.get(node_id)
         got = []
         deadline = time.monotonic() + self.reply_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                if progress:
+                    poll_progress_failed(node_id, f"no answer over Wi-Fi in {self.reply_timeout} s")
                 return False
             try:
                 line = await asyncio.wait_for(reader.readline(), remaining)
             except asyncio.TimeoutError:
+                if progress:
+                    poll_progress_failed(node_id, f"no answer over Wi-Fi in {self.reply_timeout} s")
                 return False
             if not line:
                 raise ConnectionError("the node closed the connection")
@@ -297,9 +308,13 @@ class WifiNodes:
                 continue
             if kind == "ts":
                 batch.open_batch(packet.get("v"))
+                if progress:
+                    poll_progress(node_id, "heard")
             elif kind == "batch_end":
                 batch.close_batch(packet)
                 written = batch.flush(radio=None)   # no radio: nothing to ack over the air
+                if progress:
+                    poll_progress_answered(node_id, written)
                 self._seen(node_id, reading=bool(written))
                 if self._empty.get(node_id, False) != (not written):
                     # Say so when a node starts (or stops) answering with no
@@ -313,6 +328,8 @@ class WifiNodes:
                 return True
             elif "q" in packet:
                 batch.collect(packet)
+                if progress:
+                    poll_progress_reading(node_id)
 
     async def ping(self, node_id, count=10, timeout=PING_TIMEOUT, progress_file=PING_PROGRESS_FILE,
                    quiet=False):
@@ -365,13 +382,15 @@ class WifiNodes:
             async with link.lock:
                 if request.get("t") == "poll":
                     batch = BatchReceiver(self.data_file, db_conn=self.db_conn)
-                    if await self.poll(node_id, link.reader, link.writer, batch):
+                    if await self.poll(node_id, link.reader, link.writer, batch, progress=True):
                         return {"status": "ok", "packets": link.last_packets}
                     return {"status": "timeout", "packets": []}
                 if request.get("t") == "ping":
                     count = max(1, min(int(request.get("count", 10)), 50))
                     return {"status": "ok", **await self.ping(node_id, count)}
         except (ConnectionError, OSError):
+            if request.get("t") == "poll":
+                poll_progress_failed(node_id, "the Wi-Fi connection dropped")
             return {"status": "offline"}
         return {"status": "error", "error": f"unknown request {request.get('t')!r}"}
 

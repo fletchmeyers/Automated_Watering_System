@@ -41,7 +41,7 @@ from flask_cors import CORS
 
 import soil_calibration
 from links import active_link
-from nodes import NodeConfigError, load_nodes, public_nodes
+from nodes import NodeConfigError, link_plan, load_nodes, public_nodes
 from wifi_nodes import ask_wifi_service
 
 from sync_indoor import (
@@ -54,6 +54,10 @@ from sync_indoor import (
     wait_for_ping_result,
     get_ping_progress,
     get_node_info,
+    get_poll_progress,
+    poll_progress_failed,
+    recorded_wake,
+    start_poll_progress,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -143,10 +147,22 @@ def requested_node():
         return 1
 
 
+# Why a Wi-Fi poll came back without an answer, for the dashboard's steps.
+WIFI_FAILURES = {
+    "offline":     "not connected to the Pi over Wi-Fi",
+    "unavailable": "the Pi's Wi-Fi service (garden-wifi) isn't running",
+    "timeout":     "no answer over Wi-Fi",
+}
+
+
 @app.route("/api/poll", methods=["POST"])
 def api_poll():
-    # Poll one node now (body: {"node_id": N}, default 1) and return what it sent.
+    # Poll one node now (body: {"node_id": N, "rid": <the dashboard's id for
+    # this Refresh>}) and return what it sent. Each step along the way is
+    # written to POLL_PROGRESS_FILE for /api/poll_progress.
     node_id = requested_node()
+    body = request.get_json(silent=True) or {}
+    request_id = str(body.get("rid", ""))[:40] or None
     now = time.monotonic()
     with _poll_lock:
         state = _last_poll.setdefault(node_id, {"ts": 0.0, "result": None})
@@ -158,14 +174,32 @@ def api_poll():
                 "last_result": state["result"],
             }), 429
 
-        if is_wifi_node(node_id):
+        wifi = is_wifi_node(node_id)
+        start_poll_progress(node_id, "wifi" if wifi else "radio", request_id)
+
+        wake = recorded_wake(node_id)
+        if wake is not None:
+            # Asleep: the services don't send it anything until it wakes.
+            poll_progress_failed(node_id, f"asleep until {wake.strftime('%H:%M')}")
+            return jsonify({"status": "asleep", "until": wake.strftime("%Y-%m-%dT%H:%M:%S"), "packets": []})
+
+        if wifi:
             reply = ask_wifi_service({"t": "poll", "n": node_id}, timeout=30)
-            result = {"status": reply.get("status", "error"), "packets": reply.get("packets", [])}
+            status = reply.get("status", "error")
+            if status != "ok":
+                poll_progress_failed(node_id, WIFI_FAILURES.get(status, f"Wi-Fi service: {status}"))
+            result = {"status": status, "packets": reply.get("packets", [])}
         else:
-            request_poll(node_id)
-            packets = wait_for_poll_result(timeout=90)
+            try:
+                node = load_nodes(skip_invalid=True).get(node_id, {})
+            except NodeConfigError:
+                node = {}
+            request_poll(node_id, link_plan=link_plan(node))
+            packets = wait_for_poll_result(timeout=90, node_id=node_id)
+            if packets is None:   # (unless main.py already said why)
+                poll_progress_failed(node_id, "no answer: is the radio loop (garden-sensor) running?")
             result = {
-                "status":  "ok" if packets else "timeout",
+                "status":  "ok" if packets else ("empty" if packets == [] else "timeout"),
                 "packets": packets or [],
             }
 
@@ -173,6 +207,17 @@ def api_poll():
         state["result"] = result
 
     return jsonify(result)
+
+
+@app.route("/api/poll_progress", methods=["GET"])
+def api_poll_progress():
+    # The Refresh in progress, step by step (sync_indoor.POLL_STEPS): cheap,
+    # uncached, polled every ~400 ms by the dashboard while it waits.
+    progress = get_poll_progress()
+    if progress is None:
+        return jsonify({"status": "idle"})
+    progress.pop("started", None)
+    return jsonify({"status": "running" if not progress.get("end") else "finished", **progress})
 
 
 @app.route("/api/ping_progress", methods=["GET"])

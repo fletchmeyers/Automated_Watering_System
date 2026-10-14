@@ -17,11 +17,13 @@ from sync_indoor import (
     DATA_FILE, COMMAND_FILE, request_poll, request_sync_chunk, request_info, save_node_info,
     request_command, update_node_info, recorded_wake, SLEEP_REQUEST_FILE,
     POLL_RESULT_FILE, PING_REQUEST_FILE, PING_RESULT_FILE, SYNC_REQUEST_FILE,
+    poll_progress, poll_progress_answered, poll_progress_failed, poll_progress_reading,
+    poll_progress_sent,
     usb_sync_node,
 )
 
 from communication_indoor import (
-    CommandManager, BatchReceiver, PollingTimer, FragmentReassembler, SyncManager,
+    CMD_TIMEOUT, CommandManager, BatchReceiver, PollingTimer, FragmentReassembler, SyncManager,
     NodeHealth, SleepScheduler, run_ping_test,
 )
 
@@ -66,7 +68,13 @@ db_conn = db.get_connection()
 
 sync  = SyncManager(SYNC_NODE_IDS, lines_per_session=SYNC_LINES_PER_HOUR,
                     chunk_lines=SYNC_CHUNK_LINES, db_conn=db_conn)
-cmd   = CommandManager(on_send=sync.on_send)
+def on_send(command):
+    sync.on_send(command)
+    if command.get("t") == "poll":
+        poll_progress_sent(command.get("n"), "radio")   # the dashboard's Refresh, if it's waiting
+
+
+cmd   = CommandManager(on_send=on_send)
 batch = BatchReceiver(DATA_FILE, db_conn=db_conn)
 timer = PollingTimer(NODE_IDS, poll_interval=POLL_INTERVAL)
 info_timer = PollingTimer(NODE_IDS, poll_interval=INFO_INTERVAL)
@@ -133,6 +141,9 @@ while True:
             health.missed(cmd.timed_out.get("n"))
             if cmd.timed_out.get("t") == "sync":
                 sync.abort()
+            if cmd.timed_out.get("t") == "poll":
+                poll_progress_failed(cmd.timed_out.get("n"),
+                                     f"no answer over the radio in {CMD_TIMEOUT} s")
         cmd.timed_out = None
 
     # ── Manual "sleep now" request (sync_indoor.py sleep) ─────────────────
@@ -271,6 +282,7 @@ while True:
 
         if pkt_type == "ts":
             batch.open_batch(data.get("v"))
+            poll_progress(data.get("n"), "heard")
 
         elif pkt_type == "err":
             print(f"[ERROR] Node {data.get('n')} could not send packet "
@@ -288,9 +300,12 @@ while True:
             cmd.handle_ack(data)
             cmd.check_and_forward(rfm69)
 
-            if was_poll and written:
+            if was_poll:
+                # Written even when empty (a node with no sensors answering),
+                # so the dashboard's Refresh hears the answer straight away.
+                poll_progress_answered(data.get("n"), written)
                 try:
-                    Path(POLL_RESULT_FILE).write_text(json.dumps(written))
+                    Path(POLL_RESULT_FILE).write_text(json.dumps(written or []))
                 except Exception as e:
                     print(f"[POLL] Could not write poll result: {e}")
 
@@ -323,6 +338,7 @@ while True:
 
         else:
             complete = batch.collect(data)
+            poll_progress_reading(data.get("n"))
             if complete:
                 batch.flush(rfm69)
                 cmd.check_and_forward(rfm69)
