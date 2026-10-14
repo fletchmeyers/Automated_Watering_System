@@ -383,6 +383,23 @@ on. After a watchdog reset its console says
   the other boards stay awake while "asleep" and keep feeding it. Build
   with `-D NO_WATCHDOG` to leave it off for bench debugging.
 
+**Sensors with bad connections** (CircuitPython nodes so far,
+`circuitpython/sensor_guard.py`) — the watchdog catches a sensor that hangs
+the code outright; this catches one that keeps failing or dragging (pins
+going corroded, say) without stopping it. A sensor whose read fails, or
+takes over 1 s, **3 times in a row** is taken offline: the node stops
+reading it, so the sensors that still work (and the radio) aren't held up.
+It tries it again after 10 minutes, 30 minutes, then every hour, and one
+good read brings it back; restarting the node tries everything straight
+away. The node lists its offline sensors with every poll
+(`{"t":"off","s":"sht,s1"}`), the Pi keeps them in `node_info.json` (and
+says so in its log), and the dashboard puts a red "Offline since ..."
+banner on the sensor's card and lists them in the node's row. The node's
+console says `[SENSOR] sht offline: 3 bad reads in a row (the last took
+2.3 s)`. The VOC sensor's temperature/humidity compensation uses the SHT40
+reading it just took rather than reading the SHT40 again, so a bad SHT40
+doesn't drag it down too.
+
 **Calibrating soil sensors** — out of the box the dashboard shows every
 soil sensor on one fixed scale (raw 200 = 0%, 1023 = 100%), which suits
 few pots. Calibrate a sensor with two readings in its own soil (not air or

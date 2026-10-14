@@ -259,6 +259,24 @@ def update_node_info(node_id, **fields):
     os.replace(tmp, NODE_INFO_FILE)
 
 
+def record_sensors_off(node_id, names, now=None):
+    '''The sensors node_id has taken offline (sensor_guard.py), from a poll's
+    answer: kept in NODE_INFO_FILE as {"sensors_off": {name: since}} for the
+    dashboard, each keeping the time it first went offline. Says so when one
+    goes offline or comes back.'''
+    before = get_node_info().get(str(node_id), {}).get("sensors_off") or {}
+    stamp = (now or datetime.now()).strftime("%Y-%m-%dT%H:%M:%S")
+    after = {name: before.get(name, stamp) for name in names}
+    if after == before:
+        return
+    for name in sorted(set(after) - set(before)):
+        print(f"[SENSOR] Node {node_id} took sensor {name} offline: it kept failing or dragging "
+              "(a corroded connection?). It retries it every so often.")
+    for name in sorted(set(before) - set(after)):
+        print(f"[SENSOR] Node {node_id}'s sensor {name} is answering again.")
+    update_node_info(node_id, sensors_off=after)
+
+
 def recorded_wake(node_id, grace_s=90, now=None):
     '''If NODE_INFO_FILE says node_id is asleep (whichever service sent the
     sleep: main.py over the radio, or the Wi-Fi service), when it wakes;

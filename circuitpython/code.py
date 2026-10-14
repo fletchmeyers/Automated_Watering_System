@@ -39,6 +39,7 @@ import sync_garden
 from sync_garden import check_for_command, dispatch_command
 from wifi_link import WifiLink
 from link_power import LinkPower
+from sensor_guard import SensorGuard
 
 # Sending a packet (and waiting to join Wi-Fi) feeds the watchdog too.
 communication_garden.feed = node_watchdog.feed
@@ -49,6 +50,7 @@ sender        = PacketSender(NODE_ID, rfm69)
 # usb_sync.py). usb_cdc.data is None until boot.py has run after a reset.
 usb           = SerialLink(usb_cdc.data) if usb_cdc.data else None
 usb_sender    = PacketSender(NODE_ID, usb) if usb else None
+guard         = SensorGuard()   # takes a sensor that keeps failing or dragging offline (sensor_guard.py)
 last_sense_at = time.monotonic() - SENSE_INTERVAL  # sense immediately on first loop
 last_log_at   = time.monotonic() - LOG_INTERVAL    # log the first reading too
 
@@ -103,12 +105,22 @@ def sense(now):
     packets = []
 
     for sensor_name, sensor_fn in SENSORS:
+        if not guard.due(sensor_name):
+            continue   # offline: tried again later
+        started = time.monotonic()
+        ok = True
         try:
             packets.append(sensor_fn())
         except Exception as e:
+            ok = False
             print(f"[ERROR] Sensor '{sensor_name}' failed: {e}")
+        note = guard.result(sensor_name, ok, time.monotonic() - started)
+        if note:
+            print(note)
+        node_watchdog.feed()   # a few slow sensors in a row mustn't add up to a reset
 
     store_latest_reading(packets)
+    communication_garden.sensors_offline = guard.offline()   # told to the Pi with each poll
 
     # Polls get every reading; the SD log only keeps one every
     # LOG_INTERVAL, since everything on it has to go back over the radio.

@@ -14,7 +14,7 @@ import time
 import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE
+from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE, record_sensors_off
 
 import db
 
@@ -559,7 +559,24 @@ class BatchReceiver:
     def flush(self, radio):
         return self._flush(radio=radio, send_ack=True)
 
+    def _record_sensors_off(self):
+        '''A poll's answer lists the sensors the node has taken offline, in an
+        "off" packet (sensor_guard.py), or has none: all of them are fine.
+        Recorded for the dashboard, and taken out of the readings.'''
+        node_ids = {p.get("n") for p in self._received if p.get("n") is not None}
+        off = [p for p in self._received if p.get("t") == "off"]
+        self._received = [p for p in self._received if p.get("t") != "off"]
+        if len(node_ids) != 1:
+            return
+        names = [s for p in off for s in str(p.get("s", "")).split(",") if s]
+        try:
+            record_sensors_off(node_ids.pop(), names)
+        except OSError as e:
+            print(f"[SENSOR] Couldn't record offline sensors: {e}")
+
     def _flush(self, radio, send_ack):
+        if self._chunk is None:
+            self._record_sensors_off()
         if not self._received:
             self._reset()
             return None

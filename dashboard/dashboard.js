@@ -856,9 +856,10 @@ function renderNodePanels(byNode) {
     ];
     const reported = store?.at ? `storage reported ${minutesAgo(store.at) || store.at}` : 'no storage report yet';
     const why = store?.sleep_reason ? ` (${store.sleep_reason})` : '';   // e.g. a low battery's day sleep
+    const off = Object.keys(sensorsOff(n));
     const note = (asleep
       ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)}${why} — logging to storage, radio off · ${reported}`
-      : reported) + ` · ${linkLabel(info)}`;
+      : reported) + ` · ${linkLabel(info)}` + (off.length ? ` · sensors offline: ${off.join(', ')}` : '');
 
     // The node's name, battery and storage share the top line with its color
     // picker and close button; radio/system and sensor health sit side by
@@ -974,6 +975,40 @@ function renderSensorCard(el, kind, np) {
   }
 }
 
+// ── Sensors a node has taken offline ──────────────────────────────────────────
+// A node stops reading a sensor that keeps failing or dragging (a corroded
+// connector, say: circuitpython/sensor_guard.py) and tells the Pi, which
+// keeps them in node_info.json as sensors_off: {name: since}. Each one's
+// card gets a banner over its last readings; one offline long enough to
+// have none in view still gets its card, so it isn't silently missing.
+
+function sensorsOff(n) { return nodeStorage[String(n)]?.sensors_off || {}; }
+
+function markOfflineSensors(byNode) {
+  document.querySelectorAll('.sensor-offline').forEach(b => b.remove());
+  for (const id of Object.keys(nodeStorage)) {
+    const n = Number(id);
+    const off = sensorsOff(n);
+    for (const spec of SENSOR_CARDS) {
+      const names = spec.types.filter(t => off[t]);
+      if (!names.length) continue;
+      const el = ensureSensorCard(spec, n);
+      if (!(byNode[n] || []).some(p => spec.types.includes(p.t))) {
+        cardBody(el).innerHTML = '<div class="no-data">No readings</div>';
+      }
+      if (spec.badge) setBadge(el, 'badge-red', 'offline');
+      const since = names.map(t => off[t]).sort()[0].replace('T', ' ').slice(0, 16);
+      const which = spec.types.length > 1 ? ` (${names.join(', ')})` : '';
+      cardBody(el).insertAdjacentHTML('afterbegin', `<div class="sensor-offline">
+        <div class="sensor-offline-title">⚠ Offline${which} since ${since}</div>
+        <div class="sensor-offline-note">It kept failing or dragging, so the node stopped reading it
+          (a corroded connector?). It tries it again after 10 min, 30 min, then hourly, and it comes
+          back by itself once it answers; restarting the node tries it straight away.</div>
+      </div>`);
+    }
+  }
+}
+
 // ── Main refresh ─────────────────────────────────────────────────────────────
 
 // currentPackets holds the last-loaded window in memory so a fresh poll
@@ -996,6 +1031,7 @@ function renderAll(packets) {
       renderSensorCard(ensureSensorCard(spec, node), spec.kind, np);
     }
   }
+  markOfflineSensors(byNode);
   updateGroupWidths();   // a display that just grew (more soil sensors) can widen its combined card
 }
 

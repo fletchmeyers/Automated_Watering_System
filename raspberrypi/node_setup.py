@@ -91,7 +91,7 @@ UF2_CACHE        = Path.home() / ".cache" / "garden-nodes"
 # auto-reload doesn't start the new code before the rest is in place.
 CIRCUITPY_FILES = ("hardware_setup_garden.py", "communication_garden.py",
                    "sync_garden.py", "wifi_link.py", "link_power.py", "node_watchdog.py",
-                   "boot.py", "code.py")
+                   "sensor_guard.py", "boot.py", "code.py")
 # Where a CircuitPython node keeps its Wi-Fi settings (wifi_link.py reads
 # them); code updates never touch it.
 CIRCUITPY_SETTINGS = "settings.toml"

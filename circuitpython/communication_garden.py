@@ -71,6 +71,10 @@ SYNC_LINE_GAP       = 0.1  # seconds between lines during a sync chunk (radio on
 # The Pi can request this at any time via a "poll" command without touching the SD.
 latest_reading = []
 
+# Sensors sensor_guard.py has taken offline (code.py sets it each sense
+# cycle): sent with every poll answer so the Pi can show them.
+sensors_offline = []
+
 
 class SerialLink:
     '''
@@ -183,7 +187,10 @@ def send_latest(sender, timestamp):
     # Always answer, even with nothing to report: an empty batch_end tells
     # the Pi the node heard the poll, where silence makes it time out and
     # eventually mark the node unreachable.
-    if not latest_reading:
+    packets = list(latest_reading)
+    if sensors_offline:
+        packets.append({"t": "off", "s": ",".join(sensors_offline)})   # see sensor_guard.py
+    if not packets:
         print("[POLL] Nothing to report, sending an empty batch.")
         sender.send_batch_end(expected=0, sent=0)
         return
@@ -192,7 +199,7 @@ def send_latest(sender, timestamp):
     time.sleep(0.1)
 
     sent = 0
-    for pkt in latest_reading:
+    for pkt in packets:
         try:
             sender.send(pkt)
             time.sleep(0.1)
@@ -200,7 +207,7 @@ def send_latest(sender, timestamp):
         except Exception as e:
             print(f"[POLL] Failed to send packet {pkt.get('t')}: {e}")
 
-    sender.send_batch_end(expected=len(latest_reading), sent=sent)
+    sender.send_batch_end(expected=len(packets), sent=sent)
 
 
 def append_to_sd(packets, timestamp):
@@ -377,9 +384,16 @@ def package_uv_data(sensor=None):
     s = sensor if sensor is not None else ltr
     return {"t": "uv", "uv": s.uvs, "uvi": round(s.uvi, 2), "lux": round(s.lux, 1)}
 
+# The SHT40's last reading (temperature, humidity, when), which the VOC
+# sensor's compensation uses instead of reading the SHT40 a second time: if
+# the SHT40's connection goes bad, the VOC sensor isn't dragged down with it.
+last_sht = None
+
 def package_sht40_data(sensor=None):
+    global last_sht
     s = sensor if sensor is not None else sht40
     temperature, relative_humidity = s.measurements
+    last_sht = (temperature, relative_humidity, time.monotonic())
     return {"t": "sht", "tmp": round(temperature, 2), "rh": round(relative_humidity, 1)}
 
 def package_sgp40_data(sensor=None, temp=None, humidity=None):
@@ -418,9 +432,12 @@ def make_soil_fn(sensor_id, sensor_obj):
     return read
 
 def make_sgp40_compensated_fn(sht_sensor, sgp_sensor):
+    '''Compensated with the SHT40's reading from this sense cycle (it's read
+    first), or uncompensated if there's none from the last minute.'''
     def read():
-        temperature, relative_humidity = sht_sensor.measurements
-        return package_sgp40_data(sensor=sgp_sensor, temp=temperature, humidity=relative_humidity)
+        if last_sht is not None and time.monotonic() - last_sht[2] < 60:
+            return package_sgp40_data(sensor=sgp_sensor, temp=last_sht[0], humidity=last_sht[1])
+        return package_sgp40_data(sensor=sgp_sensor)
     return read
 
 
