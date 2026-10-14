@@ -448,6 +448,114 @@
     min-width: 1px;
   }
 
+  /* ── Refresh progress: one dot per step of the poll ───────────────────
+     grey: not started · teal: under way · green: done · amber: done with a
+     caveat, or sent again · red: where it failed. */
+  .poll-progress {
+    --pp-color: var(--teal);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--pp-color);
+    border-radius: 8px;
+    padding: 12px 16px 14px;
+    margin: -12px 0 20px;
+  }
+  .poll-progress.is-done   { --pp-color: var(--green); }
+  .poll-progress.is-warn   { --pp-color: var(--amber); }
+  .poll-progress.is-failed { --pp-color: var(--red); }
+
+  .pp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .pp-title { font-size: 13px; color: var(--text); }
+  .poll-progress.is-failed .pp-title { color: var(--red); }
+  .pp-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .pp-close:hover { color: var(--text); }
+
+  .pp-steps {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .pp-step {
+    --step-color: var(--border);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 3px;
+    padding: 0 4px;
+    min-width: 0;
+  }
+  /* The bar leading into each step, in that step's color */
+  .pp-step + .pp-step::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    right: calc(50% + 9px);
+    width: calc(100% - 18px);
+    height: 2px;
+    background: var(--step-color);
+    opacity: 0.6;
+  }
+  .pp-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--step-color);
+    background: var(--bg2);
+    font-size: 9px;
+    line-height: 10px;
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .pp-label { font-size: 12px; color: var(--muted); }
+  .pp-note, .pp-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .pp-note:empty, .pp-time:empty { display: none; }
+
+  .pp-active, .pp-retry { --step-color: var(--teal); }
+  .pp-retry  { --step-color: var(--amber); }
+  .pp-done   { --step-color: var(--green); }
+  .pp-warn   { --step-color: var(--amber); }
+  .pp-failed { --step-color: var(--red); }
+  .pp-step:not(.pp-wait) .pp-label { color: var(--text); }
+  .pp-active .pp-dot, .pp-retry .pp-dot {
+    background: var(--step-color);
+    box-shadow: 0 0 6px var(--step-color);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .pp-done .pp-dot, .pp-warn .pp-dot, .pp-failed .pp-dot { background: var(--step-color); }
+  .pp-done .pp-dot::after   { content: '✓'; }
+  .pp-warn .pp-dot::after   { content: '!'; }
+  .pp-failed .pp-dot::after { content: '✕'; }
+  .pp-failed .pp-note { color: var(--red); }
+  .pp-warn .pp-note, .pp-retry .pp-note { color: var(--amber); }
+
+  @media (max-width: 700px) {
+    .poll-progress { padding: 10px 10px 12px; }
+    .pp-label { font-size: 11px; }
+    .pp-note, .pp-time { font-size: 10px; }
+    .is-failed .pp-failed .pp-note { display: none; }   /* the title already says it */
+  }
+
   .card.dragging {
     opacity: 0.4;
   }
@@ -639,6 +747,12 @@
     #refresh-btn, #ping-btn {
       flex: 1 1 auto;
       text-align: center;
+    }
+
+    /* A long node name would push the row off the screen: a line of its own */
+    #ping-node-select {
+      flex: 1 1 100%;
+      min-width: 0;
     }
 
     #ping-result {

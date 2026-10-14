@@ -85,6 +85,112 @@ NODE_INFO_FILE = Path(__file__).parent / "node_info.json"
 WAIT_TIMEOUT = 90   # seconds before giving up waiting for a response
 
 
+# ── A manual poll's progress (the dashboard's Refresh) ────────────────────────
+# flask_api.py starts it; main.py (radio) or wifi_nodes.py (Wi-Fi) moves it
+# along as the poll goes out and the node answers; /api/poll_progress hands
+# it to the dashboard, which draws one step per entry in POLL_STEPS. Each
+# step is "wait" (not started), "active", "done", "warn" (done, with a
+# caveat: e.g. no readings), "retry" (still going, but sent again) or
+# "failed" (the poll ends there), with when it got there ("t", seconds from
+# the start) and a "note" to show under it.
+POLL_PROGRESS_FILE = "/tmp/garden_poll_progress.json"
+POLL_STEPS = ("pi", "sent", "heard", "data", "saved")
+
+
+def get_poll_progress():
+    try:
+        return json.loads(Path(POLL_PROGRESS_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_poll_progress(progress):
+    tmp = Path(f"{POLL_PROGRESS_FILE}.{os.getpid()}.tmp")   # each service its own
+    tmp.write_text(json.dumps(progress))
+    tmp.replace(POLL_PROGRESS_FILE)
+
+
+def start_poll_progress(node_id, link, request_id=None):
+    '''A manual poll of node_id over link ("radio" or "wifi") has reached the Pi.'''
+    _write_poll_progress({"id": request_id, "n": node_id, "link": link, "started": time.time(),
+                          "end": False, "steps": {s: {"state": "wait"} for s in POLL_STEPS}})
+    poll_progress(node_id, "pi")
+    poll_progress(node_id, "sent", "active", "queued")
+
+
+def poll_progress(node_id, step, state="done", note=None):
+    '''Move node_id's manual poll (if one is running) to step. A step that's
+    done (or warn) also finishes the ones before it, which an answer can
+    skip (an empty one has no header), and starts the next.'''
+    progress = get_poll_progress()
+    if progress is None or progress.get("n") != node_id or progress.get("end"):
+        return
+    steps = progress["steps"]
+    steps[step]["state"] = state
+    steps[step]["t"] = round(time.time() - progress["started"], 1)
+    if note is not None:
+        steps[step]["note"] = note
+    i = POLL_STEPS.index(step)
+    if state in ("done", "warn"):
+        for earlier in POLL_STEPS[:i]:
+            if steps[earlier]["state"] not in ("done", "warn"):
+                steps[earlier]["state"] = "done"
+        if i + 1 < len(POLL_STEPS):
+            if steps[POLL_STEPS[i + 1]]["state"] == "wait":
+                steps[POLL_STEPS[i + 1]]["state"] = "active"
+        else:
+            progress["end"] = True
+    elif state == "failed":
+        progress["end"] = True
+    _write_poll_progress(progress)
+
+
+def poll_progress_failed(node_id, note):
+    '''The poll ended without an answer: the step it got to fails, with note.'''
+    progress = get_poll_progress()
+    if progress is None or progress.get("n") != node_id or progress.get("end"):
+        return
+    steps = progress["steps"]
+    step = next((s for s in POLL_STEPS if steps[s]["state"] not in ("done", "warn")), POLL_STEPS[-1])
+    poll_progress(node_id, step, "failed", note)
+
+
+def poll_progress_sent(node_id, link):
+    '''The poll went out to the node (again, if it's a retry).'''
+    progress = get_poll_progress()
+    if progress is None or progress.get("n") != node_id or progress.get("end"):
+        return
+    sent = progress["steps"]["sent"]
+    if sent["state"] == "done":
+        tries = sent.get("tries", 1) + 1
+        sent["tries"] = tries
+        _write_poll_progress(progress)
+        poll_progress(node_id, "heard", "retry", f"sent again (try {tries})")
+    else:
+        poll_progress(node_id, "sent", note=f"over {'Wi-Fi' if link == 'wifi' else 'the radio'}")
+
+
+def poll_progress_reading(node_id):
+    '''Another reading of the poll's answer has come in.'''
+    progress = get_poll_progress()
+    if progress is None or progress.get("n") != node_id or progress.get("end"):
+        return
+    count = progress["steps"]["data"].get("count", 0) + 1
+    progress["steps"]["data"]["count"] = count
+    _write_poll_progress(progress)
+    poll_progress(node_id, "data", "active", f"{count} so far")
+
+
+def poll_progress_answered(node_id, written):
+    '''The node's answer is complete (batch_end) and written is what was stored.'''
+    if written:
+        poll_progress(node_id, "data", note=f"{len(written)} reading{'s' * (len(written) != 1)}")
+        poll_progress(node_id, "saved")
+    else:
+        poll_progress(node_id, "data", "warn", "none: no sensors answering?")
+        poll_progress(node_id, "saved", "warn", "nothing to save")
+
+
 # ── Outbound commands ─────────────────────────────────────────────────────────
 
 def request_poll(node_id=1, link_plan=None):
@@ -211,16 +317,25 @@ def request_ping_test(node_id=1, count=10):
     print(f"[PING] Test requested: node={node_id}, count={count}")
 
 
-def wait_for_poll_result(timeout=WAIT_TIMEOUT):
+def wait_for_poll_result(timeout=WAIT_TIMEOUT, node_id=None):
     '''
     Block until POLL_RESULT_FILE appears, then return its parsed packet list.
     Used by /api/poll to hand back real sensor values the moment main.py has
-    them.
+    them. With node_id, stops early (None) once that node's poll progress
+    has failed: main.py gave up on it.
     '''
     print(f"[POLL] Waiting up to {timeout}s for poll result...")
+    # [] (written by main.py when the node answered with no readings) is an
+    # answer too; only None means it never came.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(0.3)
+        if node_id is not None:
+            progress = get_poll_progress()
+            if (progress and progress.get("n") == node_id and progress.get("end")
+                    and any(s["state"] == "failed" for s in progress["steps"].values())):
+                print("[POLL] The radio loop gave up on the poll.")
+                return None
         if Path(POLL_RESULT_FILE).exists():
             try:
                 packets = json.loads(Path(POLL_RESULT_FILE).read_text())

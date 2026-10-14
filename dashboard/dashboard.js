@@ -1012,61 +1012,163 @@ function selectedNode() {
   return sel && sel.value ? parseInt(sel.value, 10) : 1;
 }
 
+// Refresh shows each step of the poll as it happens, from /api/poll_progress
+// (sync_indoor.POLL_STEPS on the Pi): grey not started, teal under way,
+// green done, amber done with a caveat (or sent again), red where it failed.
+const POLL_STEPS = ['pi', 'sent', 'heard', 'data', 'saved'];
+const POLL_STEP_LABELS = {
+  pi: 'Reached the Pi', sent: 'Sent to node', heard: 'Node answered', data: 'Readings', saved: 'Saved',
+};
+const POLL_PROGRESS_MS = 400;
+let pollProgressHide = null;
+
+function escapeText(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+// Progress the browser knows on its own: the first step at state, the rest not started.
+function localPollProgress(state, note) {
+  const steps = {};
+  POLL_STEPS.forEach(s => { steps[s] = { state: 'wait' }; });
+  steps.pi = { state, note };
+  return { steps, end: state !== 'active' };
+}
+
+function hidePollProgress() {
+  clearTimeout(pollProgressHide);
+  const el = document.getElementById('poll-progress');
+  if (el) el.hidden = true;
+}
+
+function renderPollProgress(nodeId, progress) {
+  const el = document.getElementById('poll-progress');
+  if (!el) return;
+  clearTimeout(pollProgressHide);
+  const name = escapeText(nodeInfo(nodeId).name);
+  const steps = progress.steps;
+  const failed = POLL_STEPS.find(s => steps[s].state === 'failed');
+  const warned = POLL_STEPS.find(s => steps[s].state === 'warn');
+  const link = progress.link === 'wifi' ? ' over Wi-Fi' : progress.link === 'radio' ? ' over the radio' : '';
+  let title, cls;
+  if (failed) {
+    title = `Couldn't refresh ${name}: ${escapeText(steps[failed].note || 'failed')}`;
+    cls = 'is-failed';
+  } else if (progress.end) {
+    title = warned ? `${name} answered${link}, with no readings` : `${name} refreshed${link}`;
+    cls = warned ? 'is-warn' : 'is-done';
+  } else {
+    title = `Refreshing ${name}${link}...`;
+    cls = 'is-active';
+  }
+  if (progress.title) title = escapeText(progress.title);   // the browser's own words (e.g. cooldown)
+  el.className = `poll-progress ${cls}`;
+  el.innerHTML = `
+    <div class="pp-head">
+      <span class="pp-title">${title}</span>
+      <button type="button" class="pp-close" onclick="hidePollProgress()" title="Close">×</button>
+    </div>
+    <ol class="pp-steps">${POLL_STEPS.map(s => {
+      const step = steps[s] || { state: 'wait' };
+      const time = typeof step.t === 'number' && step.state !== 'wait' ? `${step.t.toFixed(1)} s` : '';
+      return `<li class="pp-step pp-${escapeText(step.state)}">
+        <span class="pp-dot"></span>
+        <span class="pp-label">${POLL_STEP_LABELS[s]}</span>
+        <span class="pp-note">${escapeText(step.note || '')}</span>
+        <span class="pp-time">${time}</span>
+      </li>`;
+    }).join('')}</ol>`;
+  el.hidden = false;
+  // A clean refresh tidies itself away; anything else stays until closed.
+  if (progress.end && !failed && (!warned || progress.title)) pollProgressHide = setTimeout(hidePollProgress, 6000);
+}
+
+async function fetchPollProgress(rid) {
+  try {
+    const resp = await fetch(`${API_BASE}/api/poll_progress`, { cache: 'no-store' });
+    const p = await resp.json();
+    return p.id === rid ? p : null;   // someone else's refresh, or an old one
+  } catch (e) {
+    return null;   // skip this tick; the final answer still lands
+  }
+}
+
 async function triggerRefresh() {
   const btn = document.getElementById('refresh-btn');
   const original = btn.textContent;
   btn.disabled = true;
+  const finish = () => { btn.textContent = original; btn.disabled = false; };
 
   // If API_BASE hasn't been set up, there's nothing to poll — just reload.
   if (!API_BASE || API_BASE.includes('YOURDOMAIN')) {
     btn.textContent = '↺ refreshing...';
     await refresh();
-    btn.textContent = original;
-    btn.disabled = false;
+    finish();
     return;
   }
 
-  btn.textContent = '↺ polling...';
+  const nodeId = selectedNode();
+  const rid = Math.random().toString(36).slice(2, 10);
+  let progress = localPollProgress('active', 'sending...');
+  renderPollProgress(nodeId, progress);
+  btn.textContent = '↺ refreshing...';
+
+  let ended = false;
+  const timer = setInterval(async () => {
+    const p = await fetchPollProgress(rid);
+    if (p && !ended) {
+      progress = p;
+      renderPollProgress(nodeId, p);
+    }
+  }, POLL_PROGRESS_MS);
+
+  let resp, data;
   try {
-    const resp = await fetch(`${API_BASE}/api/poll`, {
+    resp = await fetch(`${API_BASE}/api/poll`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node_id: selectedNode() }),
+      body: JSON.stringify({ node_id: nodeId, rid }),
     });
-    const data = await resp.json();
-
-    if (resp.status === 429) {
-      const wait = Math.ceil(data.retry_after || 5);
-      btn.textContent = `↺ wait ${wait}s`;
-      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, wait * 1000);
-      return;
-    }
-
-    if (data.status === 'ok' && Array.isArray(data.packets) && data.packets.length) {
-      // Real sensor values are already here — render them immediately.
-      currentPackets = mergePackets(currentPackets, withKnownTs(data.packets));
-      renderAll(currentPackets);
-      btn.textContent = original;
-      btn.disabled = false;
-      return;
-    }
-
-    // Fallback: poll reported timeout or came back with no packets — reload
-    // from /api/data after a short delay, in case the result just didn't
-    // make it back in time.
-    btn.textContent = '↺ syncing...';
-    setTimeout(async () => {
-      await refresh();
-      btn.textContent = original;
-      btn.disabled = false;
-    }, 4000);
-    return;
+    data = await resp.json();
   } catch (e) {
+    clearInterval(timer);
     console.error('poll request failed', e);
-    btn.textContent = '↺ error';
-    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000);
+    renderPollProgress(nodeId, localPollProgress('failed', "couldn't reach the Pi's API"));
+    finish();
     return;
   }
+  clearInterval(timer);
+  ended = true;
+
+  if (resp.status === 429) {
+    const wait = Math.ceil(data.retry_after || 5);
+    renderPollProgress(nodeId, {
+      ...localPollProgress('warn', `try again in ${wait} s`),
+      title: `${nodeInfo(nodeId).name} was refreshed under 30 s ago`,
+    });
+    btn.textContent = `↺ wait ${wait}s`;
+    setTimeout(finish, wait * 1000);
+    return;
+  }
+
+  // The Pi's last word on each step (the 400 ms ticks can miss the end).
+  const last = await fetchPollProgress(rid);
+  if (last) progress = last;
+  if (!progress.end) {
+    // An API without step-by-step progress (or it was lost): say what came back.
+    progress = data.status === 'ok'
+      ? { ...progress, end: true, steps: Object.fromEntries(POLL_STEPS.map(s => [s, { state: 'done' }])) }
+      : localPollProgress('failed', data.status || 'failed');
+  }
+  renderPollProgress(nodeId, progress);
+
+  if (data.status === 'ok' && Array.isArray(data.packets) && data.packets.length) {
+    // Real sensor values are already here — render them immediately.
+    currentPackets = mergePackets(currentPackets, withKnownTs(data.packets));
+    renderAll(currentPackets);
+  } else if (data.status === 'ok' || data.status === 'empty') {
+    await refresh();   // the node answered; show whatever the Pi has
+  }
+  finish();
 }
 
 // ── Radio ping test (independent of refresh — result comes straight back in

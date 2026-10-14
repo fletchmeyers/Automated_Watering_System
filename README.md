@@ -558,6 +558,29 @@ The dashboard's ping test menu shows each node's link in use right now,
 e.g. "ESP32-V2 · Wi-Fi (radio backup)", and Refresh and the ping test go
 over it.
 
+### Refresh, step by step
+
+The dashboard's **↺ refresh** polls the node picked beside it, any node,
+over its link in use, and shows each step under the header as it happens:
+
+| Step | Done when |
+|---|---|
+| Reached the Pi | The Pi's API has the request |
+| Sent to node | `main.py` sent the poll over the radio ("queued" while it finishes whatever it was doing), or `garden-wifi` sent it over Wi-Fi |
+| Node answered | The first packet of the node's answer arrived |
+| Readings | Its readings came in (a running count while they do) |
+| Saved | They're in the database (and on the dashboard) |
+
+Grey is a step not started yet, teal the one under way, green done, amber
+done with a caveat (or a radio poll sent again because no answer came yet),
+and red where it failed, with why: asleep until a given time (it fails at
+once, rather than waiting), no answer in 45 s over the radio, not connected
+over Wi-Fi, a service not running. A node that answers with no readings (no
+sensors answering) ends amber. A clean refresh tidies itself away after a
+few seconds; anything else stays until closed (×). The progress comes from
+`/api/poll_progress`, which the Pi's services write as the poll moves along
+(`POLL_PROGRESS_FILE` in `sync_indoor.py`).
+
 ### Sleep windows
 
 Any node can sleep every night: `"sleep_window": ["19:00", "07:00"]` (Pi's
