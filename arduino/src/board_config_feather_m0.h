@@ -105,12 +105,13 @@ inline bool vbat_init() {
   pinMode(VBAT_PIN, INPUT);
   return true;
 }
-inline void vbat_read(JsonObject &pkt) {
+inline bool vbat_read(JsonObject &pkt) {
   float measured = analogRead(VBAT_PIN);
   measured *= 2.0;          // divider halves the voltage
   measured *= 3.3;          // reference voltage
   measured /= 1024.0;       // 10-bit ADC
   pkt["v"] = measured;
+  return true;
 }
 
 #endif

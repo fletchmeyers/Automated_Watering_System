@@ -98,8 +98,9 @@ inline void board_early_init() {
 #ifdef BATT_MONITOR
   #define VBAT_PIN BATT_MONITOR
   inline bool vbat_init() { return true; }
-  inline void vbat_read(JsonObject &pkt) {
+  inline bool vbat_read(JsonObject &pkt) {
     pkt["v"] = analogReadMilliVolts(BATT_MONITOR) * 2 / 1000.0;
+    return true;
   }
 #endif
 
