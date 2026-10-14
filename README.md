@@ -634,8 +634,12 @@ sync collects them (nodes with storage). Both services record the sleep in
 `node_info.json`, so neither polls a sleeping node or counts it as missing,
 and the dashboard shows it as asleep. On waking it rejoins Wi-Fi by itself.
 
-To sleep a node now (bench tests): `python3 sync_indoor.py sleep <node> <minutes>`
-(this goes through `radio_nodes.py`, so only to a node on the radio at the time).
+To sleep a node now (bench tests): `python3 sync_indoor.py sleep <node> <minutes>`.
+It goes over the node's link in use: over Wi-Fi, `garden-wifi` sends it
+straight away and the command says how it went ("asleep until ...", or why
+not: it refused and why, it isn't connected); over the radio,
+`radio_nodes.py` sends it with its next command (watch
+`journalctl -u garden-radio -f`).
 
 A node refuses to sleep (and the Pi asks again later) if its clock isn't
 set yet, the wake time has already passed, or it's more than 16 hours away.

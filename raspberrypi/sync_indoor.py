@@ -236,6 +236,40 @@ def request_sleep(node_id, minutes):
     print(f"[SLEEP] Sleep requested for node {node_id} ({minutes} min).")
 
 
+def sleep_now(node_id, minutes, link=None, ask_wifi=None):
+    '''Sleep node_id for `minutes` by hand, over its link in use (or link):
+    over Wi-Fi garden-wifi sends it straight away and says how it went;
+    over the radio radio_nodes.py sends it with its next command.'''
+    if link is None:
+        from links import active_link
+        from nodes import load_nodes
+        node = load_nodes(skip_invalid=True).get(node_id)
+        if node is None:
+            print(f"[SLEEP] Node {node_id} isn't in nodes.json.")
+            return False
+        link = active_link(node_id, node)
+    if link != "wifi":
+        request_sleep(node_id, minutes)
+        print("[SLEEP] Sent over the radio with radio_nodes.py's next command — "
+              "journalctl -u garden-radio -f")
+        return True
+    if ask_wifi is None:
+        from wifi_nodes import ask_wifi_service as ask_wifi
+    print(f"[SLEEP] Asking node {node_id} over Wi-Fi to sleep for {minutes} min...")
+    reply = ask_wifi({"t": "sleep", "n": node_id, "minutes": minutes}, timeout=30)
+    status = reply.get("status")
+    if status == "ok":
+        note = "" if reply.get("acked") else " (no answer, so assumed asleep)"
+        print(f"[SLEEP] Node {node_id} asleep until {reply['until'].replace('T', ' ')}{note}.")
+        return True
+    print(f"[SLEEP] Node {node_id} didn't go to sleep: " + {
+        "refused":     f"it refused ({reply.get('why')})",
+        "offline":     "it isn't connected to the Pi over Wi-Fi",
+        "unavailable": "the Pi's Wi-Fi service (garden-wifi) isn't running",
+    }.get(status, reply.get("error", str(reply))) + ".")
+    return False
+
+
 def request_command(command):
     '''Write any prepared command (e.g. SleepScheduler's) to the command file.'''
     Path(COMMAND_FILE).write_text(json.dumps(command))
@@ -532,8 +566,8 @@ if __name__ == "__main__":
         if len(args) < 3:
             print("Usage: python3 sync_indoor.py sleep <node> <minutes>")
             sys.exit(1)
-        request_sleep(int(args[1]), int(args[2]))
-        print("[SLEEP] Progress is logged by radio_nodes.py — journalctl -u garden-radio -f")
+        if not sleep_now(int(args[1]), int(args[2])):
+            sys.exit(1)
 
     elif args[0] == "info":
         info = get_node_info()
