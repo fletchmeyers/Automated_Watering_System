@@ -820,6 +820,11 @@ function renderNodePanels(byNode) {
           <div class="node-panel-title"></div>
           <div class="node-metrics"></div>
           <div class="node-panel-tools">
+            <button type="button" class="node-action-btn" id="refresh-btn-${n}" onclick="triggerRefresh(${n})"
+                    title="Poll this node now, over its link in use">↺ refresh</button>
+            <button type="button" class="node-action-btn" id="ping-btn-${n}" onclick="runPingTest(${n})"
+                    title="Ping this node 10 times, over its link in use">⇄ ping test</button>
+            <span class="ping-result" id="ping-result-${n}"></span>
             <label class="node-color" title="This node's color on the dashboard (kept in this browser)">
               <input type="color" class="node-color-picker" value="${info.color}"
                      oninput="setNodeColor(${n}, this.value, false)" onchange="setNodeColor(${n}, this.value)">
@@ -829,6 +834,7 @@ function renderNodePanels(byNode) {
             <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>
           </div>
         </div>
+        <div class="poll-progress" id="poll-progress-${n}" hidden aria-live="polite"></div>
         <div class="node-panel-body">
           ${nodePanelSection(`node-panel-${n}-system`, wifi ? 'Wi-Fi &amp; System' : 'Radio &amp; System',
                              `<span class="node-badge">${wifi ? 'Wi-Fi' : 'RFM69'}</span>`)}
@@ -849,9 +855,9 @@ function renderNodePanels(byNode) {
       ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
     ];
     const reported = store?.at ? `storage reported ${minutesAgo(store.at) || store.at}` : 'no storage report yet';
-    const note = asleep
+    const note = (asleep
       ? `asleep until ${asleep.replace('T', ' ').slice(0, 16)} — logging to storage, radio off · ${reported}`
-      : reported;
+      : reported) + ` · ${linkLabel(info)}`;
 
     // The node's name, battery and storage share the top line with its color
     // picker and close button; radio/system and sensor health sit side by
@@ -1006,12 +1012,6 @@ async function refresh() {
 
 // ── Manual refresh (live poll via Flask API, falls back to static reload) ────
 
-// The node picked in the header, which Refresh polls and the ping test tests.
-function selectedNode() {
-  const sel = document.getElementById('ping-node-select');
-  return sel && sel.value ? parseInt(sel.value, 10) : 1;
-}
-
 // Refresh shows each step of the poll as it happens, from /api/poll_progress
 // (sync_indoor.POLL_STEPS on the Pi): grey not started, teal under way,
 // green done, amber done with a caveat (or sent again), red where it failed.
@@ -1020,7 +1020,7 @@ const POLL_STEP_LABELS = {
   pi: 'Reached the Pi', sent: 'Sent to node', heard: 'Node answered', data: 'Readings', saved: 'Saved',
 };
 const POLL_PROGRESS_MS = 400;
-let pollProgressHide = null;
+const pollProgressHide = {};   // node -> its timer to tidy a finished strip away
 
 function escapeText(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -1034,16 +1034,17 @@ function localPollProgress(state, note) {
   return { steps, end: state !== 'active' };
 }
 
-function hidePollProgress() {
-  clearTimeout(pollProgressHide);
-  const el = document.getElementById('poll-progress');
+function hidePollProgress(nodeId) {
+  clearTimeout(pollProgressHide[nodeId]);
+  const el = document.getElementById(`poll-progress-${nodeId}`);
   if (el) el.hidden = true;
 }
 
+// Drawn in the node's row (renderNodePanels), under its buttons.
 function renderPollProgress(nodeId, progress) {
-  const el = document.getElementById('poll-progress');
-  if (!el) return;
-  clearTimeout(pollProgressHide);
+  const el = document.getElementById(`poll-progress-${nodeId}`);
+  if (!el) return;   // the row was closed meanwhile
+  clearTimeout(pollProgressHide[nodeId]);
   const name = escapeText(nodeInfo(nodeId).name);
   const steps = progress.steps;
   const failed = POLL_STEPS.find(s => steps[s].state === 'failed');
@@ -1065,7 +1066,7 @@ function renderPollProgress(nodeId, progress) {
   el.innerHTML = `
     <div class="pp-head">
       <span class="pp-title">${title}</span>
-      <button type="button" class="pp-close" onclick="hidePollProgress()" title="Close">×</button>
+      <button type="button" class="pp-close" onclick="hidePollProgress(${nodeId})" title="Close">×</button>
     </div>
     <ol class="pp-steps">${POLL_STEPS.map(s => {
       const step = steps[s] || { state: 'wait' };
@@ -1079,7 +1080,9 @@ function renderPollProgress(nodeId, progress) {
     }).join('')}</ol>`;
   el.hidden = false;
   // A clean refresh tidies itself away; anything else stays until closed.
-  if (progress.end && !failed && (!warned || progress.title)) pollProgressHide = setTimeout(hidePollProgress, 6000);
+  if (progress.end && !failed && (!warned || progress.title)) {
+    pollProgressHide[nodeId] = setTimeout(() => hidePollProgress(nodeId), 6000);
+  }
 }
 
 async function fetchPollProgress(rid) {
@@ -1092,8 +1095,9 @@ async function fetchPollProgress(rid) {
   }
 }
 
-async function triggerRefresh() {
-  const btn = document.getElementById('refresh-btn');
+async function triggerRefresh(nodeId) {
+  const btn = document.getElementById(`refresh-btn-${nodeId}`);
+  if (!btn) return;
   const original = btn.textContent;
   btn.disabled = true;
   const finish = () => { btn.textContent = original; btn.disabled = false; };
@@ -1106,7 +1110,6 @@ async function triggerRefresh() {
     return;
   }
 
-  const nodeId = selectedNode();
   const rid = Math.random().toString(36).slice(2, 10);
   let progress = localPollProgress('active', 'sending...');
   renderPollProgress(nodeId, progress);
@@ -1174,10 +1177,10 @@ async function triggerRefresh() {
 // ── Radio ping test (independent of refresh — result comes straight back in
 //    the HTTP response) ──
 
-async function runPingTest() {
-  const btn = document.getElementById('ping-btn');
-  const resultEl = document.getElementById('ping-result');
-  const nodeId = selectedNode();
+async function runPingTest(nodeId) {
+  const btn = document.getElementById(`ping-btn-${nodeId}`);
+  const resultEl = document.getElementById(`ping-result-${nodeId}`);
+  if (!btn || !resultEl) return;
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⇄ pinging...';
@@ -1651,18 +1654,11 @@ function initCardCustomization() {
   initCardDragAndDrop();
 }
 
-// The node picker for Refresh and the ping test, built from NODES so a new
-// node shows up there too. A Wi-Fi node is reached through the Pi's Wi-Fi
-// service, a radio node over the radio; the label says which, and for a
-// node with both, which one is in use now and which is the backup.
-function buildPingNodeSelect() {
-  const sel = document.getElementById('ping-node-select');
-  if (!sel) return;
-  sel.innerHTML = knownNodeIds().map(n => {
-    const info = nodeInfo(n);
-    const name = link => link === 'wifi' ? 'Wi-Fi' : 'radio';
-    const backup = (info.links || []).filter(l => l !== info.link);
-    return `<option value="${n}">${info.name} · ${name(info.link)}${
-      backup.length ? ` (${backup.map(name).join(', ')} backup)` : ''}</option>`;
-  }).join('');
+// How the Pi reaches a node, for its row: "over Wi-Fi", or for a node with
+// both links, the one in use now and the backup ("over the radio (Wi-Fi
+// backup)"). Refresh and the ping test go over the one in use.
+function linkLabel(info) {
+  const name = link => link === 'wifi' ? 'Wi-Fi' : 'the radio';
+  const backup = (info.links || []).filter(l => l !== info.link);
+  return `over ${name(info.link)}${backup.length ? ` (${backup.map(name).join(', ')} backup)` : ''}`;
 }

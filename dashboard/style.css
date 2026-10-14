@@ -168,8 +168,10 @@
   .node-panel-title .node-row-note { flex-basis: 100%; margin-top: 2px; }
   .node-panel-head .node-row-ago { margin-left: 0; }
   @media (max-width: 700px) {
-    .node-panel-head { grid-template-columns: minmax(0, 1fr) auto; }
-    .node-panel-head .node-metrics { grid-column: 1 / -1; grid-row: 2; }
+    /* Name, then the buttons on a line of their own, then the readings */
+    .node-panel-head { grid-template-columns: minmax(0, 1fr); }
+    .node-panel-head .node-panel-tools { grid-row: 2; justify-content: flex-start; }
+    .node-panel-head .node-metrics { grid-column: 1 / -1; grid-row: 3; }
   }
   /* Radio/system readings side by side, sensor health in as many columns as fit */
   .node-panel-section .card-body:has(.mini-metric) {
@@ -187,6 +189,8 @@
   .node-panel-tools {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
   }
   /* The node's color, as a swatch that opens a color picker */
@@ -415,38 +419,28 @@
   .unit-btn:not(.active) { opacity: 0.55; }
   .unit-btn:hover { color: var(--text); }
 
-  #refresh-btn {
+  /* Refresh and ping test, in each node's row */
+  .node-action-btn {
     background: var(--bg3);
     border: 1px solid var(--border);
     color: var(--muted);
     font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 6px 12px;
+    font-size: 11px;
+    padding: 3px 9px;
     border-radius: 6px;
     cursor: pointer;
+    white-space: nowrap;
     transition: border-color 0.15s, color 0.15s;
   }
-  #refresh-btn:hover { border-color: var(--text); color: var(--text); }
+  .node-action-btn:hover:not(:disabled) { border-color: var(--text); color: var(--text); }
+  .node-action-btn:disabled { cursor: default; }
 
-  #ping-btn {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    color: var(--muted);
+  .ping-result {
     font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  #ping-btn:hover { border-color: var(--text); color: var(--text); }
-
-  #ping-result {
-    font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
     color: var(--muted);
-    min-width: 1px;
   }
+  .ping-result:empty { display: none; }
 
   /* ── Refresh progress: one dot per step of the poll ───────────────────
      grey: not started · teal: under way · green: done · amber: done with a
@@ -458,7 +452,7 @@
     border-left: 3px solid var(--pp-color);
     border-radius: 8px;
     padding: 12px 16px 14px;
-    margin: -12px 0 20px;
+    margin: 0 0 14px;
   }
   .poll-progress.is-done   { --pp-color: var(--green); }
   .poll-progress.is-warn   { --pp-color: var(--amber); }
@@ -744,22 +738,6 @@
       justify-content: space-between;
     }
 
-    #refresh-btn, #ping-btn {
-      flex: 1 1 auto;
-      text-align: center;
-    }
-
-    /* A long node name would push the row off the screen: a line of its own */
-    #ping-node-select {
-      flex: 1 1 100%;
-      min-width: 0;
-    }
-
-    #ping-result {
-      width: 100%;
-      order: 10;             /* push below the buttons instead of squeezing beside them */
-      text-align: center;
-    }
   }
 
   .card-header {
