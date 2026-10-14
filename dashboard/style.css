@@ -595,6 +595,31 @@
   }
   .card.drop-before { box-shadow: -9px 0 0 -5px var(--green); }
   .card.drop-after  { box-shadow:  9px 0 0 -5px var(--green); }
+  /* One column (a phone): cards go above or below each other */
+  .grid.one-column .card.drop-before { box-shadow: 0 -9px 0 -5px var(--green); }
+  .grid.one-column .card.drop-after  { box-shadow: 0  9px 0 -5px var(--green); }
+
+  /* Dragging with a finger: the card's name follows it */
+  .touch-drag-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    pointer-events: none;
+    margin-top: -48px;   /* above the finger, so it isn't hidden under it */
+    max-width: calc(100vw - 16px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 6px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--green);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  }
 
   /* A combined card: one heading (the sensor's title, a chip per node), then
      each node's display without its own frame, title or controls. */
@@ -684,6 +709,16 @@
   }
   .card-drag-handle:active { cursor: grabbing; }
   .card:hover .card-drag-handle { opacity: 0.8; }
+  /* A finger on the handle (or a combined card's chip) drags; it mustn't
+     scroll the page or open the press-and-hold menu instead */
+  .card-drag-handle, .group-chip { touch-action: none; -webkit-touch-callout: none; }
+  /* No hover on a touch screen: a bigger handle (and hide button) that's
+     always visible */
+  @media (pointer: coarse) {
+    .card-drag-handle { top: 4px; left: 4px; padding: 6px 8px; font-size: 18px; opacity: 0.6; }
+    .card-controls { opacity: 0.8; }
+    .group-chip { padding: 3px 10px; }
+  }
 
   .card-controls {
     position: absolute;
