@@ -30,7 +30,20 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 DATA="$REPO/raspberrypi"
 STAMP=$(date +%Y-%m-%d_%H%M)
 OUT="$HOME/garden_backup_$STAMP.tar.gz"
-WORK=$(mktemp -d)
+
+# The bundle is put together on the SD card, next to where it ends up: /tmp
+# is held in RAM on Raspberry Pi OS (about 450 MB on a Pi 3B), smaller than
+# sensors.db alone. Room is needed for a copy of the data plus the
+# compressed bundle, so check for twice the data's size first.
+NEED_KB=$(du -skc "$DATA/sensors.db" "$DATA/data_from_pico.txt" "$DATA/archive" 2>/dev/null | tail -1 | cut -f1)
+FREE_KB=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
+if [ "$FREE_KB" -lt $((NEED_KB * 2)) ]; then
+    echo "Not enough free space on the SD card for the backup: it needs about"
+    echo "$((NEED_KB * 2 / 1024)) MB and $((FREE_KB / 1024)) MB is free. Delete old"
+    echo "~/garden_backup_*.tar.gz bundles (copy them off first) and try again."
+    exit 1
+fi
+WORK=$(mktemp -d "$HOME/.garden_backup_work.XXXXXX")
 trap 'sudo rm -rf "$WORK"' EXIT
 
 if [ "$1" = "--stop" ]; then
