@@ -654,7 +654,7 @@ async function loadData() {
 }
 
 // Each node's last storage report from /api/node_info ({"<node>": {ub, fb,
-// tb, at}}) — main.py refreshes it hourly. Kept from the last successful
+// tb, at}}) — radio_nodes.py refreshes it hourly. Kept from the last successful
 // fetch if a later one fails, since it changes slowly anyway.
 let nodeStorage = {};
 

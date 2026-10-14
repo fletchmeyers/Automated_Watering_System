@@ -874,7 +874,7 @@ def run(args, board=None):
                        plan=link_plan(node))
     if "radio" in links_of(node) and not args.dry_run and board.node_id != node_id:
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
-              "starts polling it: sudo systemctl restart garden-sensor")
+              "starts polling it: sudo systemctl restart garden-radio")
     if running:
         check_sensors(args.nodes, node_id)
 
@@ -969,7 +969,7 @@ def main():
                 parser.error("say which node: node_setup.py remove N")
             if node_wizard.remove_node(args.nodes, args.node_id, node_wizard.Wizard()):
                 print("[SETUP] Restart the Pi's radio loop so it stops polling it: "
-                      "sudo systemctl restart garden-sensor")
+                      "sudo systemctl restart garden-radio")
         elif args.action == "prefer":
             if args.node_id is None or len(args.what) != 1 or args.what[0] not in ("wifi", "radio"):
                 parser.error("say which node and link: node_setup.py prefer N wifi (or radio)")
@@ -987,7 +987,7 @@ def main():
                   "plugged in, re-flash it so the firmware matches: python3 node_setup.py")
             if "radio" in links_of(node):
                 print("[SETUP] Then restart the radio loop so it knows the node: "
-                      "sudo systemctl restart garden-sensor")
+                      "sudo systemctl restart garden-radio")
         elif args.action == "saver":
             if args.node_id is None or args.what not in (["on"], ["off"]):
                 parser.error("say which node and on or off: node_setup.py saver 2 on")

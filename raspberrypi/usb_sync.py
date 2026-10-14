@@ -20,7 +20,7 @@ and node_setup.py waits for a pull under way to finish.
 It sends the same "sync" requests as the radio side (see send_sync_chunk()
 in communication_garden.py), just much bigger chunks with nothing lost on
 the way, and stores the lines the same way (sync archive + sensors.db).
-main.py keeps running: while this holds USB_SYNC_FILE, it leaves this
+radio_nodes.py keeps running: while this holds USB_SYNC_FILE, it leaves this
 node's radio sync alone, and afterwards picks up from wherever the node's
 cursor has got to. Needs pyserial (sudo apt install python3-serial).
 
@@ -202,7 +202,7 @@ def sync_node(node, node_id, db_conn, chunk_lines=CHUNK_LINES, report_every=2000
 
 
 def hold(node_id):
-    '''Tell main.py (and node_setup.py) this process is using a node's USB.'''
+    '''Tell radio_nodes.py (and node_setup.py) this process is using a node's USB.'''
     Path(USB_SYNC_FILE).write_text(json.dumps({"n": node_id, "pid": os.getpid()}))
 
 
@@ -216,11 +216,11 @@ def pull_backlog(node, info):
     node_id = info["n"]
     save_node_info(info)
     hold(node_id)
-    # Give main.py a moment to see the flag and drop any radio chunk
+    # Give radio_nodes.py a moment to see the flag and drop any radio chunk
     # request it already had in flight to this node.
     time.sleep(3)
     db_conn = db.get_connection()
-    db_conn.execute("PRAGMA busy_timeout = 30000")   # main.py writes too
+    db_conn.execute("PRAGMA busy_timeout = 30000")   # radio_nodes.py writes too
     started = time.monotonic()
     try:
         stored = sync_node(node, node_id, db_conn)

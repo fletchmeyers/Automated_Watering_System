@@ -8,7 +8,7 @@
 #
 # Use --stop when moving to a new card, so no readings arrive after the
 # snapshot and get left behind on the old card. Bring the services back
-# with: sudo systemctl start garden-sensor garden-api garden-wifi garden-usb
+# with: sudo systemctl start garden-radio garden-api garden-wifi garden-usb
 #
 # Writes ~/garden_backup_<date>.tar.gz containing:
 #   data/        sensors.db (a consistent .backup snapshot), nodes.json (the
@@ -35,13 +35,13 @@ trap 'sudo rm -rf "$WORK"' EXIT
 
 if [ "$1" = "--stop" ]; then
     echo "== Stopping services (they stay stopped)"
-    sudo systemctl stop garden-sensor garden-api garden-wifi garden-usb 2>/dev/null || true
+    sudo systemctl stop garden-radio garden-api garden-wifi garden-usb 2>/dev/null || true
 fi
 
 echo "== Data"
 mkdir -p "$WORK/data"
 if [ -e "$DATA/sensors.db" ]; then
-    # .backup gives a consistent snapshot even while main.py is writing;
+    # .backup gives a consistent snapshot even while radio_nodes.py is writing;
     # copying the file directly can catch it half-written.
     sqlite3 "$DATA/sensors.db" ".backup '$WORK/data/sensors.db'"
     echo "   sensors.db ($(du -h "$WORK/data/sensors.db" | cut -f1))"

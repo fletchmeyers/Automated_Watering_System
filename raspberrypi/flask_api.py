@@ -4,16 +4,16 @@ Python 3 running on Raspberry Pi 3B
 Flask API exposed through the Cloudflare Tunnel so the dashboard (and later,
 watering controls) can be reached from outside the local network.
 
-This runs as its OWN process, separate from main.py. It never talks to the
+This runs as its OWN process, separate from radio_nodes.py. It never talks to the
 radio directly — it just writes to COMMAND_FILE and polls DATA_FILE the same
-way sync_indoor.py's CLI entry point already does. main.py (already running
-via garden-sensor.service) is what actually forwards commands over the radio.
+way sync_indoor.py's CLI entry point already does. radio_nodes.py (already running
+via garden-radio.service) is what actually forwards commands over the radio.
 
 Two-tier access model:
   - Public (no login), rate-limited by cooldown, not auth:
         GET  /api/health
         GET  /api/nodes           (names/colors from the Pi's nodes.json; no pins)
-        POST /api/poll            ({"node_id": N}: radio nodes through main.py,
+        POST /api/poll            ({"node_id": N}: radio nodes through radio_nodes.py,
         POST /api/ping_test        Wi-Fi nodes through garden-wifi)
   - Gated behind Cloudflare Access (configured in the Zero Trust dashboard,
     not in this file):
@@ -71,7 +71,7 @@ HEALTH_COOLDOWN = 15   # seconds between allowed health report recomputes
 PING_COOLDOWN   = 10   # seconds between allowed ping tests — short, since a
                         # test itself only takes a few seconds, but still
                         # enough to stop rapid button-mashing from repeatedly
-                        # tying up main.py's loop back-to-back
+                        # tying up radio_nodes.py's loop back-to-back
 
 # Garden location, same coordinates weather.js uses — kept independently
 # rather than shared from a config file since this is the only other place
@@ -131,7 +131,7 @@ def api_health():
 
 def is_wifi_node(node_id):
     '''Whether node_id is reached through garden-wifi (wifi_nodes.py) right
-    now rather than main.py's radio: a Wi-Fi node, or one with both whose
+    now rather than radio_nodes.py's radio: a Wi-Fi node, or one with both whose
     Wi-Fi is the link in use (links.py).'''
     try:
         node = load_nodes(skip_invalid=True).get(node_id)
@@ -197,8 +197,8 @@ def api_poll():
                 node = {}
             request_poll(node_id, link_plan=link_plan(node))
             packets = wait_for_poll_result(timeout=90, node_id=node_id)
-            if packets is None:   # (unless main.py already said why)
-                poll_progress_failed(node_id, "no answer: is the radio loop (garden-sensor) running?")
+            if packets is None:   # (unless radio_nodes.py already said why)
+                poll_progress_failed(node_id, "no answer: is the radio loop (garden-radio) running?")
             result = {
                 "status":  "ok" if packets else ("empty" if packets == [] else "timeout"),
                 "packets": packets or [],
@@ -234,7 +234,7 @@ def api_ping_progress():
 @app.route("/api/node_info", methods=["GET"])
 def api_node_info():
     # Each node's last storage report (bytes used/free/total and when it was
-    # reported) — just a file read, main.py refreshes it hourly.
+    # reported) — just a file read, radio_nodes.py refreshes it hourly.
     return jsonify({"status": "ok", "nodes": get_node_info()})
 
 
@@ -345,12 +345,14 @@ def _background():
         time.sleep(SOIL_CHECK_EVERY)
 
 
-threading.Thread(target=_background, daemon=True).start()
-
-# Every forecast's cloud cover, for the low-battery day sleep (main.py and
-# garden-wifi read the file; only this service has the keys).
-threading.Thread(target=weather_outlook.keep_refreshed, daemon=True, args=(
-    GARDEN_LAT, GARDEN_LON, WEATHER_API_KEYS)).start()
+# The background work, and every forecast's cloud cover for the low-battery
+# day sleep (radio_nodes.py and garden-wifi read the file; only this service
+# has the keys). GARDEN_API_NO_THREADS=1 leaves them out (the tests, which
+# mustn't touch the real database or the weather services).
+if os.environ.get("GARDEN_API_NO_THREADS") != "1":
+    threading.Thread(target=_background, daemon=True).start()
+    threading.Thread(target=weather_outlook.keep_refreshed, daemon=True, args=(
+        GARDEN_LAT, GARDEN_LON, WEATHER_API_KEYS)).start()
 
 
 @app.route("/api/available_fields", methods=["GET"])

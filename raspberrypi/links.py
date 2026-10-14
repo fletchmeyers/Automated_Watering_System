@@ -7,13 +7,13 @@ Which link the Pi uses for a node that has both the radio and Wi-Fi
 The firmware answers on both, so the choice is the Pi's alone: each minute
 the node is polled over the first link in its list that's up, and only that
 one, so a reading never arrives (and is stored) twice. The radio loop
-(main.py) and the Wi-Fi service (wifi_nodes.py) are separate programs, so
+(radio_nodes.py) and the Wi-Fi service (wifi_nodes.py) are separate programs, so
 each writes a small status file the other reads:
 
   - Wi-Fi is up when garden-wifi has heard from the node in the last
     FRESH_S seconds (wifi_nodes.STATUS_FILE, "last_seen").
-  - The radio is up when main.py still counts the node as reachable
-    (RADIO_STATUS_FILE, from its NodeHealth), and main.py wrote that in the
+  - The radio is up when radio_nodes.py still counts the node as reachable
+    (RADIO_STATUS_FILE, from its NodeHealth), and radio_nodes.py wrote that in the
     last FRESH_S seconds (so a stopped radio loop counts as down).
 
 If none is up, the first link keeps trying. `python3 node_setup.py prefer
@@ -87,7 +87,7 @@ def active_link(node_id, node, now=None, wifi_file=WIFI_STATUS_FILE, radio_file=
 
 
 def write_radio_status(reachable, status_file=RADIO_STATUS_FILE):
-    '''main.py: which radio nodes are answering ({node_id: bool}).'''
+    '''radio_nodes.py: which radio nodes are answering ({node_id: bool}).'''
     status = {"_updated": _now().strftime(ISO_FORMAT),
               "nodes": {str(n): {"reachable": bool(ok)} for n, ok in reachable.items()}}
     try:

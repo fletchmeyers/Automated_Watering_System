@@ -22,7 +22,7 @@ from pathlib import Path
 
 import db
 
-BATCH_LINES = 2000   # lines per DB transaction — short enough not to stall main.py's writes
+BATCH_LINES = 2000   # lines per DB transaction — short enough not to stall radio_nodes.py's writes
 
 
 def read_cursor(folder):
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     conn = None
     if not args.dry_run:
         conn = db.get_connection()
-        # main.py may be writing at the same time — wait for its lock rather than failing.
+        # radio_nodes.py may be writing at the same time — wait for its lock rather than failing.
         conn.execute("PRAGMA busy_timeout = 30000")
 
     try:

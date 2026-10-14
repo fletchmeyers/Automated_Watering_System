@@ -5,7 +5,8 @@
 #     ~/Automated_Watering_System/deploy/install.sh
 #
 # Safe to run again after any `git pull`. It:
-#   1. stops garden-sensor, garden-api, garden-wifi and garden-usb
+#   1. stops garden-radio, garden-api, garden-wifi and garden-usb, and
+#      removes garden-sensor (garden-radio's name until October 2026)
 #   2. moves the Pi's untracked data (sensors.db, node_info.json, archive/,
 #      data_from_pico.txt) from the old indoor/ folder into raspberrypi/,
 #      if it is still there
@@ -22,7 +23,7 @@ fi
 
 USER_NAME=$(id -un)
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-SERVICES="garden-sensor garden-api garden-wifi garden-usb"
+SERVICES="garden-radio garden-api garden-wifi garden-usb"
 # Installed and enabled, but not started: the timer starts the service.
 BACKUP_UNITS="garden-backup.service garden-backup.timer"
 ENV_FILE=/etc/garden-api.env
@@ -36,6 +37,13 @@ fi
 
 echo "== Stopping services"
 sudo systemctl stop $SERVICES 2>/dev/null || true
+# garden-sensor became garden-radio (and main.py radio_nodes.py): take the
+# old unit out, so the two never both drive the radio.
+if [ -f /etc/systemd/system/garden-sensor.service ]; then
+    sudo systemctl disable --now garden-sensor >/dev/null 2>&1 || true
+    sudo rm -f /etc/systemd/system/garden-sensor.service
+    echo "   removed garden-sensor (now garden-radio)"
+fi
 
 echo "== Data files"
 OLD="$REPO/indoor"
@@ -57,7 +65,7 @@ if [ -d "$OLD" ]; then
         || echo "   indoor/ still has files in it; check them: ls -la $OLD"
 fi
 [ -e "$NEW/sensors.db" ] && echo "   sensors.db is in raspberrypi/" \
-    || echo "   no sensors.db yet; main.py will create one"
+    || echo "   no sensors.db yet; radio_nodes.py will create one"
 
 echo "== Weather API keys ($ENV_FILE)"
 if sudo test -e "$ENV_FILE"; then
@@ -98,4 +106,4 @@ echo "   nightly USB backup: $(systemctl is-active garden-backup.timer)"
 if [ ! -e /dev/disk/by-label/GARDENBAK ]; then
     echo "   (no USB stick labelled GARDENBAK plugged in yet, so backups will fail until one is)"
 fi
-echo "Follow the logs with: sudo journalctl -u garden-sensor -f"
+echo "Follow the logs with: sudo journalctl -u garden-radio -f"

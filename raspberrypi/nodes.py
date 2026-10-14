@@ -9,7 +9,7 @@ root if that's still there, or else from nodes.example.json.
 
 This module loads and checks it, and turns a node's entry into what each
 side needs:
-  - main.py:       node IDs, sleep windows, which nodes keep a log to sync
+  - radio_nodes.py:       node IDs, sleep windows, which nodes keep a log to sync
   - wifi_nodes.py: which nodes may connect over Wi-Fi
   - flask_api.py:  names, colors and battery labels for the dashboard
   - CircuitPython: the node_config.py that node_setup.py puts on CIRCUITPY
@@ -32,7 +32,7 @@ LEGACY_FILE  = Path(__file__).parent.parent / "nodes.json"   # where it was unti
 FRAMEWORKS = ("circuitpython", "arduino")
 STORAGE    = ("sd", "flash", "none")
 
-# How a node talks to the Pi: the RFM69 radio (main.py), or Wi-Fi to the
+# How a node talks to the Pi: the RFM69 radio (radio_nodes.py), or Wi-Fi to the
 # garden-wifi service (wifi_nodes.py). Wi-Fi nodes need no radio pins and
 # keep no log by default (nothing to sync once the Pi is reachable again).
 # Any node can have a nightly sleep_window: the sleep command goes over the
@@ -154,7 +154,7 @@ def start_pi_list():
 
 
 def write_atomic(path, text):
-    '''Write a file so that a reader (main.py, the API) never sees it half-written.'''
+    '''Write a file so that a reader (radio_nodes.py, the API) never sees it half-written.'''
     path = Path(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
@@ -195,7 +195,7 @@ def load_nodes(path=None, skip_invalid=False):
     Return {node_id: settings} from nodes.json (the Pi's own list unless
     path says otherwise), checked; raises NodeConfigError. With
     skip_invalid, a node with a mistake in it is left out (with a warning)
-    instead — so main.py keeps polling the others.
+    instead — so radio_nodes.py keeps polling the others.
     '''
     path = path or NODES_FILE
     if _is_pi_list(path):
@@ -386,7 +386,7 @@ def storage_of(node):
     return node.get("storage", "sd" if "radio" in links_of(node) else "none")
 
 
-# ── What main.py and wifi_nodes.py need ──────────────────────────────────────
+# ── What radio_nodes.py and wifi_nodes.py need ──────────────────────────────────────
 
 def radio_node_ids(nodes):
     return [n for n, node in nodes.items() if "radio" in links_of(node)]

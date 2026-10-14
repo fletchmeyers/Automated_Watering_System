@@ -141,7 +141,7 @@ def test_the_link_plan_code(changes, plan):
 
 
 def test_the_longest_poll_still_fits_one_radio_packet():
-    '''The radio carries at most 60 bytes; main.py sends commands compactly.'''
+    '''The radio carries at most 60 bytes; radio_nodes.py sends commands compactly.'''
     from nodes import link_plan
     poll = {"t": "poll", "ts": "2026-10-12T17:00:00", "n": 254,
             "lp": link_plan(esp32(battery_saver=True, wifi_check_hours=168))}
@@ -267,7 +267,7 @@ def test_no_sleep_while_the_radio_is_in_use(service):
         writer.close()
         server.close()
         return command
-    assert asyncio.run(scenario())["t"] == "ping"   # main.py sends the sleep over the radio
+    assert asyncio.run(scenario())["t"] == "ping"   # radio_nodes.py sends the sleep over the radio
 
 
 def test_the_log_says_how_a_two_link_node_is_being_used(service, capsys):

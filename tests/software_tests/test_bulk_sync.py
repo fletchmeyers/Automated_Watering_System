@@ -63,7 +63,7 @@ def stored(sd):
 
 
 def pi_receive(sync, frags, packets):
-    '''Mirror of main.py's packet handling for the packets a chunk produces.'''
+    '''Mirror of radio_nodes.py's packet handling for the packets a chunk produces.'''
     for payload in packets:
         if payload[:1] == b"~":
             payload = frags.feed(payload)

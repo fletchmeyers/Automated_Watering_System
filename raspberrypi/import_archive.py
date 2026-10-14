@@ -14,7 +14,7 @@ Usage:
     python3 import_archive.py <file or folder> [...] [--since DATE] [--until DATE] [--dry-run]
 
 Folders are searched recursively for *.txt. Packets with no real timestamp
-("unknown") or no node ID are skipped. main.py can keep running meanwhile.
+("unknown") or no node ID are skipped. radio_nodes.py can keep running meanwhile.
 
 Written by Fletcher Meyers
 October 2026
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import db
 
-BATCH_PACKETS = 1000   # packets per DB transaction — short enough not to stall main.py's writes
+BATCH_PACKETS = 1000   # packets per DB transaction — short enough not to stall radio_nodes.py's writes
 _TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
 
 
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     print(f"[IMPORT] {len(files)} files")
 
     conn = db.get_connection()
-    # main.py may be writing at the same time — wait for its lock rather than failing.
+    # radio_nodes.py may be writing at the same time — wait for its lock rather than failing.
     conn.execute("PRAGMA busy_timeout = 30000")
     try:
         result = import_files(files, conn, args.since, args.until, write=not args.dry_run)

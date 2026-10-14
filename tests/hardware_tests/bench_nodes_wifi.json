@@ -1,5 +1,5 @@
 {
-  "_about": "The two ESP32 bench boards as Wi-Fi nodes (no radio). Same IDs as in bench_nodes_arduino.json, where they're radio nodes. To test: stop the garden-wifi service, run python3 wifi_nodes.py --nodes ../tests/hardware_tests/bench_nodes_wifi.json --no-store in one tmux window, and python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_wifi.json --node 13 in another. Not read by main.py.",
+  "_about": "The two ESP32 bench boards as Wi-Fi nodes (no radio). Same IDs as in bench_nodes_arduino.json, where they're radio nodes. To test: stop the garden-wifi service, run python3 wifi_nodes.py --nodes ../tests/hardware_tests/bench_nodes_wifi.json --no-store in one tmux window, and python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_wifi.json --node 13 in another. Not read by radio_nodes.py.",
 
   "nodes": {
     "13": {

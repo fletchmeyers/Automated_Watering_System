@@ -1,5 +1,5 @@
 {
-  "_about": "Bench test boards (no radio, no sensors) set up as CircuitPython nodes. Use with: python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_circuitpython.json. bench_nodes_arduino.json has the same boards and IDs as Arduino nodes, so a board can be switched back and forth. Not read by main.py.",
+  "_about": "Bench test boards (no radio, no sensors) set up as CircuitPython nodes. Use with: python3 node_setup.py --nodes ../tests/hardware_tests/bench_nodes_circuitpython.json. bench_nodes_arduino.json has the same boards and IDs as Arduino nodes, so a board can be switched back and forth. Not read by radio_nodes.py.",
 
   "nodes": {
     "9": {
