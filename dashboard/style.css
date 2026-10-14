@@ -1106,6 +1106,18 @@
   .health-name { flex: 1; color: var(--muted); }
   .health-count { color: var(--text); }
 
+  /* A sensor the node has taken offline (markOfflineSensors) */
+  .sensor-offline {
+    background: var(--red-dim);
+    border: 1px solid var(--red);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+  .sensor-offline-title { color: var(--red); font-size: 12px; font-weight: 500; }
+  .sensor-offline-note { color: var(--muted); font-size: 11px; margin-top: 3px; line-height: 1.4; }
+  .card:has(.sensor-offline) .big-value, .card:has(.sensor-offline) .sub-value { opacity: 0.5; }
+
   .no-data {
     color: var(--muted);
     font-family: var(--font-mono);
