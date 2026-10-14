@@ -1640,13 +1640,138 @@ function addCardToLayout(card) {
   applyCardVisibility();
 }
 
-// Native HTML5 drag-and-drop, scoped to #grid, always active (arming happens
-// per-drag via the handle's mousedown above, or a combined card's chips).
+// Two ways to drag, with the same rules: the mouse uses native HTML5
+// drag-and-drop (armed per-drag by the handle's mousedown above, or a
+// combined card's chips); a finger or pen uses pointer events from the same
+// handle or chips (initTouchDrag), since phones don't do native drag-and-drop.
 // Nothing moves during the drag: dropTarget/dropAction say what letting go
 // would do, shown by a class on the target card.
 let dragSrcId = null;
 let dropTarget = null;
 let dropAction = null;   // 'before', 'after' or 'combine'
+
+// Is the grid down to one column (a phone)? Then a card moves above or below
+// another, rather than to its left or right.
+function gridIsOneColumn() {
+  const grid = document.getElementById('grid');
+  return getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length === 1;
+}
+
+// What letting go of dragEl at (x, y) over the card `over` would do: its
+// middle combines the two, its edges (left/right, or top/bottom in one
+// column) put dragEl beside it.
+function aimDrop(over, dragEl, x, y) {
+  if (!dragEl || !over || over === dragEl) { setDrop(null, null); return; }
+  const column = gridIsOneColumn();
+  document.getElementById('grid').classList.toggle('one-column', column);
+  const rect = over.getBoundingClientRect();
+  const fx = (x - rect.left) / rect.width;
+  const fy = (y - rect.top) / rect.height;
+  const middle = column ? fy > 0.3 && fy < 0.7 : fx > 0.25 && fx < 0.75 && fy > 0.15 && fy < 0.85;
+  // Over its own combined card, a display can only be taken out (to
+  // either side), not combined back in.
+  if (middle && !over.contains(dragEl)) setDrop(over, 'combine');
+  else if (middle) setDrop(null, null);
+  else setDrop(over, (column ? fy : fx) < 0.5 ? 'before' : 'after');
+}
+
+function dropDragged() {
+  const grid = document.getElementById('grid');
+  const dragEl = dragSrcId && document.getElementById(dragSrcId);
+  if (!dragEl || !dropTarget) return;
+  if (dropAction === 'combine') combineCards(dragEl, dropTarget);
+  else grid.insertBefore(dragEl, dropAction === 'before' ? dropTarget : dropTarget.nextSibling);
+}
+
+// After any drag: tidy up, and save the layout if something was dragged.
+function endDrag() {
+  const grid = document.getElementById('grid');
+  grid.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+  allCards().forEach(card => { card.draggable = false; });
+  setDrop(null, null);
+  if (dragSrcId) {
+    tidyGroups();
+    // Keep saved positions of cards that aren't on the page right now,
+    // after the ones that are.
+    const onPage = gridCards().map(el => el.id);
+    cardPrefs.order = onPage.concat(cardPrefs.order.filter(id => !onPage.includes(id)));
+    saveCardPrefs();
+    applyCardVisibility();
+  }
+  dragSrcId = null;
+}
+
+// Dragging with a finger: press the ⠿ handle (or a combined card's chip)
+// and move. A label with the card's name follows the finger, the page
+// scrolls when it nears the top or bottom of the screen, and letting go
+// drops the card as the mouse would.
+const TOUCH_SCROLL_EDGE_PX = 70;   // this close to the top or bottom: scroll
+const TOUCH_SCROLL_MAX_PX  = 14;   // per frame, at the very edge
+let touchDrag = null;              // {pointerId, ghost, x, y}
+
+function aimTouchDrag() {
+  const { ghost, x, y } = touchDrag;
+  // Centred above the finger, kept on the screen
+  const left = Math.max(8, Math.min(x - ghost.offsetWidth / 2, innerWidth - ghost.offsetWidth - 8));
+  ghost.style.transform = `translate(${left}px, ${y}px)`;
+  const under = document.elementFromPoint(x, y);
+  aimDrop(under && under.closest('#grid > .card'), document.getElementById(dragSrcId), x, y);
+}
+
+function touchDragScroll() {
+  if (!touchDrag) return;
+  const { y } = touchDrag;
+  const edge = y < TOUCH_SCROLL_EDGE_PX ? y - TOUCH_SCROLL_EDGE_PX
+             : y > innerHeight - TOUCH_SCROLL_EDGE_PX ? y - (innerHeight - TOUCH_SCROLL_EDGE_PX) : 0;
+  if (edge) {
+    window.scrollBy(0, Math.round(TOUCH_SCROLL_MAX_PX * Math.max(-1, Math.min(1, edge / TOUCH_SCROLL_EDGE_PX))));
+    aimTouchDrag();   // the page moved under the finger
+  }
+  requestAnimationFrame(touchDragScroll);
+}
+
+function stopTouchDrag(drop) {
+  if (!touchDrag) return;
+  touchDrag.ghost.remove();
+  touchDrag = null;
+  if (drop) dropDragged();
+  endDrag();
+}
+
+// Started on the grid; followed on the whole page, so a finger that strays
+// outside the grid (onto the header, say) is still tracked.
+function initTouchDrag(grid) {
+  grid.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || touchDrag) return;   // the mouse uses native drag-and-drop
+    const chip = e.target.closest('.group-chip');
+    const handle = !chip && e.target.closest('.card-drag-handle');
+    const card = chip ? document.getElementById(chip.dataset.member) : handle && handle.closest('.card');
+    if (!card) return;
+    e.preventDefault();
+    try { (chip || handle).setPointerCapture(e.pointerId); } catch (err) { /* moves still reach the grid */ }
+    dragSrcId = card.id;
+    (chip || card).classList.add('dragging');
+    const ghost = document.createElement('div');
+    ghost.className = 'touch-drag-ghost';
+    ghost.textContent = `⠿ ${cardLabel(card.id)}`;
+    document.body.appendChild(ghost);
+    touchDrag = { pointerId: e.pointerId, ghost, x: e.clientX, y: e.clientY };
+    aimTouchDrag();
+    requestAnimationFrame(touchDragScroll);
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!touchDrag || e.pointerId !== touchDrag.pointerId) return;
+    touchDrag.x = e.clientX;
+    touchDrag.y = e.clientY;
+    aimTouchDrag();
+  });
+  document.addEventListener('pointerup', (e) => {
+    if (touchDrag && e.pointerId === touchDrag.pointerId) stopTouchDrag(true);
+  });
+  document.addEventListener('pointercancel', (e) => {
+    if (touchDrag && e.pointerId === touchDrag.pointerId) stopTouchDrag(false);
+  });
+}
 
 function setDrop(target, action) {
   if (dropTarget === target && dropAction === action) return;
@@ -1660,6 +1785,9 @@ function initCardDragAndDrop() {
   const grid = document.getElementById('grid');
 
   grid.addEventListener('dragstart', (e) => {
+    // A finger drag is under way: a press-and-hold native drag (Android
+    // Chrome does those on draggable chips) mustn't take over from it.
+    if (touchDrag) { e.preventDefault(); return; }
     const chip = e.target.closest && e.target.closest('.group-chip');
     const card = chip ? document.getElementById(chip.dataset.member) : e.target.closest('.card');
     if (!card || (!chip && !card.draggable)) return;
@@ -1671,20 +1799,9 @@ function initCardDragAndDrop() {
   });
 
   grid.addEventListener('dragover', (e) => {
-    if (!dragSrcId) return;
+    if (!dragSrcId || touchDrag) return;
     e.preventDefault();
-    const dragEl = document.getElementById(dragSrcId);
-    const over = e.target.closest('#grid > .card');
-    if (!dragEl || !over || over === dragEl) { setDrop(null, null); return; }
-    const rect = over.getBoundingClientRect();
-    const fx = (e.clientX - rect.left) / rect.width;
-    const fy = (e.clientY - rect.top) / rect.height;
-    const middle = fx > 0.25 && fx < 0.75 && fy > 0.15 && fy < 0.85;
-    // Over its own combined card, a display can only be taken out (to
-    // either side), not combined back in.
-    if (middle && !over.contains(dragEl)) setDrop(over, 'combine');
-    else if (middle && over.contains(dragEl)) setDrop(null, null);
-    else setDrop(over, fx < 0.5 ? 'before' : 'after');
+    aimDrop(e.target.closest('#grid > .card'), document.getElementById(dragSrcId), e.clientX, e.clientY);
   });
 
   grid.addEventListener('dragleave', (e) => {
@@ -1692,29 +1809,16 @@ function initCardDragAndDrop() {
   });
 
   grid.addEventListener('drop', (e) => {
-    if (!dragSrcId) return;
+    if (!dragSrcId || touchDrag) return;
     e.preventDefault();
-    const dragEl = document.getElementById(dragSrcId);
-    if (!dragEl || !dropTarget) return;
-    if (dropAction === 'combine') combineCards(dragEl, dropTarget);
-    else grid.insertBefore(dragEl, dropAction === 'before' ? dropTarget : dropTarget.nextSibling);
+    dropDragged();
   });
 
   grid.addEventListener('dragend', () => {
-    grid.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
-    allCards().forEach(card => { card.draggable = false; });
-    setDrop(null, null);
-    if (dragSrcId) {
-      tidyGroups();
-      // Keep saved positions of cards that aren't on the page right now,
-      // after the ones that are.
-      const onPage = gridCards().map(el => el.id);
-      cardPrefs.order = onPage.concat(cardPrefs.order.filter(id => !onPage.includes(id)));
-      saveCardPrefs();
-      applyCardVisibility();
-    }
-    dragSrcId = null;
+    if (!touchDrag) endDrag();
   });
+
+  initTouchDrag(grid);
 
   // If the mouse is pressed on a handle and released without a drag ever
   // starting (a click, essentially), un-arm draggable so it doesn't linger.
