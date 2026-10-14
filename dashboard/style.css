@@ -439,7 +439,7 @@
   .refresh-btn { font-size: 13px; padding: 1px 8px; line-height: 18px; }
   .refresh-icon { display: inline-block; }
   .refresh-btn.busy .refresh-icon { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin { to { transform: rotate(-360deg); } }   /* ↺ turns anticlockwise */
 
   /* ── Refresh progress: one dot per step of the poll ───────────────────
      grey: not started · teal: under way · green: done · amber: done with a
