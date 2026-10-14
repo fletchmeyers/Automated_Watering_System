@@ -12,6 +12,14 @@ March 2026
 import json
 import time
 
+# Longest sleep a node will accept, as a guard against a bad wake time
+# (the Arduino nodes' SLEEP_MAX_S).
+SLEEP_MAX_S = 16 * 3600
+
+# Set by handle_sleep() when the Pi's "sleep" command was accepted: the wake
+# time as "YYYY-MM-DDTHH:MM:SS". code.py sleeps until then and clears it.
+requested_wake = None
+
 
 def _parse_iso_timestamp(ts_str):
     '''
@@ -25,6 +33,18 @@ def _parse_iso_timestamp(ts_str):
         return time.struct_time((year, month, day, hour, minute, second, 0, -1, -1))
     except Exception as e:
         raise ValueError(f"Bad timestamp '{ts_str}': {e}")
+
+
+def _seconds(ts_str):
+    '''Seconds since 2000-01-01 for an ISO timestamp, by hand: the same on
+    every board, whatever epoch its time.mktime() uses.'''
+    t = _parse_iso_timestamp(ts_str)
+    year, month = t.tm_year, t.tm_mon
+    if month <= 2:   # count March as the first month, so leap days come last
+        year -= 1
+        month += 12
+    days = 365 * year + year // 4 - year // 100 + year // 400 + (153 * (month - 3) + 2) // 5 + t.tm_mday
+    return (days - 730426) * 86400 + t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
 
 
 def check_for_command(radio, timeout=0.5):
@@ -83,6 +103,40 @@ def handle_ping(command, sender):
     sender.send({"t": "pong", "pq": command.get("q")})
 
 
+def handle_sleep(command, sender, get_timestamp_fn):
+    '''
+    The Pi's {"t": "sleep", "w": "YYYY-MM-DDTHH:MM:SS"}: answer with
+    sleep_ack (ok 1, or ok 0 and why), and if accepted set requested_wake
+    for code.py, which switches the links off until then (see
+    arduino/src/node_sleep.h, which this matches). The wake time is
+    absolute, so a retried command can't push it later.
+    '''
+    global requested_wake
+    w = command.get("w")
+    now = get_timestamp_fn()
+    refused = None
+    if now < "2024":
+        refused = "clock not set"
+    else:
+        try:
+            left = _seconds(w) - _seconds(now)
+            if left <= 0:
+                refused = "wake time already passed"
+            elif left > SLEEP_MAX_S:
+                refused = "longer than SLEEP_MAX_S"
+        except (ValueError, AttributeError):
+            refused = "bad wake time"
+
+    ack = {"t": "sleep_ack", "ok": 0 if refused else 1, "w": w}
+    if refused:
+        ack["why"] = refused
+    sender.send(ack)
+    if refused:
+        print(f"[SLEEP] Refused: {refused}")
+    else:
+        requested_wake = w
+
+
 def handle_set_interval(command, sender):
     '''Update the sense interval. v must be a positive integer (seconds).'''
     v = command.get("v")
@@ -127,6 +181,9 @@ def dispatch_command(command, sender, radio, rtc, get_timestamp_fn, send_latest_
 
     elif t == "set_interval":
         return handle_set_interval(command, sender)
+
+    elif t == "sleep":
+        handle_sleep(command, sender, get_timestamp_fn)
 
     elif t == "data_ack":
         print(f"[ACK] Pi confirmed batch (q={command.get('q')}).")

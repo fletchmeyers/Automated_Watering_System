@@ -563,7 +563,8 @@ local time; it may cross midnight), set by the add questions or in
 `nodes.json`. Inside the window the Pi sends the node a sleep command (over
 the link in use) with its wake time; the node answers, switches its radio
 and Wi-Fi off, and wakes at that time (an M0 also puts its chip into
-standby; other boards stay awake on their own clock with the links off). It
+standby; other boards, including CircuitPython nodes, stay awake on their
+own clock with the links off). It
 still takes a reading every log interval while asleep, and the next day's
 sync collects them (nodes with storage). Both services record the sleep in
 `node_info.json`, so neither polls a sleeping node or counts it as missing,
@@ -571,7 +572,11 @@ and the dashboard shows it as asleep. On waking it rejoins Wi-Fi by itself.
 
 To sleep a node now (bench tests): `python3 sync_indoor.py sleep <node> <minutes>`
 (this goes through `main.py`, so only to a node on the radio at the time).
-**CircuitPython nodes don't sleep yet**: give them no `sleep_window`.
+
+A node refuses to sleep (and the Pi asks again later) if its clock isn't
+set yet, the wake time has already passed, or it's more than 16 hours away.
+While asleep a node only answers Ctrl+C on its USB console (CircuitPython)
+or a reset; the Pi leaves it alone until the wake time.
 
 ### Battery saver
 
