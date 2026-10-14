@@ -217,3 +217,134 @@ def test_find_node_waits_for_a_board_that_reset_when_its_port_opened(monkeypatch
                         lambda self, cmd, kind, timeout=1: real_ask(self, cmd, kind, timeout=0.2))
     node, info = usb_sync.find_node(["/dev/ttyACM0"], quiet=True)
     assert info["n"] == 14 and board.asked == 2
+
+
+# â”€â”€ The garden-usb watcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+class FakePort:
+    def __init__(self, path):
+        self.port = path
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class Bench:
+    '''Boards plugged into the Pi, a clock, and what the watcher did.'''
+
+    def __init__(self, tmp_path, monkeypatch, info=None):
+        monkeypatch.setattr(usb_sync, "USB_SYNC_FILE", str(tmp_path / "usb.json"))
+        monkeypatch.setattr(usb_sync, "NODE_SETUP_FILE", str(tmp_path / "setup.json"))
+        self.tmp_path = tmp_path
+        self.boards = {}
+        self.now = 0.0
+        self.info = info          # what a board answers ("info"), or None: no answer
+        self.asked = []
+        self.pulled = []
+        self.watcher = usb_sync.Watcher(devices=lambda: dict(self.boards), find=self.find,
+                                        pull=self.pull, clock=lambda: self.now)
+
+    def find(self, ports, quiet=False):
+        self.asked.append(ports)
+        # While it's asked, the watcher holds the USB for itself.
+        assert json.loads((self.tmp_path / "usb.json").read_text())["pid"] == os.getpid()
+        if self.info is None:
+            return None, None
+        return usb_sync.UsbNode(FakePort(ports[0])), dict(self.info)
+
+    def pull(self, node, info):
+        self.pulled.append(info["n"])
+
+    def at(self, seconds):
+        self.now = seconds
+        self.watcher.step()
+
+
+def test_a_board_plugged_in_is_asked_once_it_has_started_and_its_backlog_pulled(tmp_path, monkeypatch):
+    bench = Bench(tmp_path, monkeypatch, info={"t": "info", "n": 1, "ub": 5000})
+    bench.boards["pico"] = ["/dev/ttyACM1", "/dev/ttyACM0"]
+    bench.at(0)
+    bench.at(usb_sync.SETTLE - 1)
+    assert bench.asked == []                                 # still starting up
+    bench.at(usb_sync.SETTLE)
+    assert bench.asked == [["/dev/ttyACM1", "/dev/ttyACM0"]]  # data port first
+    assert bench.pulled == [1]
+    assert not (tmp_path / "usb.json").exists()              # handed the USB back
+
+    bench.at(100)
+    bench.at(1000)
+    assert bench.pulled == [1]                               # once per plug-in
+
+    del bench.boards["pico"]                                 # unplugged...
+    bench.at(1001)
+    bench.boards["pico"] = ["/dev/ttyACM1", "/dev/ttyACM0"]  # ...and back
+    bench.at(1002)
+    bench.at(1002 + usb_sync.SETTLE)
+    assert bench.pulled == [1, 1]
+
+
+def test_nothing_waiting_means_nothing_pulled(tmp_path, monkeypatch):
+    bench = Bench(tmp_path, monkeypatch, info={"t": "info", "n": 3, "ub": 0})
+    bench.boards["esp32"] = ["/dev/ttyUSB0"]
+    bench.at(0)
+    bench.at(usb_sync.SETTLE)
+    bench.at(usb_sync.SETTLE + 10)
+    assert len(bench.asked) == 1 and bench.pulled == []
+
+
+def test_a_board_that_never_answers_is_left_alone_after_a_while(tmp_path, monkeypatch):
+    bench = Bench(tmp_path, monkeypatch, info=None)
+    bench.boards["something"] = ["/dev/ttyACM0"]
+    bench.at(0)
+    for t in range(usb_sync.SETTLE, usb_sync.GIVE_UP + 1, 5):
+        bench.at(t)
+    asked = len(bench.asked)
+    assert asked > 1                                         # kept trying while it might be booting
+    bench.at(usb_sync.GIVE_UP + 100)
+    assert len(bench.asked) == asked                         # then stopped
+
+
+def test_the_watcher_waits_while_node_setup_has_the_usb(tmp_path, monkeypatch):
+    bench = Bench(tmp_path, monkeypatch, info={"t": "info", "n": 1, "ub": 10})
+    (tmp_path / "setup.json").write_text(json.dumps({"pid": os.getpid()}))
+    bench.boards["pico"] = ["/dev/ttyACM1"]
+    bench.at(0)
+    bench.at(30)
+    assert bench.asked == []
+    (tmp_path / "setup.json").unlink()                       # node_setup.py finished
+    bench.at(33)
+    assert bench.pulled == [1]
+
+
+def test_a_failed_pull_is_not_retried_until_the_board_is_plugged_in_again(tmp_path, monkeypatch, capsys):
+    bench = Bench(tmp_path, monkeypatch, info={"t": "info", "n": 1, "ub": 10})
+
+    def broken(node, info):
+        raise RuntimeError("node stopped answering over USB")
+    bench.watcher._pull = broken
+    bench.boards["pico"] = ["/dev/ttyACM1"]
+    bench.at(0)
+    bench.at(usb_sync.SETTLE)
+    bench.at(usb_sync.SETTLE + 10)
+    assert len(bench.asked) == 1
+    assert "failed: node stopped answering" in capsys.readouterr().out
+    assert not (tmp_path / "usb.json").exists()
+
+
+def test_node_setup_waits_for_a_pull_then_holds_the_usb(tmp_path, monkeypatch):
+    import node_setup
+    monkeypatch.setattr(node_setup, "USB_SYNC_FILE", str(tmp_path / "usb.json"))
+    monkeypatch.setattr(node_setup, "NODE_SETUP_FILE", str(tmp_path / "setup.json"))
+    (tmp_path / "usb.json").write_text(json.dumps({"n": 1, "pid": os.getpid()}))
+    waits = []
+
+    def pull_finishes(seconds):
+        waits.append(seconds)
+        (tmp_path / "usb.json").unlink()
+    monkeypatch.setattr(node_setup.time, "sleep", pull_finishes)
+
+    with node_setup.usb_turn():
+        assert waits                                         # it waited for the pull
+        assert json.loads((tmp_path / "setup.json").read_text())["pid"] == os.getpid()
+    assert not (tmp_path / "setup.json").exists()

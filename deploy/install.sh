@@ -5,7 +5,7 @@
 #     ~/Automated_Watering_System/deploy/install.sh
 #
 # Safe to run again after any `git pull`. It:
-#   1. stops garden-sensor, garden-api and garden-wifi
+#   1. stops garden-sensor, garden-api, garden-wifi and garden-usb
 #   2. moves the Pi's untracked data (sensors.db, node_info.json, archive/,
 #      data_from_pico.txt) from the old indoor/ folder into raspberrypi/,
 #      if it is still there
@@ -22,7 +22,7 @@ fi
 
 USER_NAME=$(id -un)
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-SERVICES="garden-sensor garden-api garden-wifi"
+SERVICES="garden-sensor garden-api garden-wifi garden-usb"
 # Installed and enabled, but not started: the timer starts the service.
 BACKUP_UNITS="garden-backup.service garden-backup.timer"
 ENV_FILE=/etc/garden-api.env

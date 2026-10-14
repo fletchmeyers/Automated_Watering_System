@@ -179,6 +179,8 @@ Watch live output:
 ```bash
 sudo journalctl -u garden-sensor -f
 sudo journalctl -u garden-api -f
+sudo journalctl -u garden-wifi -f
+sudo journalctl -u garden-usb -f     # nodes plugged in over USB
 ```
 
 ### Weather API keys
@@ -649,9 +651,10 @@ link is on during the day, and at night both are off.
 | `python3 node_setup.py list` | Each node's links, storage and sleep window | | |
 | `sudo journalctl -u garden-wifi -f` | Wi-Fi nodes connecting, polls, sleeps | | |
 | `sudo journalctl -u garden-sensor -f` | Radio polls, pings, sleeps | | |
+| `sudo journalctl -u garden-usb -f` | Nodes plugged in by USB, and their backlogs pulled | | |
 
 **After pulling new code on the Pi**, restart the services
-(`sudo systemctl restart garden-sensor garden-wifi garden-api`): running
+(`sudo systemctl restart garden-sensor garden-wifi garden-api garden-usb`): running
 services keep the old code until then. A Wi-Fi node that's turned away with
 "isn't a Wi-Fi node in nodes.json" in `garden-wifi`'s log is usually a
 `garden-wifi` still running code from before that board could use Wi-Fi.
@@ -659,18 +662,40 @@ services keep the old code until then. A Wi-Fi node that's turned away with
 ## Syncing a node over USB
 
 For a big backlog (days of readings waiting on a node's SD card), plug the
-node into the Pi with a USB data cable and pull it over the cable, at
-hundreds of lines a second instead of a few:
+node into the Pi with a USB data cable: the `garden-usb` service notices it,
+asks it what it has waiting, and pulls it over the cable, at hundreds of
+lines a second instead of a few. Nothing to run; watch it with
+`sudo journalctl -u garden-usb -f`:
+
+```
+[USB] Node 1 plugged in on /dev/ttyACM1 with 48,213 bytes waiting; pulling them over USB.
+[USB] Done: 612 lines from node 1 in 0.1 min.
+```
+
+- It asks a board 5 seconds after it appears (time to start up), and keeps
+  asking for up to a minute; a board that never answers (not a garden node,
+  or a Pico without `boot.py`) is then left alone.
+- Each board is pulled **once per plug-in**. To pull again, unplug it and
+  plug it back in, or run it by hand (below).
+- A node with nothing waiting (or no SD card) is only noted in the log.
+- When the service starts (a reboot, `install.sh`) it treats every board
+  already plugged in as just plugged in. An ESP32 V2 restarts when its port
+  is opened, so one left plugged into the Pi restarts then too.
+- It stays off the USB ports while `node_setup.py` runs, and `node_setup.py`
+  waits for a pull under way to finish before it starts.
+
+To pull now, by hand (the service needn't be running):
 
 ```bash
 cd ~/Automated_Watering_System/raspberrypi
 python3 usb_sync.py              # finds the node on any USB serial port
 ```
 
-`main.py` keeps running; while `usb_sync.py` works, it leaves that node's
-radio sync alone, and afterwards carries on from wherever the node got to.
-Lines are stored exactly as radio sync stores them. Needs `python3-serial`
-(installed by `setup.sh`; otherwise `sudo apt install python3-serial`).
+`main.py` keeps running; while a USB pull runs, it leaves that node's radio
+sync alone, and afterwards carries on from wherever the node got to. Lines
+are stored exactly as radio sync stores them. Needs `python3-serial`
+(installed by `setup.sh`; otherwise `sudo apt install python3-serial`), and
+`garden-usb` is installed with the other services by `deploy/install.sh`.
 
 The Pico talks over a second USB port that `circuitpython/boot.py` turns
 on, so copy `boot.py` onto it and reset it (unplug, or the reset button)
