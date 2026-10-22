@@ -227,7 +227,7 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
     if (n == 0) continue;
     if (line_wanted(command, sent)) {
       size_t len = tag_line(line, n, sent, tagged, sizeof(tagged));
-      sender.send_raw((const uint8_t *)tagged, len);
+      sender.send_line(tagged, len);
       if (!sender.over_usb()) delay(SYNC_LINE_GAP_MS);
     }
     sent++;
@@ -301,7 +301,7 @@ void node_log_sync(JsonDocument &command, PacketSender &sender) {
         int len = snprintf(line, sizeof(line), "%.*s,\"ts\":\"%s\"}",
                            (int)strlen(json) - 1, json, ts);
         len = tag_line(line, len, sent, tagged, sizeof(tagged));
-        sender.send_raw((const uint8_t *)tagged, len);
+        sender.send_line(tagged, len);
         if (!sender.over_usb()) delay(SYNC_LINE_GAP_MS);
       }
       sent++;

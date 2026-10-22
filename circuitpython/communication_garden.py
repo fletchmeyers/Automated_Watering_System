@@ -8,8 +8,16 @@ Written by Fletcher Meyers
 March 2026
 '''
 
+import io
 import json
 import time
+
+# MessagePack over the radio (nodes.json radio_format): CircuitPython's
+# built-in module. A build without it just stays on JSON.
+try:
+    import msgpack
+except ImportError:
+    msgpack = None
 
 try:
     from hardware_setup_garden import (
@@ -70,6 +78,39 @@ SYNC_LINE_GAP       = 0.1  # seconds between lines during a sync chunk (radio on
 # It is a list of packet dicts, one per sensor, set by store_latest_reading().
 # The Pi can request this at any time via a "poll" command without touching the SD.
 latest_reading = []
+
+# How this node sends over the radio: JSON, or MessagePack when the Pi's
+# polls say so ("m" in "lp"). Set by set_radio_format() (code.py, on each
+# poll); JSON after a restart until the first poll. USB and Wi-Fi are
+# always JSON lines.
+radio_msgpack = False
+
+
+def set_radio_format(use_msgpack):
+    global radio_msgpack
+    if use_msgpack and msgpack is None:
+        if not radio_msgpack:
+            print("[RADIO] The Pi asked for MessagePack, but this CircuitPython has no msgpack "
+                  "module; staying on JSON.")
+        use_msgpack = False
+    if use_msgpack != radio_msgpack:
+        radio_msgpack = use_msgpack
+        print(f"[RADIO] From the Pi: sending {'MessagePack' if use_msgpack else 'JSON'} over the radio.")
+
+
+def encode_msgpack(obj):
+    stream = io.BytesIO()
+    msgpack.pack(obj, stream)
+    return stream.getvalue()
+
+
+def decode_packet(payload):
+    '''A command as a dict: JSON (starts with "{") or MessagePack.'''
+    if payload[:1] == b"{":
+        return json.loads(payload.decode("utf-8"))
+    if msgpack is None:
+        raise ValueError("MessagePack, but no msgpack module")
+    return msgpack.unpack(io.BytesIO(bytes(payload)))
 
 # Sensors sensor_guard.py has taken offline (code.py sets it each sense
 # cycle): sent with every poll answer so the Pi can show them.
@@ -133,8 +174,30 @@ class PacketSender:
                 ordered[k] = v
         self.sequence += 1
 
-        packet_string = json.dumps(ordered, separators=(",", ":"))
-        self.send_raw(packet_string.encode("utf-8"))
+        if self.binary():
+            self.send_raw(encode_msgpack(ordered))
+        else:
+            self.send_raw(json.dumps(ordered, separators=(",", ":")).encode("utf-8"))
+
+    def over_radio(self):
+        '''True for the radio; USB and Wi-Fi links have no packet size limit.'''
+        return getattr(self.radio, "max_bytes", RADIO_MAX_BYTES) is not None
+
+    def binary(self):
+        return radio_msgpack and self.over_radio()
+
+    def send_line(self, line, place):
+        '''A logged reading (the JSON line it's kept as) for a sync chunk,
+        tagged with its place: as it is, or as MessagePack over the radio.'''
+        if self.binary():
+            try:
+                record = json.loads(line)
+                record["j"] = place
+                self.send_raw(encode_msgpack(record))
+                return
+            except ValueError:
+                pass   # not a reading after all: send it as it is
+        self.send_raw(tag_line(line, place))
 
     def send_raw(self, data):
         '''
@@ -339,7 +402,7 @@ def send_sync_chunk(sender, command, max_lines=20):
                 if not line:
                     continue
                 if wanted is None or wanted >> sent & 1:
-                    sender.send_raw(tag_line(line, sent))
+                    sender.send_line(line, sent)
                     if gap:
                         time.sleep(gap)
                 sent += 1

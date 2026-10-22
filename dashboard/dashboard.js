@@ -1841,7 +1841,9 @@ function initCardCustomization() {
 // both links, the one in use now and the backup ("over the radio (Wi-Fi
 // backup)"). Refresh and the ping test go over the one in use.
 function linkLabel(info) {
-  const name = link => link === 'wifi' ? 'Wi-Fi' : 'the radio';
+  // (a node set to send MessagePack over the radio says so: nodes.json radio_format)
+  const name = link => link === 'wifi' ? 'Wi-Fi'
+    : `the radio${info.radio_format === 'msgpack' ? ' (MessagePack)' : ''}`;
   const backup = (info.links || []).filter(l => l !== info.link);
   return `over ${name(info.link)}${backup.length ? ` (${backup.map(name).join(', ')} backup)` : ''}`;
 }

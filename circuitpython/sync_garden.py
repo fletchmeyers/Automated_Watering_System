@@ -59,7 +59,9 @@ def check_for_command(radio, timeout=0.5):
     if payload[:1] == b"~":
         return None   # a fragment of another node's oversized packet — never a command
     try:
-        return json.loads(payload.decode("utf-8"))
+        from communication_garden import decode_packet   # JSON or MessagePack
+        command = decode_packet(payload)
+        return command if isinstance(command, dict) else None
     except Exception as e:
         print("[CMD] Could not parse packet:", e)
         return None

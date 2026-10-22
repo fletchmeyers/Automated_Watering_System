@@ -88,6 +88,10 @@ if wifi_link is not None and wifi_link.configured:
 def handle(command, reply_sender):
     '''Act on a command addressed to this node; a new sense interval sticks.'''
     global SENSE_INTERVAL
+    if command.get("t") == "poll" and command.get("n") == NODE_ID:
+        # Every poll says how to send over the radio: "m" in "lp" for
+        # MessagePack, none for JSON. This answer already goes out that way.
+        communication_garden.set_radio_format("m" in str(command.get("lp", "")))
     new_interval = dispatch_command(
         command, reply_sender, rfm69, rtc,
         get_timestamp, send_latest, send_sync_chunk,

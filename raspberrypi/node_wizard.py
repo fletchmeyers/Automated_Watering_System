@@ -503,6 +503,22 @@ def set_saver(path, node_id, on, wifi_check_hours=None):
     return changed
 
 
+def set_radio_format(path, node_id, fmt):
+    '''How a node sends over the radio: "json" or "msgpack". The Pi tells it
+    with its next poll, so no re-flash. Returns the node.'''
+    data = read_node_file(path)
+    node = data["nodes"].get(str(node_id))
+    if node is None:
+        raise NodeConfigError(f"Node {node_id} isn't in {path}.")
+    changed = {k: v for k, v in node.items() if k != "radio_format"}
+    if fmt != "json":
+        changed["radio_format"] = fmt
+    check_node(node_id, changed)
+    data["nodes"][str(node_id)] = changed
+    save_node_file(data, path)
+    return changed
+
+
 def prefer_link(path, node_id, link):
     '''Make link the first of a node's links (it must have both); returns
     the new order. The Pi switches within a minute, with no restart.'''

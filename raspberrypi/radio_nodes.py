@@ -24,6 +24,7 @@ from sync_indoor import (
 
 from communication_indoor import (
     CMD_TIMEOUT, CommandManager, BatchReceiver, PollingTimer, FragmentReassembler, SyncManager,
+    decode_packet,
     NodeHealth, SleepScheduler, run_ping_test,
 )
 
@@ -284,7 +285,7 @@ while True:
             if payload is None:
                 continue
 
-        data     = json.loads(payload.decode("utf-8"))
+        data     = decode_packet(payload)   # JSON or MessagePack (radio_format)
         pkt_type = data.get("t")
         # Anything a node sends shows it's reachable. Sync lines carry no
         # "n" — they come from whichever node is being synced.

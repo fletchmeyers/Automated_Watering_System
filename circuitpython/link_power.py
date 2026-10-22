@@ -46,7 +46,8 @@ class LinkPower:
             return
         preferred = "wifi" if lp[0] in "wW" else "radio"
         saver = lp[0] in "RW"
-        hours = int(lp[1:]) if lp[1:].isdigit() else 0
+        digits = "".join(c for c in lp[1:] if c.isdigit())   # (an "m" for MessagePack may follow)
+        hours = int(digits) if digits else 0
         if (preferred, saver, hours) != (self.preferred, self.saver, self.check_hours):
             self.preferred, self.saver, self.check_hours = preferred, saver, hours
             print(f"[LINKS] From the Pi: {'Wi-Fi' if preferred == 'wifi' else 'radio'} first, "

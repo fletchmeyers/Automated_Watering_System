@@ -30,6 +30,7 @@ EXAMPLE_FILE = Path(__file__).parent / "nodes.example.json"
 LEGACY_FILE  = Path(__file__).parent.parent / "nodes.json"   # where it was until Oct 2026
 
 FRAMEWORKS = ("circuitpython", "arduino")
+RADIO_FORMATS = ("json", "msgpack")
 STORAGE    = ("sd", "flash", "none")
 
 # How a node talks to the Pi: the RFM69 radio (radio_nodes.py), or Wi-Fi to the
@@ -45,6 +46,12 @@ STORAGE    = ("sd", "flash", "none")
 # LOW_BATTERY_SLEEP), the Pi sends it back to sleep until a check-in just
 # before its next window (communication_indoor.SleepScheduler). false turns
 # that off.
+#
+# A radio node can send over the radio in MessagePack instead of JSON:
+# "radio_format": "msgpack" (RADIO_FORMATS; JSON if not given). The same
+# readings, about a quarter smaller, so more fit in a 60-byte radio packet.
+# The Pi tells the node with every poll (link_plan's "m"), so it changes
+# with no re-flash, and back again just as easily; USB and Wi-Fi stay JSON.
 #
 # A node with both links can have "battery_saver": true, which keeps only
 # the link in use powered (arduino/src/link_power.h): with the radio first,
@@ -354,6 +361,12 @@ def check_node(node_id, node):
                 or not all(isinstance(t, str) and _HHMM.match(t) for t in window)):
             fail('sleep_window must be ["HH:MM", "HH:MM"]')
 
+    fmt = node.get("radio_format", "json")
+    if fmt not in RADIO_FORMATS:
+        fail(f'radio_format must be one of {", ".join(RADIO_FORMATS)}, not {json.dumps(fmt)}')
+    if fmt != "json" and "radio" not in links:
+        fail("radio_format is for nodes with the radio (Wi-Fi and USB always use JSON)")
+
     low = node.get("low_battery_sleep")
     if low is not None and low is not False:
         if not isinstance(low, int) or isinstance(low, bool) or not 1 <= low <= 99:
@@ -422,17 +435,20 @@ def sync_node_ids(nodes):
 
 
 def link_plan(node):
-    '''What polls tell a node with both links about how to use them, packed to
-    fit a radio packet (see arduino/src/link_power.h): r or w for the link
-    that comes first, a capital letter for battery saver, then the Wi-Fi
-    check hours if any. None for a node with one link.'''
+    '''What polls tell a node about its links ("lp"), packed to fit a radio
+    packet (see arduino/src/link_power.h). For a node with both: r or w for
+    the link that comes first, a capital letter for battery saver, then the
+    Wi-Fi check hours if any. Then "m" if it should send MessagePack over
+    the radio (radio_format). None if there's nothing to say.'''
     links = links_of(node)
-    if len(links) < 2:
-        return None
-    code = "w" if links[0] == "wifi" else "r"
-    if node.get("battery_saver"):
-        code = code.upper() + (str(node["wifi_check_hours"]) if node.get("wifi_check_hours") else "")
-    return code
+    code = ""
+    if len(links) > 1:
+        code = "w" if links[0] == "wifi" else "r"
+        if node.get("battery_saver"):
+            code = code.upper() + (str(node["wifi_check_hours"]) if node.get("wifi_check_hours") else "")
+    if node.get("radio_format") == "msgpack" and "radio" in links:
+        code += "m"
+    return code or None
 
 
 def next_free_id(taken):
@@ -443,7 +459,7 @@ def next_free_id(taken):
 
 # ── What the dashboard needs (flask_api.py's /api/nodes) ─────────────────────
 
-PUBLIC_FIELDS = ("name", "short", "color", "battery", "board", "framework", "soil")
+PUBLIC_FIELDS = ("name", "short", "color", "battery", "board", "framework", "soil", "radio_format")
 
 
 def public_nodes(nodes):
