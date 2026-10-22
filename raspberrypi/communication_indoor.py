@@ -65,10 +65,13 @@ class PollingTimer:
                            for i, nid in enumerate(node_ids)}
 
     def due_nodes(self):
-        '''Return list of node IDs whose poll timer has elapsed.'''
+        '''Node IDs whose poll timer has elapsed, the one that has waited
+        longest first. (In ID order, two nodes that weren't answering, each
+        holding the radio for a whole timeout, would keep a third waiting
+        until they'd been given up on.)'''
         now = time.monotonic()
-        return [nid for nid in self.node_ids
-                if now - self._last_poll[nid] >= self.poll_interval]
+        due = [nid for nid in self.node_ids if now - self._last_poll[nid] >= self.poll_interval]
+        return sorted(due, key=lambda nid: self._last_poll[nid])
 
     def mark_polled(self, node_id):
         self._last_poll[node_id] = time.monotonic()
