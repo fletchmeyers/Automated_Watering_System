@@ -148,7 +148,9 @@ void loop() {
     delay(100);   // USB only, or the radio's off: keep the loop's pace without its wait
   } else if (check_for_command(rf69, 100, command)) {
 #ifdef NODE_HAS_BOTH_LINKS
-    link_power_heard(LINK_RADIO, command);
+    // Every node hears every radio command: only this node's own carry its
+    // link settings (another node's poll would switch its battery saver).
+    if (command["n"].as<int>() == NODE_ID) link_power_heard(LINK_RADIO, command);
 #endif
     long new_interval_ms = dispatch_command(command, sender, rf69, NODE_ID);
     if (new_interval_ms > 0) {
