@@ -24,7 +24,7 @@ from sync_indoor import (
 
 from communication_indoor import (
     CMD_TIMEOUT, CommandManager, BatchReceiver, PollingTimer, FragmentReassembler, SyncManager,
-    decode_packet,
+    decode_packet, FormatWatch,
     NodeHealth, SleepScheduler, run_ping_test,
 )
 
@@ -136,6 +136,7 @@ def record_sleep(node_id):
     update_node_info(node_id, sleep_until=until.strftime("%Y-%m-%dT%H:%M:%S") if until else None,
                      sleep_reason=sleeper.sleep_reason(node_id))
 frags = FragmentReassembler()
+formats = FormatWatch()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 while True:
@@ -286,6 +287,7 @@ while True:
                 continue
 
         data     = decode_packet(payload)   # JSON or MessagePack (radio_format)
+        formats.seen(payload, data)         # logs a node's format when it first shows or changes
         pkt_type = data.get("t")
         # Anything a node sends shows it's reachable. Sync lines carry no
         # "n" — they come from whichever node is being synced.

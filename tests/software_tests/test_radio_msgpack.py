@@ -187,3 +187,15 @@ def test_the_pi_reads_json_and_msgpack():
 def test_garbage_is_an_error_not_a_packet():
     with pytest.raises(Exception):
         decode_packet(msgpack.packb([1, 2, 3]))
+
+
+def test_the_pi_says_which_format_each_node_sends(capsys):
+    from communication_indoor import FormatWatch
+    watch = FormatWatch()
+    as_json = b'{"t":"sht","q":1,"n":3,"tmp":21.5,"rh":40.1}'
+    assert "Node 3 is sending JSON (44 bytes for its sht packet)" in watch.seen(as_json, decode_packet(as_json))
+    assert watch.seen(as_json, decode_packet(as_json)) is None            # said once
+    as_msgpack = msgpack.packb({"t": "sht", "q": 2, "n": 3, "tmp": 21.5, "rh": 40.1}, use_single_float=True)
+    assert "Node 3 is sending MessagePack (30 bytes" in watch.seen(as_msgpack, decode_packet(as_msgpack))
+    sync_line = msgpack.packb({"t": "sht", "tmp": 21.5, "ts": "2026-10-22T18:00:00", "j": 0})
+    assert watch.seen(sync_line, decode_packet(sync_line)) is None        # sync lines don't count
