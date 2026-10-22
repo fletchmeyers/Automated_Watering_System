@@ -34,6 +34,26 @@ def decode_packet(payload):
         raise ValueError(f"not a packet: {data!r}")
     return {k: (float(f"{v:.7g}") if isinstance(v, float) else v) for k, v in data.items()}
 
+
+class FormatWatch:
+    '''Says which format each node sends over the radio (radio_format): once
+    when it's first heard, and again whenever it switches, with the size of
+    the packet that showed it, so a switch can be seen working.'''
+    def __init__(self):
+        self._formats = {}   # node ID -> "JSON" or "MessagePack"
+
+    def seen(self, payload, data):
+        node_id = data.get("n")
+        if node_id is None or "q" not in data:
+            return None   # a sync line: no node ID, and not a live packet
+        fmt = "JSON" if payload[:1] == b"{" else "MessagePack"
+        if self._formats.get(node_id) == fmt:
+            return None
+        self._formats[node_id] = fmt
+        note = f"[RADIO] Node {node_id} is sending {fmt} ({len(payload)} bytes for its {data.get('t')} packet)."
+        print(note)
+        return note
+
 CMD_TIMEOUT =45   # seconds before giving up on an unacked command
 
 # Seconds between resends of an unacked command. A sync chunk answers within
