@@ -20,6 +20,9 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
                                          (off to undo; --wifi-check-hours N to let
                                          a radio-first node check Wi-Fi every N
                                          hours); the node hears it at the next poll
+    python3 node_setup.py format 3 msgpack — send MessagePack over the radio instead
+                                         of JSON (json to go back); the node hears
+                                         it at the next poll
     python3 node_setup.py prefer 3 wifi — for a node with Wi-Fi and the radio:
                                          use Wi-Fi first (or radio), from the
                                          next poll on; no re-flash or restart
@@ -932,8 +935,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?",
-                        choices=["update", "add", "remove", "list", "prefer", "link", "saver", "calibrate",
-                                 "check"],
+                        choices=["update", "add", "remove", "list", "prefer", "link", "saver", "format",
+                                 "calibrate", "check"],
                         default="update")
     parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer, link and calibrate: which node")
     parser.add_argument("what", nargs="*",
@@ -997,6 +1000,13 @@ def main():
                      else "")
             print(f"[SETUP] Battery saver {state} for node {args.node_id}{check}. The Pi tells the node "
                   "with its next poll (within a minute); no re-flash needed.")
+        elif args.action == "format":
+            if args.node_id is None or args.what not in (["json"], ["msgpack"]):
+                parser.error("say which node and format: node_setup.py format 3 msgpack (or json)")
+            node_wizard.set_radio_format(args.nodes, args.node_id, args.what[0])
+            print(f"[SETUP] Node {args.node_id} sends {'MessagePack' if args.what == ['msgpack'] else 'JSON'} "
+                  "over the radio from its next poll (within a minute); no re-flash needed, as long as "
+                  "its firmware is from October 2026 or later.")
         elif args.action == "check":
             with usb_turn():
                 check_sensors(args.nodes)

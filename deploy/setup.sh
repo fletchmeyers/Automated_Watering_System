@@ -81,8 +81,8 @@ echo "   SPI and I2C enabled (active after the reboot at the end)"
 step "Radio venv (~/env, for radio_nodes.py)"
 [ -d "$HOME/env" ] || python3 -m venv "$HOME/env"
 "$HOME/env/bin/pip" install -q --upgrade pip
-"$HOME/env/bin/pip" install -q adafruit-circuitpython-rfm69
-"$HOME/env/bin/python3" -c "import adafruit_rfm69" && echo "   adafruit_rfm69 imports ok"
+"$HOME/env/bin/pip" install -q adafruit-circuitpython-rfm69 msgpack
+"$HOME/env/bin/python3" -c "import adafruit_rfm69, msgpack" && echo "   adafruit_rfm69 and msgpack import ok"
 
 step "Flask API packages (system Python, ~/.local)"
 pip install -q --user flask flask-cors requests gunicorn --break-system-packages

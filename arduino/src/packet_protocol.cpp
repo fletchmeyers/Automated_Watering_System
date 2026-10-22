@@ -38,6 +38,7 @@ SensorEntry SENSOR_LIST[] = {
   { "pw3",  ina_3_init,  ina_3_read,  false },
 };
 const size_t SENSOR_COUNT = sizeof(SENSOR_LIST) / sizeof(SENSOR_LIST[0]);
+bool radio_msgpack = false;
 JsonDocument latest_readings[MAX_SENSORS];
 const char *latest_tags[MAX_SENSORS];
 size_t latest_count = 0;
@@ -268,7 +269,9 @@ bool check_for_command(RH_RF69 &radio, uint16_t timeout_ms, JsonDocument &out) {
   // Fragments of another node's oversized packet — never addressed to us.
   if (len > 0 && buf[0] == '~') return false;
 
-  DeserializationError err = deserializeJson(out, (const char *)buf, len);
+  // JSON starts with "{"; anything else is MessagePack (radio_format).
+  DeserializationError err = (len > 0 && buf[0] == '{') ? deserializeJson(out, (const char *)buf, len)
+                                                        : deserializeMsgPack(out, (const char *)buf, len);
   if (err) {
     Serial.print(F("[CMD] Could not parse packet: "));
     Serial.println(err.c_str());
@@ -283,6 +286,14 @@ static void handle_poll(JsonDocument &command, PacketSender &sender) {
   // Sends whatever the last timed sense cycle captured — matches the
   // Pico's send_latest(), which also doesn't force a fresh read on poll.
   const char *ts = command["ts"] | "unknown";
+  // Every poll says how to send over the radio: "m" in its "lp" for
+  // MessagePack, none for JSON. This answer already goes out that way.
+  bool msgpack = strchr(command["lp"] | "", 'm') != nullptr;
+  if (msgpack != radio_msgpack) {
+    radio_msgpack = msgpack;
+    Serial.println(msgpack ? F("[RADIO] From the Pi: sending MessagePack over the radio.")
+                           : F("[RADIO] From the Pi: sending JSON over the radio."));
+  }
   uint32_t epoch;
   if (parse_iso(ts, &epoch)) clock_set(epoch);
   send_latest(sender, ts);

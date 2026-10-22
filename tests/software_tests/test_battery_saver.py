@@ -144,7 +144,8 @@ def test_the_longest_poll_still_fits_one_radio_packet():
     '''The radio carries at most 60 bytes; radio_nodes.py sends commands compactly.'''
     from nodes import link_plan
     poll = {"t": "poll", "ts": "2026-10-12T17:00:00", "n": 254,
-            "lp": link_plan(esp32(battery_saver=True, wifi_check_hours=168))}
+            "lp": link_plan(esp32(battery_saver=True, wifi_check_hours=168, radio_format="msgpack"))}
+    assert poll["lp"] == "R168m"
     assert len(json.dumps(poll, separators=(",", ":"))) <= 60
 
 

@@ -18,6 +18,22 @@ from sync_indoor import COMMAND_FILE, DATA_FILE, PING_PROGRESS_FILE, record_sens
 
 import db
 
+
+def decode_packet(payload):
+    '''A packet from a node over the radio, as a dict: JSON (it starts with
+    "{"), or MessagePack (a node with radio_format "msgpack"; a MessagePack
+    map never starts with "{"). Either way, any node, any time: the Pi never
+    has to know in advance. MessagePack carries readings as 32-bit floats
+    (21.53 arrives as 21.530000686...), so they're rounded back to the 7
+    significant digits a float32 holds.'''
+    if payload[:1] == b"{":
+        return json.loads(payload.decode("utf-8"))
+    import msgpack   # in the radio venv: ~/env/bin/pip install msgpack
+    data = msgpack.unpackb(bytes(payload), raw=False)
+    if not isinstance(data, dict):
+        raise ValueError(f"not a packet: {data!r}")
+    return {k: (float(f"{v:.7g}") if isinstance(v, float) else v) for k, v in data.items()}
+
 CMD_TIMEOUT =45   # seconds before giving up on an unacked command
 
 # Seconds between resends of an unacked command. A sync chunk answers within
@@ -212,7 +228,7 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5, report_progress=True)
             if resp is None:
                 break
             try:
-                data = json.loads(resp[4:].decode("utf-8"))
+                data = decode_packet(resp[4:])
                 if data.get("t") == "pong" and data.get("pq") == q:
                     rtt_ms = round((time.monotonic() - sent_at) * 1000, 1)
                     break

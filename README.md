@@ -588,6 +588,31 @@ Each node's row on the dashboard (click its chip in the header) shows its
 link in use right now, e.g. "over Wi-Fi (the radio backup)", and its
 Refresh and ping test buttons go over it.
 
+### Radio format: JSON or MessagePack
+
+A radio packet carries at most 60 bytes, so how readings are written
+matters. Nodes send JSON over the radio by default; a node can send
+**MessagePack** instead, the same readings with the same names in a
+binary form about a third smaller (a temperature/humidity reading is 30
+bytes instead of 45), so more fits in one packet and fewer have to be split.
+
+    python3 node_setup.py format 3 msgpack     # or: format 3 json to go back
+
+That sets `"radio_format": "msgpack"` in `nodes.json`, and the Pi tells the
+node with its next poll (an `m` at the end of the poll's `lp` code), so it
+changes, and changes back, with no re-flash; after a restart the node sends
+JSON until its first poll. The Pi tells the formats apart by their first
+byte (JSON always starts with `{`), so it reads either from any node at any
+time, and its own commands stay JSON. USB and Wi-Fi always use JSON. The
+node's console says `[RADIO] From the Pi: sending MessagePack over the
+radio.`, and its row on the dashboard says "over the radio (MessagePack)".
+
+Needs firmware from October 2026 or later on the node (older firmware just
+keeps sending JSON), CircuitPython's built-in `msgpack` module on a
+CircuitPython node (a build without it stays on JSON and says so), and the
+`msgpack` package in the Pi's radio venv (`~/env/bin/pip install msgpack`;
+`setup.sh` installs it).
+
 ### Refresh, step by step
 
 **↺ refresh** in a node's row (click its chip in the header to open it)

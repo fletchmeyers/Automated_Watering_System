@@ -38,6 +38,12 @@
 extern SensorEntry SENSOR_LIST[];
 extern const size_t SENSOR_COUNT;
 
+// How this node sends over the radio: JSON, or MessagePack when the Pi's
+// polls say so ("m" in "lp": nodes.json radio_format). The same packets,
+// about a quarter smaller. USB and Wi-Fi always send JSON lines. Set by
+// handle_poll(); starts as JSON after a restart, until the first poll.
+extern bool radio_msgpack;
+
 // ── PacketSender ─────────────────────────────────────────────────────────
 // Equivalent of communication_garden.py's PacketSender class.
 class PacketSender {
@@ -61,13 +67,28 @@ class PacketSender {
       doc["n"] = node_id;
 
       char buf[MAX_PAYLOAD_BYTES];
-      size_t len = serializeJson(doc, buf, sizeof(buf));
-      if (len >= sizeof(buf)) {
+      bool binary = radio && radio_msgpack;
+      if ((binary ? measureMsgPack(doc) : measureJson(doc)) >= sizeof(buf)) {
         Serial.print(F("[ERROR] Packet too large, not sent: "));
         Serial.println(type_tag);
         return;
       }
+      size_t len = binary ? serializeMsgPack(doc, buf, sizeof(buf)) : serializeJson(doc, buf, sizeof(buf));
       send_raw((const uint8_t *)buf, len);
+    }
+
+    // A logged reading, as the JSON line it's kept as, for a sync chunk:
+    // sent as it is, or turned into MessagePack first if the radio uses it.
+    void send_line(const char *line, size_t len) {
+      if (radio && radio_msgpack) {
+        JsonDocument doc;
+        uint8_t buf[MAX_PAYLOAD_BYTES];
+        if (!deserializeJson(doc, line, len) && measureMsgPack(doc) < sizeof(buf)) {
+          send_raw(buf, serializeMsgPack(doc, buf, sizeof(buf)));
+          return;
+        }
+      }
+      send_raw((const uint8_t *)line, len);
     }
 
     // Sends already-encoded bytes, split into "~<node>.<msg>.<i>.<k>|"
