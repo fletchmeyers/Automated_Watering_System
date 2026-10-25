@@ -117,9 +117,6 @@ def decode_packet(payload):
 # cycle): sent with every poll answer so the Pi can show them.
 sensors_offline = []
 
-# A failed send has been noted on the SD card since starting (node_events.py).
-send_failed = False
-
 
 class SerialLink:
     '''
@@ -213,28 +210,29 @@ class PacketSender:
         string would escape every quote and nearly double the size.
         '''
         feed()
+        # The radio library returns False when a send doesn't complete (it
+        # raises nothing), so that's checked too; USB and Wi-Fi return None.
+        ok, error = True, None
         try:
             limit = getattr(self.radio, "max_bytes", RADIO_MAX_BYTES)
             if limit is None or len(data) <= limit:
-                self.radio.send(data)
-                return
-
-            parts = [data[i:i + FRAGMENT_BODY_BYTES]
-                     for i in range(0, len(data), FRAGMENT_BODY_BYTES)]
-            msg_id = self.fragment_id
-            self.fragment_id = (self.fragment_id + 1) % 1000
-            for i, part in enumerate(parts):
-                header = f"~{self.node_id}.{msg_id}.{i}.{len(parts)}|".encode("utf-8")
-                self.radio.send(header + part)
-                if i < len(parts) - 1:
-                    time.sleep(FRAGMENT_GAP)
+                ok = self.radio.send(data) is not False
+            else:
+                parts = [data[i:i + FRAGMENT_BODY_BYTES]
+                         for i in range(0, len(data), FRAGMENT_BODY_BYTES)]
+                msg_id = self.fragment_id
+                self.fragment_id = (self.fragment_id + 1) % 1000
+                for i, part in enumerate(parts):
+                    header = f"~{self.node_id}.{msg_id}.{i}.{len(parts)}|".encode("utf-8")
+                    ok = self.radio.send(header + part) is not False and ok
+                    if i < len(parts) - 1:
+                        time.sleep(FRAGMENT_GAP)
         except Exception as e:
+            ok, error = False, str(e)
             print(f"[ERROR] Radio send failed ({len(data)} bytes): {e}")
-            global send_failed
-            if not send_failed:   # the first since starting goes on the SD card
-                send_failed = True
-                import node_events
-                node_events.record(f"radio send failed ({len(data)} bytes): {e}")
+        if self.over_radio():
+            import node_events
+            node_events.radio.sent(ok, len(data), error)   # a note when sends fail, and when they work again
 
     def send_batch_end(self, expected, sent):
         '''Send a batch_end packet closing out a poll response.'''

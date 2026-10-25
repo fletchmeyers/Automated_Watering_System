@@ -395,8 +395,13 @@ on. After a watchdog reset its console says
 a node keeps a note on its SD card each time it starts (why it restarted:
 power on, watchdog or reset; its CircuitPython version; whether USB was
 connected), crashes (the end of the error), is stopped at the console, takes
-a sensor offline or brings it back, first fails to send over the radio since
-starting, or switches radio format. The notes ride along with its readings,
+a sensor offline or brings it back, or switches radio format. The radio gets
+notes of its own: when a send fails (the radio library returns False, or
+raises an error) and when sends work again, with how many failed; and when
+nothing at all has been heard over the radio for 10 minutes (the Pi polls
+every minute), and when it's heard again. Together they say which way a
+link that went quiet was failing: sending, hearing, or neither (then look
+at power or range). The notes ride along with its readings,
 so the next radio sync or USB pull brings them to the Pi, which keeps them
 out of the readings and adds them to `raspberrypi/node_events.txt`:
 

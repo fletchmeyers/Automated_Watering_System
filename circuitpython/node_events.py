@@ -8,6 +8,13 @@ going offline or coming back, the first failed radio send since starting,
 a switch of radio format. So when a node goes quiet in the garden, the next
 sync (or USB pull) says what happened.
 
+The radio gets notes of its own (RadioWatch, as node_events.radio): when a
+send fails (the radio library says so by returning False, or an error) and
+when sends work again, with how many failed; and when nothing at all has
+been heard over the radio for QUIET_MINUTES (the Pi polls every minute), and
+when it's heard again. Between them they say which way a radio link that
+went quiet was failing.
+
 Each note is a line in the reading log like any other, {"t": "ev", "m":
 "<what>", "ts": ...}, so it reaches the Pi by the same sync, over the radio
 or USB; the Pi keeps it out of the readings and logs it instead (the
@@ -17,7 +24,10 @@ Written by Fletcher Meyers
 October 2026
 '''
 
-MAX_CHARS = 200   # a note's text; a crash keeps the end of its error, where the cause is
+import time
+
+MAX_CHARS     = 200   # a note's text; a crash keeps the end of its error, where the cause is
+QUIET_MINUTES = 10    # nothing heard over the radio for this long: noted
 
 _timestamp = None
 
@@ -80,3 +90,47 @@ def crashed(error):
     if len(text) > room:
         text = "..." + text[-(room - 3):]
     record("crashed: " + text)
+
+
+class RadioWatch:
+    '''Notes when the radio stops (and starts) sending or hearing.'''
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._failures = 0        # sends failed in a row
+        self.reset()
+
+    def reset(self):
+        '''Count quiet time from now (at start, and after a sleep), without a note.'''
+        self._last_heard = self._clock()
+        self._quiet = False
+
+    def sent(self, ok, size, error=None):
+        '''How a radio send of size bytes went.'''
+        if not ok:
+            self._failures += 1
+            if self._failures == 1:
+                record(f"radio send failed ({size} bytes): {error or 'the radio said it did not complete'}")
+        elif self._failures:
+            record(f"radio sends working again, after {self._failures} failed")
+            self._failures = 0
+
+    def heard(self):
+        '''Something arrived over the radio (from the Pi or another node).'''
+        now = self._clock()
+        if self._quiet:
+            minutes = round((now - self._last_heard) / 60)
+            record(f"hearing the radio again, after {minutes} min of silence")
+            self._quiet = False
+        self._last_heard = now
+
+    def check(self, listening):
+        '''Each pass of the loop: listening is whether the radio is on.'''
+        if not listening:
+            self._last_heard = self._clock()   # switched off (battery saver): not silence
+            return
+        if not self._quiet and self._clock() - self._last_heard >= QUIET_MINUTES * 60:
+            self._quiet = True
+            record(f"nothing heard over the radio for {QUIET_MINUTES} min (the Pi polls every minute)")
+
+
+radio = RadioWatch()
