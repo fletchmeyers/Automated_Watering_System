@@ -244,7 +244,7 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5, report_progress=True)
         radio.send(packet.encode("utf-8"))
 
         deadline = sent_at + timeout
-        rtt_ms = None
+        rtt_ms = rssi = None
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             resp = radio.receive(with_header=True, timeout=max(0, remaining))
@@ -254,11 +254,15 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5, report_progress=True)
                 data = decode_packet(resp[4:])
                 if data.get("t") == "pong" and data.get("pq") == q:
                     rtt_ms = round((time.monotonic() - sent_at) * 1000, 1)
+                    rssi = getattr(radio, "last_rssi", None)   # how strongly the pong arrived
                     break
             except Exception:
                 continue
 
-        results.append({"q": q, "ok": rtt_ms is not None, "rtt_ms": rtt_ms})
+        result = {"q": q, "ok": rtt_ms is not None, "rtt_ms": rtt_ms}
+        if rtt_ms is not None and rssi is not None:
+            result["rssi_dbm"] = round(rssi)
+        results.append(result)
 
         if not report_progress:
             continue
@@ -275,16 +279,69 @@ def run_ping_test(radio, node_id=1, count=10, timeout=1.5, report_progress=True)
     hits = sum(1 for r in results if r["ok"])
     rtts = [r["rtt_ms"] for r in results if r["ok"]]
     avg_rtt = round(sum(rtts) / len(rtts), 1) if rtts else None
+    rssis = [r["rssi_dbm"] for r in results if "rssi_dbm" in r]
+    avg_rssi = round(sum(rssis) / len(rssis)) if rssis else None
 
-    print(f"[PING] Test complete: {hits}/{count} pongs, avg {avg_rtt}ms")
+    print(f"[PING] Test complete: {hits}/{count} pongs, avg {avg_rtt}ms"
+          + (f", signal {avg_rssi} dBm" if avg_rssi is not None else ""))
 
     return {
-        "count":      count,
-        "hits":       hits,
-        "misses":     count - hits,
-        "avg_rtt_ms": avg_rtt,
-        "results":    results,
+        "count":        count,
+        "hits":         hits,
+        "misses":       count - hits,
+        "avg_rtt_ms":   avg_rtt,
+        "avg_rssi_dbm": avg_rssi,
+        "results":      results,
     }
+
+
+# How strongly a node's packets reach the Pi (RSSI from the Pi's RFM69, in
+# dBm: closer to 0 is stronger). At the radios' 250 kbit/s, packets start
+# getting lost below about SIGNAL_WEAK_DBM, so a node that's weaker than
+# that answers some commands and misses others, and fails pings first.
+SIGNAL_FAIR_DBM = -80
+SIGNAL_WEAK_DBM = -90
+
+
+def signal_word(dbm):
+    return "strong" if dbm >= SIGNAL_FAIR_DBM else "fair" if dbm >= SIGNAL_WEAK_DBM else "weak"
+
+
+class SignalWatch:
+    '''Each node's signal, from every packet it sends: said in the log the
+    first time a node is heard and then every report_every seconds (the
+    average and the weakest since), and kept in node_info.json for the
+    dashboard.'''
+    def __init__(self, report_every=300, clock=time.monotonic, record=None):
+        self.report_every = report_every
+        self._clock = clock
+        self._record = record   # update_node_info, or a stand-in
+        self._samples = {}      # node ID -> RSSIs since the last report
+        self._reported = {}     # node ID -> when it was last reported
+
+    def heard(self, node_id, rssi):
+        '''A packet from node_id arrived at rssi dBm. Returns the report, if one was due.'''
+        if node_id is None or rssi is None:
+            return None
+        samples = self._samples.setdefault(node_id, [])
+        samples.append(rssi)
+        now = self._clock()
+        last = self._reported.get(node_id)
+        if last is not None and now - last < self.report_every:
+            return None
+        self._reported[node_id] = now
+        self._samples[node_id] = []
+        avg, weakest = round(sum(samples) / len(samples)), round(min(samples))
+        note = (f"[SIGNAL] Node {node_id}: {avg} dBm ({signal_word(avg)}) over {len(samples)} "
+                f"packet{'s' * (len(samples) != 1)}, weakest {weakest} dBm.")
+        print(note)
+        if self._record is not None:
+            try:
+                self._record(node_id, rssi_dbm=avg, rssi_weakest_dbm=weakest,
+                             rssi_at=datetime.now().strftime(ISO_FORMAT))
+            except OSError as e:
+                print(f"[SIGNAL] Couldn't record it: {e}")
+        return note
 
 
 class NodeHealth:

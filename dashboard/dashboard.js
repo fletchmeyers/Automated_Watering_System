@@ -848,8 +848,14 @@ function renderNodePanels(byNode) {
     const asleep = sleepUntil(n);
     const battery = info.battery || DEFAULT_BATTERY;
     const store = nodeStorage[id];
+    // How strongly its radio packets reach the Pi (radio_nodes.py's SignalWatch)
+    const signal = store && typeof store.rssi_dbm === 'number'
+      ? `<span style="color:${store.rssi_dbm >= -80 ? 'var(--green)' : store.rssi_dbm >= -90 ? 'var(--amber)' : 'var(--red)'}">${store.rssi_dbm} dBm</span>`
+        + ` <span class="node-row-ago">${store.rssi_dbm >= -80 ? 'strong' : store.rssi_dbm >= -90 ? 'fair' : 'weak'}</span>`
+      : '–';
     const metrics = [
       ['LAST PACKET', lastTs ? lastTs.replace('T', ' ') : 'none in 6h'],
+      ['RADIO SIGNAL', signal],
       [battery.label, batteryReading(getLatest(np, battery.type))],
       ['WAITING TO SYNC', store ? formatBytes(store.ub) : '–'],
       ['STORAGE FREE', store && store.tb ? `${formatBytes(store.fb)} of ${formatBytes(store.tb)}` : store ? 'no storage' : '–'],
@@ -1310,6 +1316,7 @@ async function runPingTest(nodeId) {
       const rtts = (data.results || []).filter(r => r.ok && r.rtt_ms != null).map(r => r.rtt_ms);
       const summary = rtts.length
         ? `average ${Math.round(data.avg_rtt_ms)} ms · fastest ${Math.round(Math.min(...rtts))} ms · slowest ${Math.round(Math.max(...rtts))} ms`
+          + (typeof data.avg_rssi_dbm === 'number' ? ` · signal ${data.avg_rssi_dbm} dBm` : '')
         : 'no pongs came back';
       renderPingBox(nodeId, {
         title: `${name}: ${data.hits}/${data.count} pongs ${link}`,

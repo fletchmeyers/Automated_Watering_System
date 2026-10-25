@@ -659,7 +659,21 @@ few seconds; anything else stays until closed (×).
 **⇄ ping test** in the same row sends the node 10 pings over its link in
 use and opens a box like Refresh's: a dot per ping (green answered, with its
 round trip in ms under it; red no answer; teal on its way), then the
-average, fastest and slowest. It stays until closed. The progress comes from
+average, fastest and slowest. It stays until closed.
+
+**Radio signal.** The Pi measures how strongly each radio packet arrives
+(RSSI, in dBm: closer to 0 is stronger). Each node's row shows the latest
+average as **RADIO SIGNAL**, *strong* above −80 dBm, *fair* to −90, *weak*
+below that; the ping test adds the pongs' average; and the radio loop logs
+it when a node is first heard and every 5 minutes after:
+
+    [SIGNAL] Node 1: -93 dBm (weak) over 12 packets, weakest -99 dBm.
+
+At the radios' 250 kbit/s, packets start getting lost below about −90 dBm:
+a node there answers some commands and misses others, and fails pings
+first (one try each, where a poll is retried for 45 s). A weak node usually
+means its antenna (a loose or cracked joint, the wrong length: 78 mm for
+915 MHz), or that something is between it and the Pi. The progress comes from
 `/api/poll_progress`, which the Pi's services write as the poll moves along
 (`POLL_PROGRESS_FILE` in `sync_indoor.py`).
 
