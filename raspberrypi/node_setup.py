@@ -747,7 +747,7 @@ def setup_wifi(node_id, timeout=60, framework="arduino", links=("wifi",), plan=N
             return
     elif not send_wifi_config(node_id, settings):
         raise SetupError("Couldn't give the node its Wi-Fi settings over USB: it didn't answer, "
-                         "or didn't confirm them. Run node_setup.py again to retry.")
+                         "or didn't confirm them. Try again with: python3 node_setup.py --wifi-only")
 
     print(f"[SETUP] Waiting for node {node_id} to connect over Wi-Fi (up to {timeout}s)...")
     def connected():
@@ -823,10 +823,12 @@ def run(args, board=None):
     node_id = args.node or board.node_id
     if node_id is None:
         if not interactive():
-            raise SetupError("Which node should this board be? Say with --node N, or run "
-                             "node_setup.py add to add a new node.")
+            raise SetupError("Which node should this board be? For one already in the list "
+                             "(python3 node_setup.py list): python3 node_setup.py --node N. "
+                             "For a new one: python3 node_setup.py add")
         if not node_wizard.Wizard().yes("It isn't a node yet. Add it to the node list as a new node?"):
-            raise SetupError("Nothing done. To set it up as a node already in the list: --node N")
+            raise SetupError("Nothing done. To set it up as a node already in the list "
+                             "(python3 node_setup.py list): python3 node_setup.py --node N")
         node_id = node_wizard.add_node(args.nodes, node_wizard.Wizard(), board.boards, DB_FILE)
         if node_id is None:
             return
@@ -969,19 +971,19 @@ def main():
             add(args)
         elif args.action == "remove":
             if args.node_id is None:
-                parser.error("say which node: node_setup.py remove N")
+                parser.error("say which node, e.g.: python3 node_setup.py remove 3")
             if node_wizard.remove_node(args.nodes, args.node_id, node_wizard.Wizard()):
                 print("[SETUP] Restart the Pi's radio loop so it stops polling it: "
                       "sudo systemctl restart garden-radio")
         elif args.action == "prefer":
             if args.node_id is None or len(args.what) != 1 or args.what[0] not in ("wifi", "radio"):
-                parser.error("say which node and link: node_setup.py prefer N wifi (or radio)")
+                parser.error("say which node and link, e.g.: python3 node_setup.py prefer 3 wifi (or radio)")
             order = node_wizard.prefer_link(args.nodes, args.node_id, args.what[0])
             print(f"[SETUP] Node {args.node_id} now uses {' first, then '.join(order)}. "
                   "The Pi switches within a minute.")
         elif args.action == "link":
             if args.node_id is None or not args.what:
-                parser.error("say which node and links: node_setup.py link 3 wifi radio (or just one)")
+                parser.error("say which node and links, e.g.: python3 node_setup.py link 3 wifi radio (or just one)")
             try:
                 node = node_wizard.set_links(args.nodes, args.node_id, args.what, node_wizard.Wizard())
             except (node_wizard.Cancelled, node_wizard.Back, EOFError, KeyboardInterrupt):
@@ -993,7 +995,7 @@ def main():
                       "sudo systemctl restart garden-radio")
         elif args.action == "saver":
             if args.node_id is None or args.what not in (["on"], ["off"]):
-                parser.error("say which node and on or off: node_setup.py saver 2 on")
+                parser.error("say which node and on or off, e.g.: python3 node_setup.py saver 2 on")
             node = node_wizard.set_saver(args.nodes, args.node_id, args.what == ["on"], args.wifi_check_hours)
             state = "on" if node.get("battery_saver") else "off"
             check = (f", checking Wi-Fi every {node['wifi_check_hours']} h" if node.get("wifi_check_hours")
@@ -1002,7 +1004,7 @@ def main():
                   "with its next poll (within a minute); no re-flash needed.")
         elif args.action == "format":
             if args.node_id is None or args.what not in (["json"], ["msgpack"]):
-                parser.error("say which node and format: node_setup.py format 3 msgpack (or json)")
+                parser.error("say which node and format, e.g.: python3 node_setup.py format 3 msgpack (or json)")
             node_wizard.set_radio_format(args.nodes, args.node_id, args.what[0])
             print(f"[SETUP] Node {args.node_id} sends {'MessagePack' if args.what == ['msgpack'] else 'JSON'} "
                   "over the radio from its next poll (within a minute); no re-flash needed, as long as "
@@ -1013,7 +1015,7 @@ def main():
         elif args.action == "calibrate":
             if (args.node_id is None or len(args.what) != 2
                     or args.what[1] not in ("dry", "wet", "clear", "auto")):
-                parser.error("say which node, sensor and point: node_setup.py calibrate 3 s1 dry "
+                parser.error("say which node, sensor and point, e.g.: python3 node_setup.py calibrate 3 s1 dry "
                              "(or wet, auto or clear)")
             soil_calibration.calibrate(args.nodes, args.node_id, args.what[0], args.what[1],
                                        node_wizard.Wizard(), DB_FILE, minutes=args.minutes,

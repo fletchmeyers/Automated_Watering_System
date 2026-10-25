@@ -170,6 +170,26 @@ def test_prefer_explains_what_it_cant_do(node_file, node_id, link, message):
         node_wizard.prefer_link(node_file, node_id, link)
 
 
+def test_adding_a_link_says_exactly_what_to_run(node_file, tmp_path):
+    '''Node 20 made Wi-Fi only, then asked for the radio first: the message is
+    the commands to copy and paste, not a description of them.'''
+    data = json.loads(node_file.read_text())
+    data["nodes"]["20"]["link"] = "wifi"
+    node_file.write_text(json.dumps(data))
+    with pytest.raises(NodeConfigError) as raised:
+        node_wizard.prefer_link(node_file, 20, "radio")
+    message = str(raised.value)
+    assert "python3 node_setup.py link 20 radio wifi\n" in message
+    assert "    python3 node_setup.py\n" in message
+    assert message.endswith("sudo systemctl restart garden-radio")
+
+
+def test_validation_errors_give_the_command_that_fixes_them():
+    node = dict(dual_node(), link="wifi", radio_format="msgpack")
+    with pytest.raises(NodeConfigError, match="python3 node_setup.py format 20 json"):
+        nodes.check_node(20, node)
+
+
 def test_the_running_services_see_a_switch_without_a_restart(node_file):
     listed = NodeList(node_file, check_s=0)
     assert links_of(listed.get()[20]) == ["wifi", "radio"]

@@ -528,9 +528,15 @@ def prefer_link(path, node_id, link):
         raise NodeConfigError(f"Node {node_id} isn't in {path}.")
     links = links_of(node)
     if link not in links:
-        raise NodeConfigError(f"Node {node_id} has no {LINK_NAMES.get(link, link)} link "
-                              f"(only {', '.join(LINK_NAMES[l] for l in links)}); adding one "
-                              "means re-flashing it with new settings.")
+        # Adding a link means new firmware: say exactly what to run.
+        steps = [f"python3 node_setup.py link {node_id} {' '.join([link] + links)}",
+                 "python3 node_setup.py"]
+        if link == "radio":
+            steps.append("sudo systemctl restart garden-radio")
+        raise NodeConfigError(
+            f"Node {node_id} has no {LINK_NAMES.get(link, link)} link (only "
+            f"{', '.join(LINK_NAMES[l] for l in links)}). To add it, with the board plugged into "
+            "the Pi, run:\n    " + "\n    ".join(steps))
     if len(links) == 1:
         raise NodeConfigError(f"Node {node_id} only has {LINK_NAMES[link]}, so there's nothing to switch.")
     node["link"] = [link] + [l for l in links if l != link]
