@@ -137,7 +137,8 @@ def record_sleep(node_id):
                      sleep_reason=sleeper.sleep_reason(node_id))
 frags = FragmentReassembler()
 formats = FormatWatch()
-signals = SignalWatch(record=update_node_info)   # each node's signal strength, for the log and dashboard
+# Each node's signal strength: the log, the dashboard, and a reading every 5 minutes
+signals = SignalWatch(record=update_node_info, store=lambda packet: db.insert_packet(db_conn, packet))
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 while True:
