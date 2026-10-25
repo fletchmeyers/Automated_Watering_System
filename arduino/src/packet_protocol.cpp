@@ -53,24 +53,65 @@ void init_sensors() {
   }
 }
 
-// Each sensor that's present and not offline (sensor_guard.h) is read and
-// timed; a failed read leaves nothing for the poll, a slow one is kept.
-void run_sense_cycle() {
-  latest_count = 0;
-  for (size_t i = 0; i < SENSOR_COUNT && latest_count < MAX_SENSORS; i++) {
-    SensorEntry &sensor = SENSOR_LIST[i];
-    if (!sensor.ok || !sensor_due(sensor)) continue;
+// ── Sense cycle, a sensor at a time ──────────────────────────────────────
+// loop() reads one sensor per pass and checks the radio (and USB and Wi-Fi)
+// in between, so a command arriving mid-cycle is answered after one sensor
+// read at most rather than the whole cycle. (RadioHead catches the packet
+// on the radio's interrupt either way; it's the answer that has to wait,
+// since it can't be sent from inside the interrupt.) The cycle under way
+// reads into these, copied to latest_readings when it's done, so polls and
+// the log always get a complete set. Each sensor that's present and not
+// offline (sensor_guard.h) is read and timed; a failed read leaves nothing,
+// a slow one is kept.
+static JsonDocument pending_readings[MAX_SENSORS];
+static const char *pending_tags[MAX_SENSORS];
+static size_t pending_count = 0;
+static size_t cycle_next = 0;
+static bool cycle_busy = false;
 
-    latest_readings[latest_count].clear();
-    JsonObject obj = latest_readings[latest_count].to<JsonObject>();
+bool sense_cycle_busy() { return cycle_busy; }
+
+void sense_cycle_start() {
+  cycle_busy = true;
+  cycle_next = 0;
+  pending_count = 0;
+}
+
+bool sense_cycle_step() {
+  if (!cycle_busy) return true;
+  while (cycle_next < SENSOR_COUNT) {
+    SensorEntry &sensor = SENSOR_LIST[cycle_next++];
+    if (!sensor.ok || !sensor_due(sensor)) continue;   // costs nothing: on to the next
+    if (pending_count >= MAX_SENSORS) {
+      cycle_next = SENSOR_COUNT;
+      break;
+    }
+    pending_readings[pending_count].clear();
+    JsonObject obj = pending_readings[pending_count].to<JsonObject>();
     uint32_t started = millis();
     bool ok = sensor.read_fn(obj);
     sensor_result(sensor, ok, millis() - started);
-    node_watchdog_feed();   // a few slow sensors in a row mustn't add up to a reset
-    if (!ok) continue;
-    latest_tags[latest_count] = sensor.tag;
-    latest_count++;
+    node_watchdog_feed();
+    if (ok) {
+      pending_tags[pending_count] = sensor.tag;
+      pending_count++;
+    }
+    break;   // one read per step: back to the radio
   }
+  if (cycle_next < SENSOR_COUNT) return false;
+  for (size_t i = 0; i < pending_count; i++) {
+    latest_readings[i] = pending_readings[i];
+    latest_tags[i] = pending_tags[i];
+  }
+  latest_count = pending_count;
+  cycle_busy = false;
+  return true;
+}
+
+// A whole cycle now (asleep, with the radio off anyway).
+void run_sense_cycle() {
+  sense_cycle_start();
+  while (!sense_cycle_step()) {}
 }
 
 void send_latest(PacketSender &sender, const char *timestamp) {

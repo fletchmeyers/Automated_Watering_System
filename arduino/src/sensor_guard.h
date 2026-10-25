@@ -4,7 +4,7 @@
  * A safety net for sensors whose connections are going bad (corroded pins
  * on the I2C bus, say): the Arduino twin of circuitpython/sensor_guard.py.
  * A sensor whose read fails, or takes longer than SENSOR_SLOW_MS,
- * SENSOR_STRIKES times in a row is taken offline: run_sense_cycle() stops
+ * SENSOR_STRIKES times in a row is taken offline: the sense cycle stops
  * reading it, so it can't hold up the sensors that still work (or the
  * radio), and tries it again after 10 minutes, 30, then every hour. One
  * good read brings it back; a restart tries everything again too.
