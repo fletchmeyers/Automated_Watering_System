@@ -55,6 +55,11 @@ def check_for_command(radio, timeout=0.5):
     packet = radio.receive(timeout=timeout, with_header=True)
     if packet is None:
         return None
+    try:
+        import node_events
+        node_events.radio.heard()   # anything at all shows the radio is hearing (node_events.RadioWatch)
+    except ImportError:
+        pass
     payload = packet[4:]
     if payload[:1] == b"~":
         return None   # a fragment of another node's oversized packet — never a command

@@ -167,6 +167,7 @@ def sleep_until(wake):
     # links, loop_once() powers whichever link_power.py wants, counting
     # quiet time from now.
     radio_on = rfm69 is not None
+    node_events.radio.reset()   # asleep isn't silence
     if power is not None:
         power.reset()
     elif wifi_link is not None and wifi_link.configured:
@@ -202,6 +203,8 @@ def loop_once():
     else:
         command = None   # no radio, or it's switched off: USB (and Wi-Fi) only
         time.sleep(0.1)
+    if rfm69 is not None:
+        node_events.radio.check(listening=radio_on)   # a note after 10 min of hearing nothing
     if command is not None and power is not None and command.get("n") == NODE_ID:
         power.heard("radio", command)
     if command is not None:

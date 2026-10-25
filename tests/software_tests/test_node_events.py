@@ -60,18 +60,96 @@ def test_a_crash_note_has_the_error(sd):
     assert note.startswith("crashed: ") and "KeyError" in note and "voc" in note
 
 
-def test_only_the_first_failed_radio_send_is_noted(sd, monkeypatch):
-    monkeypatch.setattr(garden, "send_failed", False)
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
 
-    class DeadRadio:
+    def __call__(self):
+        return self.t
+
+
+@pytest.fixture
+def watch(monkeypatch):
+    clock = Clock()
+    radio_watch = node_events.RadioWatch(clock)
+    monkeypatch.setattr(node_events, "radio", radio_watch)
+    return radio_watch, clock
+
+
+def notes(sd):
+    return [line["m"] for line in logged(sd)] if (sd / "data.txt").exists() else []
+
+
+class Radio:
+    '''The CircuitPython radio library: send() returns False when it doesn't complete.'''
+    def __init__(self, results):
+        self.results = list(results)
+
+    def send(self, data):
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def test_failed_sends_are_noted_once_and_their_end_too(sd, watch):
+    sender = PacketSender(1, Radio([True, False, False, RuntimeError("SPI timeout"), True, True]))
+    for q in range(6):
+        sender.send({"t": "pong", "pq": q})
+    assert notes(sd) == ["radio send failed (31 bytes): the radio said it did not complete",
+                         "radio sends working again, after 3 failed"]
+
+
+def test_a_send_that_raises_says_why(sd, watch):
+    PacketSender(1, Radio([RuntimeError("SPI timeout")])).send({"t": "pong", "pq": 1})
+    assert notes(sd) == ["radio send failed (31 bytes): SPI timeout"]
+
+
+def test_usb_and_wifi_sends_arent_radio_sends(sd, watch):
+    class Wire:
+        max_bytes = None
         def send(self, data):
-            raise RuntimeError("radio didn't answer")
+            return None
+    PacketSender(1, Wire()).send({"t": "pong", "pq": 1})
+    assert notes(sd) == []
 
-    sender = PacketSender(1, DeadRadio())
-    sender.send({"t": "pong", "pq": 1})
-    sender.send({"t": "pong", "pq": 2})
-    notes = [line["m"] for line in logged(sd)]
-    assert len(notes) == 1 and notes[0].startswith("radio send failed") and "didn't answer" in notes[0]
+
+def test_ten_quiet_minutes_are_noted_and_so_is_the_end(sd, watch):
+    radio_watch, clock = watch
+    clock.t += 9 * 60
+    radio_watch.check(listening=True)
+    assert notes(sd) == []
+    clock.t += 60
+    radio_watch.check(listening=True)
+    radio_watch.check(listening=True)                     # said once
+    clock.t += 5 * 60
+    radio_watch.heard()
+    assert notes(sd) == ["nothing heard over the radio for 10 min (the Pi polls every minute)",
+                         "hearing the radio again, after 15 min of silence"]
+
+
+def test_the_radio_switched_off_isnt_silence(sd, watch):
+    radio_watch, clock = watch
+    clock.t += 30 * 60
+    radio_watch.check(listening=False)                    # battery saver had it off
+    clock.t += 60
+    radio_watch.check(listening=True)
+    assert notes(sd) == []
+
+
+def test_anything_received_counts_as_heard(watch):
+    import sync_garden
+    radio_watch, clock = watch
+    clock.t += 9 * 60
+
+    class Rfm:
+        def receive(self, timeout, with_header):
+            return b"\xff\xff\x00\x00~2.5.0.2|part of another node's message"
+
+    assert sync_garden.check_for_command(Rfm()) is None   # not a command for us...
+    clock.t += 5 * 60
+    radio_watch.check(listening=True)                     # ...but it was heard: 5 min, not 14
+    assert not radio_watch._quiet
 
 
 # ── The Pi ───────────────────────────────────────────────────────────────────
