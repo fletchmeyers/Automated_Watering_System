@@ -40,6 +40,7 @@ from sync_garden import check_for_command, dispatch_command
 from wifi_link import WifiLink
 from link_power import LinkPower
 from sensor_guard import SensorGuard
+from sense_cycle import SenseCycle
 import node_events
 
 # A note on the SD card at every start, crash and sensor change, so a node
@@ -57,6 +58,10 @@ sender        = PacketSender(NODE_ID, rfm69)
 usb           = SerialLink(usb_cdc.data) if usb_cdc.data else None
 usb_sender    = PacketSender(NODE_ID, usb) if usb else None
 guard         = SensorGuard()   # takes a sensor that keeps failing or dragging offline (sensor_guard.py)
+# The sensors are read one per pass of the loop, the radio checked between
+# them, so a command never waits for a whole cycle (sense_cycle.py).
+cycle         = SenseCycle(SENSORS, guard, feed=node_watchdog.feed,
+                           note=lambda note: node_events.record(note.replace("[SENSOR] ", "sensor ")))
 last_sense_at = time.monotonic() - SENSE_INTERVAL  # sense immediately on first loop
 last_log_at   = time.monotonic() - LOG_INTERVAL    # log the first reading too
 
@@ -108,27 +113,17 @@ def handle(command, reply_sender):
 
 
 def sense(now):
-    '''Read every sensor, keep it for the next poll, and log it if due.'''
-    global last_sense_at, last_log_at
+    '''Read every sensor now (asleep: the radio's off, so nothing waits),
+    keep it for the next poll, and log it if due.'''
+    global last_sense_at
     last_sense_at = now
-    ts      = get_timestamp()
-    packets = []
+    packets, ts = cycle.run_all(get_timestamp())
+    finish_sense(now, packets, ts)
 
-    for sensor_name, sensor_fn in SENSORS:
-        if not guard.due(sensor_name):
-            continue   # offline: tried again later
-        started = time.monotonic()
-        ok = True
-        try:
-            packets.append(sensor_fn())
-        except Exception as e:
-            ok = False
-            print(f"[ERROR] Sensor '{sensor_name}' failed: {e}")
-        note = guard.result(sensor_name, ok, time.monotonic() - started)
-        if note:
-            node_events.record(note.replace("[SENSOR] ", "sensor "))
-        node_watchdog.feed()   # a few slow sensors in a row mustn't add up to a reset
 
+def finish_sense(now, packets, ts):
+    '''A finished sense cycle: keep it for the next poll, and log it if due.'''
+    global last_log_at
     store_latest_reading(packets)
     communication_garden.sensors_offline = guard.offline()   # told to the Pi with each poll
 
@@ -176,12 +171,17 @@ def sleep_until(wake):
 
 
 def loop_once():
-    global radio_on
+    global radio_on, last_sense_at
     now = time.monotonic()
 
-    # ── Sense cycle ────────────────────────────────────────────────────────
-    if now - last_sense_at >= SENSE_INTERVAL:
-        sense(now)
+    # ── Sense cycle: one sensor per pass, the radio checked in between ────
+    if not cycle.busy and now - last_sense_at >= SENSE_INTERVAL:
+        last_sense_at = now
+        cycle.start(get_timestamp())
+    if cycle.busy:
+        done = cycle.step()
+        if done is not None:
+            finish_sense(now, *done)
 
     # ── Which links are powered (battery saver switches one off) ──────────
     if power is not None:

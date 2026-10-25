@@ -414,6 +414,15 @@ or `garden-usb`) as `[EVENT] Node 1 at ...`. A packet the radio loop can't
 read is logged with its size and first bytes (`Bad packet (36 bytes,
 starting 85 a1 74 ...)`), so it can be traced to a node.
 
+**A sensor at a time** (CircuitPython nodes, `circuitpython/sense_cycle.py`)
+— the node reads its sensors one per pass of its loop and checks the radio
+in between, so a command arriving mid-cycle waits for one sensor read at
+most, not the whole cycle (some reads are slow: the light sensor waits for
+a fresh measurement, and a corroded connection drags). Polls get the last
+complete set of readings meanwhile. Without this, a node with several I2C
+sensors answered pings late (a ping waits 1.5 s) though polls, which retry,
+still got through.
+
 **Sensors with bad connections** (`circuitpython/sensor_guard.py`,
 `arduino/src/sensor_guard.cpp`) — the watchdog catches a sensor that hangs
 the code outright; this catches one that keeps failing or dragging (pins
