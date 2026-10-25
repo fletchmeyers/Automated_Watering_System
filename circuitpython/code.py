@@ -40,6 +40,12 @@ from sync_garden import check_for_command, dispatch_command
 from wifi_link import WifiLink
 from link_power import LinkPower
 from sensor_guard import SensorGuard
+import node_events
+
+# A note on the SD card at every start, crash and sensor change, so a node
+# that goes quiet in the garden can say why at its next sync (node_events.py).
+node_events.setup(get_timestamp)
+node_events.boot()
 
 # Sending a packet (and waiting to join Wi-Fi) feeds the watchdog too.
 communication_garden.feed = node_watchdog.feed
@@ -120,7 +126,7 @@ def sense(now):
             print(f"[ERROR] Sensor '{sensor_name}' failed: {e}")
         note = guard.result(sensor_name, ok, time.monotonic() - started)
         if note:
-            print(note)
+            node_events.record(note.replace("[SENSOR] ", "sensor "))
         node_watchdog.feed()   # a few slow sensors in a row mustn't add up to a reset
 
     store_latest_reading(packets)
@@ -231,9 +237,11 @@ try:
 except KeyboardInterrupt:
     # Ctrl+C at the console (a person, or node_setup.py reaching the REPL):
     # hand it over without the watchdog resetting the board under them.
+    node_events.record("stopped at the console (Ctrl+C)")
     node_watchdog.stop()
     raise
 except Exception as e:
+    node_events.crashed(e)
     if not node_watchdog.running():
         raise   # no_watchdog: stay at the console with the error, for debugging
     try:

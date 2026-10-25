@@ -391,6 +391,24 @@ on. After a watchdog reset its console says
   the other boards stay awake while "asleep" and keep feeding it. Build
   with `-D NO_WATCHDOG` to leave it off for bench debugging.
 
+**What a node noted** (CircuitPython nodes, `circuitpython/node_events.py`) —
+a node keeps a note on its SD card each time it starts (why it restarted:
+power on, watchdog or reset; its CircuitPython version; whether USB was
+connected), crashes (the end of the error), is stopped at the console, takes
+a sensor offline or brings it back, first fails to send over the radio since
+starting, or switches radio format. The notes ride along with its readings,
+so the next radio sync or USB pull brings them to the Pi, which keeps them
+out of the readings and adds them to `raspberrypi/node_events.txt`:
+
+    tail -n 30 ~/Automated_Watering_System/raspberrypi/node_events.txt
+
+    2026-10-25T12:03:11  node 1  started, reset reason POWER_ON, CircuitPython 10.2.1, no USB
+
+They're also in the log of whichever service brought them in (`garden-radio`
+or `garden-usb`) as `[EVENT] Node 1 at ...`. A packet the radio loop can't
+read is logged with its size and first bytes (`Bad packet (36 bytes,
+starting 85 a1 74 ...)`), so it can be traced to a node.
+
 **Sensors with bad connections** (`circuitpython/sensor_guard.py`,
 `arduino/src/sensor_guard.cpp`) — the watchdog catches a sensor that hangs
 the code outright; this catches one that keeps failing or dragging (pins
