@@ -359,5 +359,6 @@ while True:
         blink_led(GLED, times=1)
 
     except Exception as e:
-        print("Bad packet:", e)
+        # What came in, so a packet the Pi can't read can be traced to its node
+        print(f"Bad packet ({len(packet)} bytes, starting {bytes(packet[:24]).hex(' ')}): {e}")
         blink_led(RLED, times=2)

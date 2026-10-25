@@ -920,12 +920,37 @@ class SyncManager:
         store_sync_lines(node_id, lines, self.db_conn)
 
 
+# A node's notes about itself (circuitpython/node_events.py: starts,
+# crashes, sensor changes), which come in among its synced readings: kept
+# here, one line each, and said in the log, rather than stored as readings.
+NODE_EVENTS_FILE = Path(__file__).parent / "node_events.txt"
+
+
+def record_node_events(lines, path=None):
+    '''Take a node's event notes ({"t": "ev"}) out of lines: log each and
+    add it to NODE_EVENTS_FILE. Returns the rest, the readings.'''
+    events = [line for line in lines if line.get("t") == "ev"]
+    if events:
+        try:
+            with open(path or NODE_EVENTS_FILE, "a") as f:
+                for event in events:
+                    f.write(f"{event.get('ts', '?')}  node {event.get('n', '?')}  {event.get('m', '')}\n")
+        except OSError as e:
+            print(f"[EVENT] Couldn't save node events: {e}")
+        for event in events:
+            print(f"[EVENT] Node {event.get('n', '?')} at {event.get('ts', '?')}: {event.get('m', '')}")
+    return [line for line in lines if line.get("t") != "ev"]
+
+
 def store_sync_lines(node_id, lines, db_conn=None):
     '''Save synced log lines to the day's sync archive and sensors.db (radio and USB sync alike).'''
     if not lines:
         return
     for line in lines:
         line.setdefault("n", node_id)
+    lines = record_node_events(lines)
+    if not lines:
+        return
 
     with open(ARCHIVE_DIR / f"sync_{date.today().isoformat()}.txt", "a") as f:
         for line in lines:

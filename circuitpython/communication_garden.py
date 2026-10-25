@@ -95,7 +95,8 @@ def set_radio_format(use_msgpack):
         use_msgpack = False
     if use_msgpack != radio_msgpack:
         radio_msgpack = use_msgpack
-        print(f"[RADIO] From the Pi: sending {'MessagePack' if use_msgpack else 'JSON'} over the radio.")
+        import node_events
+        node_events.record(f"from the Pi: sending {'MessagePack' if use_msgpack else 'JSON'} over the radio")
 
 
 def encode_msgpack(obj):
@@ -115,6 +116,9 @@ def decode_packet(payload):
 # Sensors sensor_guard.py has taken offline (code.py sets it each sense
 # cycle): sent with every poll answer so the Pi can show them.
 sensors_offline = []
+
+# A failed send has been noted on the SD card since starting (node_events.py).
+send_failed = False
 
 
 class SerialLink:
@@ -226,6 +230,11 @@ class PacketSender:
                     time.sleep(FRAGMENT_GAP)
         except Exception as e:
             print(f"[ERROR] Radio send failed ({len(data)} bytes): {e}")
+            global send_failed
+            if not send_failed:   # the first since starting goes on the SD card
+                send_failed = True
+                import node_events
+                node_events.record(f"radio send failed ({len(data)} bytes): {e}")
 
     def send_batch_end(self, expected, sent):
         '''Send a batch_end packet closing out a poll response.'''
