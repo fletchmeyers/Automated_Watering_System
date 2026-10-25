@@ -116,11 +116,12 @@ void loop() {
   node_watchdog_feed();
   unsigned long now = millis();
 
-  // ── Sense cycle ──────────────────────────────────────────────────────
-  if (now - last_sense_at >= sense_interval_ms) {
+  // ── Sense cycle: one sensor per pass, the radio checked in between ───
+  if (!sense_cycle_busy() && now - last_sense_at >= sense_interval_ms) {
     last_sense_at = now;
-    run_sense_cycle();
+    sense_cycle_start();
   }
+  if (sense_cycle_busy()) sense_cycle_step();
 
   // ── Log cycle (waits until the clock is valid) ───────────────────────
   if (clock_valid() && now - last_log_at >= LOG_INTERVAL_MS) {

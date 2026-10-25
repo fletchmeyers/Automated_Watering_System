@@ -158,6 +158,12 @@ extern const char *latest_tags[MAX_SENSORS];
 extern size_t latest_count;
 
 void init_sensors();
+// A sense cycle a sensor at a time (see packet_protocol.cpp): start one,
+// then one step per pass of loop(); a step returns true once it's done and
+// latest_readings holds the new set. run_sense_cycle() does it all at once.
+bool sense_cycle_busy();
+void sense_cycle_start();
+bool sense_cycle_step();
 void run_sense_cycle();
 void send_latest(PacketSender &sender, const char *timestamp);
 
