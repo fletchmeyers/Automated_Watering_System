@@ -283,13 +283,15 @@ def check_node(node_id, node):
     if not isinstance(saver, bool):
         fail("battery_saver must be true or false")
     if saver and len(links) < 2:
-        fail("battery_saver is for nodes with both Wi-Fi and the radio (it keeps only one on)")
+        fail("battery_saver is for nodes with both Wi-Fi and the radio (it keeps only one on). "
+             f"Turn it off with: python3 node_setup.py saver {node_id} off")
     hours = node.get("wifi_check_hours")
     if hours is not None:
         if not isinstance(hours, int) or isinstance(hours, bool) or hours <= 0:
             fail("wifi_check_hours must be a whole number of hours above 0")
         if not saver:
-            fail("wifi_check_hours goes with battery_saver (without it Wi-Fi is always on)")
+            fail("wifi_check_hours goes with battery_saver (without it Wi-Fi is always on). "
+                 f"Turn both on with: python3 node_setup.py saver {node_id} on --wifi-check-hours {hours}")
 
     storage = storage_of(node)
     if storage not in STORAGE:
@@ -365,7 +367,8 @@ def check_node(node_id, node):
     if fmt not in RADIO_FORMATS:
         fail(f'radio_format must be one of {", ".join(RADIO_FORMATS)}, not {json.dumps(fmt)}')
     if fmt != "json" and "radio" not in links:
-        fail("radio_format is for nodes with the radio (Wi-Fi and USB always use JSON)")
+        fail("radio_format is for nodes with the radio (Wi-Fi and USB always use JSON). "
+             f"Set it back first with: python3 node_setup.py format {node_id} json")
 
     low = node.get("low_battery_sleep")
     if low is not None and low is not False:
