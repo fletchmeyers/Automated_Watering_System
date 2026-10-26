@@ -503,6 +503,31 @@ def set_saver(path, node_id, on, wifi_check_hours=None):
     return changed
 
 
+def set_pins(path, node_id, assignments):
+    '''Change some of a node's pins: assignments is {"radio_cs": "6", ...}
+    as typed; numbers for an Arduino node, board pin names ("GP22", "D10")
+    for a CircuitPython one. Checked like the rest of nodes.json before it's
+    saved; the board then needs re-flashing. Returns the node.'''
+    data = read_node_file(path)
+    node = data["nodes"].get(str(node_id))
+    if node is None:
+        raise NodeConfigError(f"Node {node_id} isn't in {path}.")
+    pins = dict(node.get("pins", {}))
+    for name, value in assignments.items():
+        if node["framework"] == "arduino":
+            try:
+                pins[name] = int(value)
+            except ValueError:
+                raise NodeConfigError(f'Arduino pin "{name}" must be a number, not {value!r}')
+        else:
+            pins[name] = value
+    changed = dict(node, pins=pins)
+    check_node(node_id, changed)
+    data["nodes"][str(node_id)] = changed
+    save_node_file(data, path)
+    return changed
+
+
 def set_radio_format(path, node_id, fmt):
     '''How a node sends over the radio: "json" or "msgpack". The Pi tells it
     with its next poll, so no re-flash. Returns the node.'''

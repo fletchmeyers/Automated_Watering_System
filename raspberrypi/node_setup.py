@@ -20,6 +20,9 @@ repo and its settings from the Pi's node list (raspberrypi/nodes.json):
                                          (off to undo; --wifi-check-hours N to let
                                          a radio-first node check Wi-Fi every N
                                          hours); the node hears it at the next poll
+    python3 node_setup.py pins 5       — show a node's pins; change some with
+                                         pins 5 radio_cs=6 radio_irq=11 radio_rst=10
+                                         (then re-flash it)
     python3 node_setup.py format 3 msgpack — send MessagePack over the radio instead
                                          of JSON (json to go back); the node hears
                                          it at the next poll
@@ -78,7 +81,7 @@ import soil_calibration
 from db import DB_FILE
 from sync_indoor import NODE_SETUP_FILE, USB_SYNC_FILE, held_by
 from nodes import (
-    NodeConfigError, NODES_FILE, load_nodes, storage_of, links_of, link_plan, circuitpython_config, circuitpython_uf2_url,
+    NodeConfigError, NODES_FILE, load_nodes, read_node_file, storage_of, links_of, link_plan, circuitpython_config, circuitpython_uf2_url,
     arduino_env, arduino_build_flags, BOARDS, BOOTLOADER_DRIVES, CIRCUITPYTHON_VERSION, RP2_CHIPS,
 )
 
@@ -780,7 +783,8 @@ def interactive():
 def check_sensors(path, expected_id=None, polls=3):
     '''The hardware check (sensor_check.py) on the node plugged in: list its
     sensors and what looks wrong, then (asked at a terminal) offer to
-    calibrate its soil sensors from live readings.'''
+    calibrate its soil sensors from live readings; then, for a node with the
+    radio, check the Pi can reach it over the radio (check_radio).'''
     from usb_sync import find_node   # needs pyserial
     # A node that has just restarted (new code or Wi-Fi settings) may be busy
     # setting up or joining Wi-Fi for a few seconds: keep asking a while.
@@ -809,9 +813,11 @@ def check_sensors(path, expected_id=None, polls=3):
                                                     node_wizard.Wizard(), DB_FILE, gap=gap)
             except (node_wizard.Cancelled, node_wizard.Back, EOFError, KeyboardInterrupt):
                 print("[CHECK] Calibration skipped.")
-        return found
     finally:
         usb_node.port.close()
+    if node is not None and "radio" in links_of(node):
+        check_radio(node_id)
+    return found
 
 
 def run(args, board=None):
@@ -881,7 +887,38 @@ def run(args, board=None):
         print(f"[SETUP] If node {node_id} is new to the network, restart the Pi's radio loop so it "
               "starts polling it: sudo systemctl restart garden-radio")
     if running:
-        check_sensors(args.nodes, node_id)
+        check_sensors(args.nodes, node_id)   # and, for a radio node, a radio check
+
+
+RADIO_CHECK_PINGS = 5
+
+
+def check_radio(node_id, request=None, wait=None):
+    '''After setting a node up: can the Pi reach it over the radio? A few
+    pings, sent by the radio loop (garden-radio, which owns the Pi's radio).
+    Wrong radio pins are the usual reason not: the node starts anyway and
+    carries on over USB, so nothing else would show it.'''
+    if request is None:
+        from sync_indoor import request_ping_test as request, wait_for_ping_result as wait
+    print(f"[RADIO] Checking the Pi can reach node {node_id} over the radio ({RADIO_CHECK_PINGS} pings)...")
+    request(node_id, count=RADIO_CHECK_PINGS)
+    result = wait(node_id=node_id, timeout=60)
+    if result is None:
+        print("[RADIO] The Pi's radio loop didn't run the test; it may not be running. Start it, then "
+              f"check again:\n    sudo systemctl restart garden-radio\n    python3 node_setup.py check")
+        return None
+    hits = result.get("hits", 0)
+    if hits:
+        signal = f", {result['avg_rssi_dbm']} dBm" if result.get("avg_rssi_dbm") is not None else ""
+        print(f"[RADIO] Node {node_id} answers over the radio: {hits}/{result.get('count')} pongs{signal}.")
+    else:
+        print(f"[RADIO] Node {node_id} didn't answer over the radio. Most often its radio pins don't "
+              "match the wiring (it starts anyway, over USB only). See them, change them, and re-flash "
+              "(e.g. radio_cs=6 radio_irq=11 radio_rst=10; use your board's pin numbers):\n"
+              f"    python3 node_setup.py pins {node_id}\n"
+              f"    python3 node_setup.py pins {node_id} radio_cs=6 radio_irq=11 radio_rst=10\n"
+              "    python3 node_setup.py")
+    return hits
 
 
 def add(args):
@@ -938,7 +975,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?",
                         choices=["update", "add", "remove", "list", "prefer", "link", "saver", "format",
-                                 "calibrate", "check"],
+                                 "pins", "calibrate", "check"],
                         default="update")
     parser.add_argument("node_id", nargs="?", type=int, help="for remove, prefer, link and calibrate: which node")
     parser.add_argument("what", nargs="*",
@@ -1009,6 +1046,25 @@ def main():
             print(f"[SETUP] Node {args.node_id} sends {'MessagePack' if args.what == ['msgpack'] else 'JSON'} "
                   "over the radio from its next poll (within a minute); no re-flash needed, as long as "
                   "its firmware is from October 2026 or later.")
+        elif args.action == "pins":
+            if args.node_id is None or not all("=" in w for w in args.what):
+                parser.error("say which node, and any pins to change, e.g.: "
+                             "python3 node_setup.py pins 5 radio_cs=6 radio_irq=11 radio_rst=10")
+            if not args.what:
+                node = read_node_file(args.nodes)["nodes"].get(str(args.node_id))
+                if node is None:
+                    raise NodeConfigError(f"Node {args.node_id} isn't in the list (python3 node_setup.py list).")
+                pins = node.get("pins", {})
+                print(f"[SETUP] Node {args.node_id}'s pins: " +
+                      (", ".join(f"{k}={v}" for k, v in sorted(pins.items())) or "none"))
+            else:
+                node = node_wizard.set_pins(args.nodes, args.node_id, dict(w.split("=", 1) for w in args.what))
+                steps = "\n    python3 node_setup.py"
+                if "radio" in links_of(node):
+                    steps += "\n    sudo systemctl restart garden-radio"
+                print(f"[SETUP] Node {args.node_id}'s pins: " +
+                      ", ".join(f"{k}={v}" for k, v in sorted(node["pins"].items())) +
+                      ". With the board plugged into the Pi, re-flash it so it uses them:" + steps)
         elif args.action == "check":
             with usb_turn():
                 check_sensors(args.nodes)
