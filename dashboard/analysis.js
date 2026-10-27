@@ -36,6 +36,12 @@ const FIELD_DEFS = [
   { type: 'pw3',  key: 'ma',  label: 'Battery 3 · Current' },
   { type: 'pw3',  key: 'v',   label: 'Battery 3 · Voltage' },
   { type: 'pw3',  key: 'mw',  label: 'Battery 3 · Wattage' },
+  // The Pi's own power, from its Witty Pi UPS (node 0, raspberrypi/pi_power.py)
+  { type: 'pipwr', key: 'vout',       label: 'Supply Voltage' },
+  { type: 'pipwr', key: 'iout',       label: 'Current (A)' },
+  { type: 'pipwr', key: 'vbat',       label: 'Battery Voltage (on battery)' },
+  { type: 'pipwr', key: 'on_battery', label: 'On Battery (1 = yes)' },
+  { type: 'pipwr', key: 'tmp',        label: 'Witty Pi Temp' },
 ];
 
 // Eight colors that stay clearly apart on the dark background (no two greens).

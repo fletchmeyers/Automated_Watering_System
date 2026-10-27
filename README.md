@@ -840,6 +840,36 @@ services keep the old code until then. A Wi-Fi node that's turned away with
 "isn't a Wi-Fi node in nodes.json" in `garden-wifi`'s log is usually a
 `garden-wifi` still running code from before that board could use Wi-Fi.
 
+## The Pi's power (Witty Pi 4 L3V7)
+
+The Pi runs through a Witty Pi 4 L3V7 UPS HAT: if its USB supply fails it
+carries on from the Witty Pi's battery, shuts down cleanly when the battery
+gets to the low-voltage threshold (3.1 V by default), and starts again when
+the supply comes back ("Auto-On when USB 5V is connected"). That's all the
+Witty Pi and UUGear's software (installed with its `install.sh`, set up
+with `~/wittypi/wittyPi.sh`); it uses GPIO 4, 17, 5 and 6 and I2C address
+0x08, none of which the garden code touches.
+
+`garden-api` also reads it every 30 s (`raspberrypi/pi_power.py`, with
+`i2cget` and `pinctrl`):
+
+- The dashboard's **Pi chip**, first in the header: green with the supply
+  voltage on USB power (and "charging" while the battery charges), amber
+  "on battery 3.90 V · ~80 min left" during a power cut (the time left is a
+  rough guess from how fast the battery voltage is falling, after 10
+  minutes on battery), red close to the shutdown voltage, "power unknown"
+  if it hasn't been read for a few minutes. Hover over it for the details
+  and the Witty Pi's temperature.
+- A reading every 5 minutes (and at once when the power source changes),
+  stored as node 0's `pipwr`, so the analysis panel can plot the Pi's
+  **Supply Voltage**, **Current**, **Battery Voltage**, **On Battery** and
+  **Witty Pi Temp**.
+- A power cut and the power coming back are logged by `garden-api`
+  (`[POWER] power cut: ...`) and added to `node_events.txt` beside the
+  nodes' notes:
+
+      tail -n 30 ~/Automated_Watering_System/raspberrypi/node_events.txt
+
 ## Syncing a node over USB
 
 For a big backlog (days of readings waiting on a node's SD card), plug the

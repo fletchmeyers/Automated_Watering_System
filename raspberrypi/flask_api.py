@@ -39,8 +39,10 @@ import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+import pi_power
 import soil_calibration
 import weather_outlook
+from communication_indoor import NODE_EVENTS_FILE
 from links import active_link
 from nodes import NodeConfigError, link_plan, load_nodes, public_nodes
 from wifi_nodes import ask_wifi_service
@@ -59,6 +61,7 @@ from sync_indoor import (
     poll_progress_failed,
     recorded_wake,
     start_poll_progress,
+    update_node_info,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -349,10 +352,34 @@ def _background():
 # day sleep (radio_nodes.py and garden-wifi read the file; only this service
 # has the keys). GARDEN_API_NO_THREADS=1 leaves them out (the tests, which
 # mustn't touch the real database or the weather services).
+def _store_reading(packet):
+    conn = db.get_connection()
+    try:
+        conn.execute("PRAGMA busy_timeout = 30000")   # radio_nodes.py writes too
+        db.insert_packet(conn, packet)
+    finally:
+        conn.close()
+
+
+def _power_note(message):
+    '''A power cut, or the power back: the log, and node_events.txt beside the nodes' notes.'''
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    print(f"[POWER] {message}")
+    try:
+        with open(NODE_EVENTS_FILE, "a") as f:
+            f.write(f"{stamp}  pi      {message}\n")
+    except OSError as e:
+        print(f"[POWER] Couldn't save it to {NODE_EVENTS_FILE.name}: {e}")
+
+
 if os.environ.get("GARDEN_API_NO_THREADS") != "1":
     threading.Thread(target=_background, daemon=True).start()
     threading.Thread(target=weather_outlook.keep_refreshed, daemon=True, args=(
         GARDEN_LAT, GARDEN_LON, WEATHER_API_KEYS)).start()
+    # The Pi's own power, from its Witty Pi UPS (pi_power.py): the dashboard's
+    # Pi chip, node 0's readings, and a note when the power goes or comes back.
+    threading.Thread(target=pi_power.keep_watching, daemon=True, kwargs=dict(
+        store=_store_reading, status=update_node_info, note=_power_note)).start()
 
 
 @app.route("/api/available_fields", methods=["GET"])
