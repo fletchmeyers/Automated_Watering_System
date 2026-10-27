@@ -9,9 +9,13 @@
 <body>
 
 <header>
-  <div class="logo">
-    <div class="logo-icon"><div class="logo-leaf"></div></div>
-    <h1>garden<span>/</span>dashboard</h1>
+  <div class="header-left">
+    <div class="logo">
+      <div class="logo-icon"><div class="logo-leaf"></div></div>
+      <h1>garden<span>/</span>dashboard</h1>
+    </div>
+    <!-- The Pi itself: its power and health; click for its details (dashboard.js) -->
+    <div id="pi-status" class="pi-status"></div>
   </div>
   <div class="header-right">
     <!-- One chip per node: status dot + time since its last packet; click one

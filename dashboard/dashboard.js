@@ -95,7 +95,7 @@ const NODE_FALLBACK_COLORS = ['#d2a8ff', '#ffa657', '#a5d6ff', '#7ee787'];
 
 // Node 0 is the Pi itself: its power readings (raspberrypi/pi_power.py).
 const PI_NODE = 0;
-const PI_INFO = { name: 'Raspberry Pi', short: 'Pi', color: '#8b949e' };
+const PI_INFO = { name: 'Raspberry Pi', short: 'Pi', color: '#7ee787' };
 
 function nodeInfo(n) {
   if (Number(n) === PI_NODE) return PI_INFO;
@@ -666,6 +666,21 @@ let nodeStorage = {};
 // "now": the Pi stamps everything with its own clock.
 let piClockOffsetMs = 0;
 
+// The Pi's own health (/api/pi_health, pi_health.py): kept from the last
+// successful fetch, like the node info.
+let piHealth = null;
+
+async function loadPiHealth() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/pi_health`);
+    if (!resp.ok) throw new Error(resp.status);
+    const data = await resp.json();
+    if (data.status === 'ok') piHealth = data;
+  } catch (e) {
+    console.warn('[pi] /api/pi_health failed, keeping the last one', e);
+  }
+}
+
 async function loadNodeInfo() {
   try {
     const resp = await fetch(`${API_BASE}/api/node_info`);
@@ -739,13 +754,26 @@ function statusDot(state) {
 
 // One chip per node in the header: its own status dot and time since its
 // last packet. Clicking one opens (or closes) that node's details row.
-// The Pi's power, from its Witty Pi UPS (node_info.json's node 0 "power",
-// every 30 s): green on its USB supply, amber on battery (with when the
-// power went and a rough time left), red when close to the shutdown
-// voltage, grey if garden-api hasn't heard from the Witty Pi lately.
+// The Pi's chip, beside the title: its power from its Witty Pi UPS
+// (node_info.json's node 0 "power", every 30 s) and its health
+// (/api/pi_health). Green on its USB supply, amber on battery (with when
+// the power went and a rough time left) or with a health warning, red when
+// close to the shutdown voltage or if garden-api hasn't heard from the
+// Witty Pi lately. Click it for the Pi's row.
 function piPowerChip() {
   const p = nodeStorage[String(PI_NODE)]?.power;
-  if (!p) return '';
+  const warnings = piHealth?.warnings || [];
+  const open = openNodePanels.includes(String(PI_NODE));
+  const button = (state, text, detail) => `<button type="button" class="node-chip pi-chip${open ? ' open' : ''}"
+      style="--node-color:${PI_INFO.color}" onclick="toggleNodePanel(${PI_NODE})" aria-expanded="${open}"
+      title="Raspberry Pi — ${detail}${warnings.length ? ' · ' + warnings.join(' · ') : ''}. Click for details.">
+    ${statusDot(state)}<span class="node-chip-name">Pi</span>${text}</button>`;
+  if (!p) {
+    if (!piHealth) return '';
+    return button(warnings.length ? 'stale' : 'fresh',
+                  warnings.length ? `${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : 'ok',
+                  'no Witty Pi power reading yet');
+  }
   // Its age on the Pi's own clock, so a Pi clock that's off doesn't make it look stale
   const ageMin = (Date.now() + piClockOffsetMs - new Date(String(p.at).replace('T', ' ')).getTime()) / 60000;
   const skewMin = Math.round(piClockOffsetMs / 60000);
@@ -762,18 +790,189 @@ function piPowerChip() {
       + (typeof p.minutes_left === 'number' ? ` · ~${p.minutes_left >= 90 ? Math.round(p.minutes_left / 60) + ' h' : p.minutes_left + ' min'} left` : '');
     detail = `on its Witty Pi battery since ${String(p.since || '').replace('T', ' ')}; it shuts down cleanly at ${p.low_voltage} V`;
   } else {
-    state = 'fresh';
-    text = `${p.vout.toFixed(2)} V${p.charge === 'charging' ? ' · charging' : ''}`;
+    state = warnings.length ? 'stale' : 'fresh';
+    // (the extras give way on a phone, where the chip shares the title's line)
+    text = `${p.vout.toFixed(2)} V<span class="pi-chip-extra">${p.charge === 'charging' ? ' · charging' : ''}`
+      + (warnings.length ? ` · ${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : '') + '</span>';
     detail = `on its USB supply: ${p.vout.toFixed(2)} V, ${p.iout.toFixed(2)} A` + (p.charge ? `, battery ${p.charge}` : '');
   }
   const temp = typeof p.tmp === 'number' ? ` · Witty Pi ${formatTemp(p.tmp).toFixed(1)} ${tempUnitLabel()}` : '';
-  return `<span class="node-chip pi-chip" style="--node-color:${PI_INFO.color}" title="Raspberry Pi — ${detail}${temp}${clockNote}">
-    ${statusDot(state)}<span class="node-chip-name">Pi</span>${text}</span>`;
+  return button(state, text, detail + temp + clockNote);
+}
+
+// How old a Pi timestamp is, on the Pi's own clock ("3m ago")
+function piAgo(isoTs) {
+  if (!isoTs) return null;
+  const diff = (Date.now() + piClockOffsetMs - new Date(isoTs.replace('T', ' ')).getTime()) / 1000;
+  if (Number.isNaN(diff)) return null;
+  if (diff < 90) return Math.max(0, Math.round(diff)) + 's ago';
+  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+  return Math.round(diff / 86400) + 'd ago';
+}
+
+function durationText(s) {
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ${Math.round(s % 3600 / 60)} min`;
+  return `${Math.floor(s / 86400)} d ${Math.round(s % 86400 / 3600)} h`;
+}
+
+// The Pi 3B slows itself down at 80 °C
+function cpuTempColor(c) {
+  return c >= 75 ? 'var(--red)' : c >= 65 ? 'var(--amber)' : 'var(--green)';
+}
+
+function signalColor(dbm) {
+  return dbm >= -80 ? 'var(--green)' : dbm >= -90 ? 'var(--amber)' : 'var(--red)';
+}
+function signalWord(dbm) {
+  return dbm >= -80 ? 'strong' : dbm >= -90 ? 'fair' : 'weak';
+}
+
+// ── The Pi's row ──────────────────────────────────────────────────────────────
+// Opened from the Pi chip: its power and vitals across the top, how
+// strongly each node's radio reaches it, and its health (services, power
+// supply, temperature, storage, clock).
+
+function renderPiPanel(panel, byNode) {
+  const p = nodeStorage[String(PI_NODE)]?.power;
+  const h = piHealth || {};
+  const warnings = h.warnings || [];
+  const pct = (part, whole) => whole ? `${Math.round(100 * part / whole)}%` : '–';
+
+  const power = !p ? '–'
+    : p.on_battery ? `<span style="color:var(--amber)">battery ${typeof p.vbat === 'number' ? p.vbat.toFixed(2) + ' V' : ''}</span>`
+    : `${p.vout.toFixed(2)} V · ${p.iout.toFixed(2)} A`;
+  const metrics = [
+    ['POWER', power],
+    ['UPS BATTERY', p ? (p.on_battery ? (typeof p.minutes_left === 'number' ? `~${p.minutes_left} min left` : 'discharging')
+                                       : (p.charge || '–')) : '–'],
+    ['CPU TEMP', typeof h.cpu_temp === 'number'
+      ? `<span style="color:${cpuTempColor(h.cpu_temp)}">${formatTemp(h.cpu_temp).toFixed(1)} ${tempUnitLabel()}</span>` : '–'],
+    ['LOAD', typeof h.load === 'number' ? `${h.load.toFixed(2)}${h.cpus ? ` of ${h.cpus}` : ''}` : '–'],
+    ['MEMORY FREE', h.memory ? `${pct(h.memory.available, h.memory.total)} of ${formatBytes(h.memory.total)}` : '–'],
+    ['SD CARD FREE', h.disk ? `${formatBytes(h.disk.free)} of ${formatBytes(h.disk.total)}` : '–'],
+    ['UP FOR', typeof h.uptime_s === 'number' ? durationText(h.uptime_s) : '–'],
+  ];
+  const skewMin = Math.round(piClockOffsetMs / 60000);
+  const clock = h.clock_synced === false ? 'clock not synced to internet time'
+    : h.clock_synced ? 'clock synced' : 'clock: unknown';
+  const note = [
+    clock + (Math.abs(skewMin) >= 2 ? ` (${Math.abs(skewMin)} min ${skewMin < 0 ? 'behind' : 'ahead of'} this device)` : ''),
+    h.now ? `health checked ${piAgo(h.now)}` : 'no health report yet',
+    typeof h.db_bytes === 'number' ? `sensors.db ${formatBytes(h.db_bytes)}` : null,
+  ].filter(Boolean).join(' · ');
+  const state = !p && !piHealth ? 'offline'
+    : p?.on_battery || warnings.length ? 'stale' : 'fresh';
+
+  panel.querySelector('.node-panel-title').innerHTML = `
+    ${statusDot(state)}
+    <span class="node-row-name">${PI_INFO.name}</span>
+    <span class="node-row-ago">${warnings.length ? `${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : piHealth ? 'all good' : ''}</span>
+    <div class="node-row-note">${note}</div>`;
+  panel.querySelector('.node-metrics').innerHTML = metrics.map(([label, value]) => `<div>
+    <div class="mini-label">${label}</div>
+    <div class="node-metric-value">${value}</div>
+  </div>`).join('');
+
+  // Each node's link: its radio signal (SignalWatch's 5-minute averages,
+  // and the weakest), or Wi-Fi and when it was last heard
+  const links = document.getElementById(`node-panel-${PI_NODE}-links`);
+  const ids = knownNodeIds(Object.keys(byNode)).filter(n => n !== PI_NODE);
+  let weakCount = 0, heardCount = 0;
+  const rows = ids.map(n => {
+    const info = nodeInfo(n);
+    const store = nodeStorage[String(n)] || {};
+    const np = byNode[n] || [];
+    const sigs = np.filter(q => q.t === 'sig' && typeof q.rssi === 'number');
+    const lastTs = getLastTs(np);
+    const rssi = typeof store.rssi_dbm === 'number' ? store.rssi_dbm : null;
+    const onRadio = info.link !== 'wifi';
+    const heardAgo = piAgo(store.rssi_at);
+    // A radio reading more than an hour old says little about the link now
+    const current = rssi !== null && store.rssi_at
+      && (Date.now() + piClockOffsetMs - new Date(store.rssi_at.replace('T', ' ')).getTime()) < 3600e3;
+    let dot, reading, detail;
+    if (rssi !== null && (onRadio || current)) {
+      dot = current ? signalColor(rssi) : 'var(--muted)';
+      if (current) { heardCount++; if (rssi < -80) weakCount++; }
+      reading = `<span style="color:${current ? signalColor(rssi) : 'var(--muted)'}">${rssi} dBm ${signalWord(rssi)}</span>`;
+      const avg = sigs.length > 1 ? Math.round(sigs.reduce((a, q) => a + q.rssi, 0) / sigs.length) : null;
+      const weakest = sigs.length ? Math.min(...sigs.map(q => typeof q.weakest === 'number' ? q.weakest : q.rssi))
+        : store.rssi_weakest_dbm;
+      detail = [avg !== null ? `avg ${avg}` : null, typeof weakest === 'number' ? `weakest ${weakest}` : null,
+                heardAgo ? `heard ${heardAgo}` : null].filter(Boolean).join(' · ');
+    } else if (onRadio) {
+      dot = 'var(--muted)';
+      reading = '<span style="color:var(--muted)">not heard</span>';
+      detail = lastTs ? `last packet ${piAgo(lastTs)}` : 'no packets in view';
+    } else {
+      dot = lastTs && freshness(lastTs) === 'fresh' ? 'var(--teal)' : 'var(--muted)';
+      reading = '<span style="color:var(--teal)">Wi-Fi</span>';
+      detail = (lastTs ? `last packet ${piAgo(lastTs)}` : 'no packets in view')
+        + (rssi !== null && heardAgo ? ` · radio ${rssi} dBm ${heardAgo}` : '');
+    }
+    return `<div class="pi-link" style="--node-color:${info.color}">
+      <span class="health-dot" style="background:${dot}"></span>
+      <span class="pi-link-name">${info.short}</span>
+      <span>${reading}</span>
+      <span class="pi-link-detail">${detail}</span>
+    </div>`;
+  });
+  setBadge(links, !heardCount ? 'badge-gray' : weakCount ? 'badge-amber' : 'badge-green',
+           !heardCount ? 'none heard' : weakCount ? `${weakCount} below strong` : `${heardCount} strong`);
+  cardBody(links).innerHTML = rows.join('') || '<div class="no-data">No nodes</div>';
+
+  // Its health: services, power supply, temperature, storage, clock
+  const health = document.getElementById(`node-panel-${PI_NODE}-health`);
+  if (!piHealth) {
+    setBadge(health, 'badge-gray', 'no report');
+    cardBody(health).innerHTML = '<div class="no-data">No health report from the Pi yet</div>';
+    return;
+  }
+  const row = (label, value, level = 'ok') => `<div class="health-row">
+    <div class="health-dot" style="background:${level === 'bad' ? 'var(--red)' : level === 'warn' ? 'var(--amber)' : 'var(--green)'}"></div>
+    <span class="health-name">${label}</span>
+    <span class="health-count ${level === 'ok' ? '' : level}">${value}</span>
+  </div>`;
+  const items = Object.entries(h.services || {}).map(([name, s]) =>
+    row(name.replace(/^garden-/, ''), s, s === 'active' ? 'ok' : 'bad'));
+  if (typeof h.throttled === 'number') {
+    const now = h.throttled & 0xF, before = h.throttled >> 16 & 0xF;
+    items.push(row('supply', now & 1 ? 'under-voltage' : now ? 'throttled' : before & 1 ? 'sagged since boot' : 'steady',
+                   now ? 'bad' : before ? 'warn' : 'ok'));
+  }
+  if (typeof h.cpu_temp === 'number') {
+    items.push(row('cpu', `${formatTemp(h.cpu_temp).toFixed(0)} ${tempUnitLabel()}`,
+                   h.cpu_temp >= 75 ? 'bad' : h.cpu_temp >= 65 ? 'warn' : 'ok'));
+  }
+  if (h.disk?.total) {
+    const free = h.disk.free / h.disk.total;
+    items.push(row('sd card', `${Math.round(100 * free)}% free`, free < 0.10 ? 'bad' : free < 0.20 ? 'warn' : 'ok'));
+  }
+  if (h.memory?.total) {
+    const free = h.memory.available / h.memory.total;
+    items.push(row('memory', `${Math.round(100 * free)}% free`, free < 0.10 ? 'bad' : free < 0.20 ? 'warn' : 'ok'));
+  }
+  if (typeof h.clock_synced === 'boolean') {
+    items.push(row('clock', h.clock_synced ? 'synced' : 'not synced', h.clock_synced ? 'ok' : 'bad'));
+  }
+  if (p) {
+    items.push(row('ups', p.on_battery ? 'on battery' : 'on supply', p.on_battery ? 'warn' : 'ok'));
+    if (typeof p.tmp === 'number') {
+      items.push(row('witty pi', `${formatTemp(p.tmp).toFixed(0)} ${tempUnitLabel()}`, p.tmp >= 60 ? 'warn' : 'ok'));
+    }
+  }
+  setBadge(health, warnings.length ? 'badge-amber' : 'badge-green',
+           warnings.length ? `${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : 'all good');
+  cardBody(health).innerHTML = items.join('');
 }
 
 function renderNodeStatus(byNode) {
-  document.getElementById('node-status').innerHTML = piPowerChip()
-    + knownNodeIds(Object.keys(byNode)).filter(n => n !== PI_NODE).map(n => {
+  const pi = document.getElementById('pi-status');
+  if (pi) pi.innerHTML = piPowerChip();
+  document.getElementById('node-status').innerHTML =
+    knownNodeIds(Object.keys(byNode)).filter(n => n !== PI_NODE).map(n => {
     const info = nodeInfo(n);
     const lastTs = getLastTs(byNode[n] || []);
     const asleep = sleepUntil(n);
@@ -852,6 +1051,30 @@ function renderNodePanels(byNode) {
     const info = nodeInfo(n);
     const np = byNode[n] || [];
     let panel = document.getElementById(`node-panel-${n}`);
+    if (n === PI_NODE) {
+      if (!panel) {
+        panel = document.createElement('section');
+        panel.className = 'panel node-card node-panel pi-panel';
+        panel.id = `node-panel-${n}`;
+        panel.dataset.node = id;
+        panel.innerHTML = `
+          <div class="node-panel-head">
+            <div class="node-panel-title"></div>
+            <div class="node-metrics"></div>
+            <div class="node-panel-tools">
+              <button type="button" class="panel-close" onclick="toggleNodePanel(${n})" title="Close">✕</button>
+            </div>
+          </div>
+          <div class="node-panel-body">
+            ${nodePanelSection(`node-panel-${n}-links`, 'Radio Links', '<span class="card-badge badge-gray">–</span>')}
+            ${nodePanelSection(`node-panel-${n}-health`, 'Pi Health', '<span class="card-badge badge-gray">–</span>')}
+          </div>`;
+      }
+      box.appendChild(panel);
+      panel.style.setProperty('--node-color', info.color);
+      renderPiPanel(panel, byNode);
+      continue;
+    }
     if (!panel) {
       const wifi = info.link === 'wifi';
       panel = document.createElement('section');
@@ -1091,7 +1314,7 @@ function renderAll(packets) {
 }
 
 async function refresh() {
-  const [packets] = await Promise.all([loadData(), loadNodeInfo()]);
+  const [packets] = await Promise.all([loadData(), loadNodeInfo(), loadPiHealth()]);
   if (!packets) return;
 
   // /api/data reads sensors.db directly, so unlike the old static-file
