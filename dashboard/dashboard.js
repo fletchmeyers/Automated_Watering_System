@@ -542,7 +542,7 @@ function renderPower(el, powerData) {
 }
 
 function renderHealth(el, packets) {
-  const NON_SENSOR = new Set(['ts', 'sync_ack', 'sync']);
+  const NON_SENSOR = new Set(['ts', 'sync_ack', 'sync', 'sig']);   // sig: the Pi's own signal readings
   const sensorPkts = packets.filter(p => !NON_SENSOR.has(p.t));
   const counts = {};
   for (const p of sensorPkts) counts[p.t] = (counts[p.t] || 0) + 1;
@@ -849,9 +849,13 @@ function renderNodePanels(byNode) {
     const battery = info.battery || DEFAULT_BATTERY;
     const store = nodeStorage[id];
     // How strongly its radio packets reach the Pi (radio_nodes.py's SignalWatch)
+    // The latest, and the average of the 5-minute readings in view ("sig")
+    const sigs = np.filter(p => p.t === 'sig' && typeof p.rssi === 'number').map(p => p.rssi);
+    const sigAvg = sigs.length ? Math.round(sigs.reduce((a, b) => a + b, 0) / sigs.length) : null;
     const signal = store && typeof store.rssi_dbm === 'number'
       ? `<span style="color:${store.rssi_dbm >= -80 ? 'var(--green)' : store.rssi_dbm >= -90 ? 'var(--amber)' : 'var(--red)'}">${store.rssi_dbm} dBm</span>`
-        + ` <span class="node-row-ago">${store.rssi_dbm >= -80 ? 'strong' : store.rssi_dbm >= -90 ? 'fair' : 'weak'}</span>`
+        + ` <span class="node-row-ago">${store.rssi_dbm >= -80 ? 'strong' : store.rssi_dbm >= -90 ? 'fair' : 'weak'}`
+        + `${sigs.length > 1 ? ` · ${sigAvg} avg (6 h)` : ''}</span>`
       : '–';
     const metrics = [
       ['LAST PACKET', lastTs ? lastTs.replace('T', ' ') : 'none in 6h'],

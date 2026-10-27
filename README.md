@@ -679,10 +679,14 @@ round trip in ms under it; red no answer; teal on its way), then the
 average, fastest and slowest. It stays until closed.
 
 **Radio signal.** The Pi measures how strongly each radio packet arrives
-(RSSI, in dBm: closer to 0 is stronger). Each node's row shows the latest
-average as **RADIO SIGNAL**, *strong* above −80 dBm, *fair* to −90, *weak*
-below that; the ping test adds the pongs' average; and the radio loop logs
-it when a node is first heard and every 5 minutes after:
+(RSSI, in dBm: closer to 0 is stronger). Every 5 minutes the radio loop
+logs each node's average (and its weakest packet) and stores them as a
+reading (`sig`: `rssi` and `weakest`), so the signal has a history. Each
+node's row shows **RADIO SIGNAL**: the latest, *strong* above −80 dBm,
+*fair* to −90, *weak* below that, and its average over the dashboard's 6
+hours; the analysis panel can plot **Radio Signal (dBm)** and **Radio
+Signal · Weakest** like any sensor; and the ping test adds the pongs'
+average:
 
     [SIGNAL] Node 1: -93 dBm (weak) over 12 packets, weakest -99 dBm.
 

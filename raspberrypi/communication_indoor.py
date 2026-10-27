@@ -310,12 +310,15 @@ def signal_word(dbm):
 class SignalWatch:
     '''Each node's signal, from every packet it sends: said in the log the
     first time a node is heard and then every report_every seconds (the
-    average and the weakest since), and kept in node_info.json for the
-    dashboard.'''
-    def __init__(self, report_every=300, clock=time.monotonic, record=None):
+    average and the weakest since), kept in node_info.json for the
+    dashboard, and stored as a reading ({"t": "sig", "rssi", "weakest"}) so
+    it has a history: the node's row averages it, and the analysis panel
+    plots it.'''
+    def __init__(self, report_every=300, clock=time.monotonic, record=None, store=None):
         self.report_every = report_every
         self._clock = clock
         self._record = record   # update_node_info, or a stand-in
+        self._store = store     # a packet into sensors.db (db.insert_packet), or a stand-in
         self._samples = {}      # node ID -> RSSIs since the last report
         self._reported = {}     # node ID -> when it was last reported
 
@@ -335,12 +338,17 @@ class SignalWatch:
         note = (f"[SIGNAL] Node {node_id}: {avg} dBm ({signal_word(avg)}) over {len(samples)} "
                 f"packet{'s' * (len(samples) != 1)}, weakest {weakest} dBm.")
         print(note)
+        stamp = datetime.now().strftime(ISO_FORMAT)
         if self._record is not None:
             try:
-                self._record(node_id, rssi_dbm=avg, rssi_weakest_dbm=weakest,
-                             rssi_at=datetime.now().strftime(ISO_FORMAT))
+                self._record(node_id, rssi_dbm=avg, rssi_weakest_dbm=weakest, rssi_at=stamp)
             except OSError as e:
                 print(f"[SIGNAL] Couldn't record it: {e}")
+        if self._store is not None:
+            try:
+                self._store({"t": "sig", "n": node_id, "ts": stamp, "rssi": avg, "weakest": weakest})
+            except Exception as e:
+                print(f"[SIGNAL] Couldn't store it: {e}")
         return note
 
 

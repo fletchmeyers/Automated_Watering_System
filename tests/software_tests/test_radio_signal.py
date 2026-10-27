@@ -74,3 +74,21 @@ def test_a_ping_test_with_no_pongs_has_no_signal(monkeypatch, tmp_path):
     monkeypatch.setattr(communication_indoor, "PING_PROGRESS_FILE", str(tmp_path / "progress.json"))
     result = run_ping_test(PingRadio([None, None]), node_id=1, count=2, timeout=0.05)
     assert result["hits"] == 0 and result["avg_rssi_dbm"] is None
+
+
+def test_each_report_is_stored_as_a_reading():
+    '''So the signal has a history: the node's row averages it and the
+    analysis panel plots it ({"t": "sig"}, every report).'''
+    import sqlite3
+    import db
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE readings (ts TEXT, node_id INTEGER, sensor_type TEXT, key TEXT, value REAL)")
+    clock = Clock()
+    watch = SignalWatch(clock=clock, store=lambda packet: db.insert_packet(conn, packet))
+    watch.heard(2, -76)
+    clock.t += 301
+    watch.heard(2, -70)
+    rows = conn.execute("SELECT node_id, sensor_type, key, value FROM readings ORDER BY rowid").fetchall()
+    assert rows == [(2, "sig", "rssi", -76.0), (2, "sig", "weakest", -76.0),
+                    (2, "sig", "rssi", -70.0), (2, "sig", "weakest", -70.0)]
+

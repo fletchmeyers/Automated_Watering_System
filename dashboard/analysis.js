@@ -24,6 +24,9 @@ const FIELD_DEFS = [
   { type: 'batt', key: 'v',   label: 'Lipo Voltage' },
   { type: 'vbat', key: 'v',   label: 'Board Voltage (vbat)' },
   { type: 'rt',   key: 'tmp', label: 'Radio Temp' },
+  // How strongly the node's radio packets reach the Pi (radio_nodes.py's SignalWatch, every 5 min)
+  { type: 'sig',  key: 'rssi',    label: 'Radio Signal (dBm)' },
+  { type: 'sig',  key: 'weakest', label: 'Radio Signal · Weakest (dBm)' },
   { type: 'pw0',  key: 'ma',  label: 'Battery 0 · Current' },
   { type: 'pw0',  key: 'v',   label: 'Battery 0 · Voltage' },
   { type: 'pw0',  key: 'mw',  label: 'Battery 0 · Wattage' },
