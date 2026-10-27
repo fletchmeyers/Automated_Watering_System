@@ -93,7 +93,12 @@ function setNodeColor(n, color, save = true) {
 const DEFAULT_BATTERY = { type: 'batt', label: 'BATTERY' };
 const NODE_FALLBACK_COLORS = ['#d2a8ff', '#ffa657', '#a5d6ff', '#7ee787'];
 
+// Node 0 is the Pi itself: its power readings (raspberrypi/pi_power.py).
+const PI_NODE = 0;
+const PI_INFO = { name: 'Raspberry Pi', short: 'Pi', color: '#8b949e' };
+
 function nodeInfo(n) {
+  if (Number(n) === PI_NODE) return PI_INFO;
   const known = NODES[n];
   if (known) return known;
   return { name: `Node ${n}`, short: `N${n}`, color: nodeInfo.fallbackColor(n) };
@@ -727,8 +732,37 @@ function statusDot(state) {
 
 // One chip per node in the header: its own status dot and time since its
 // last packet. Clicking one opens (or closes) that node's details row.
+// The Pi's power, from its Witty Pi UPS (node_info.json's node 0 "power",
+// every 30 s): green on its USB supply, amber on battery (with when the
+// power went and a rough time left), red when close to the shutdown
+// voltage, grey if garden-api hasn't heard from the Witty Pi lately.
+function piPowerChip() {
+  const p = nodeStorage[String(PI_NODE)]?.power;
+  if (!p) return '';
+  const ageMin = (Date.now() - new Date(String(p.at).replace('T', ' ')).getTime()) / 60000;
+  let state, text, detail;
+  if (!(ageMin < 3)) {
+    state = 'offline'; text = 'power unknown';
+    detail = `no Witty Pi reading since ${String(p.at).replace('T', ' ')}`;
+  } else if (p.on_battery) {
+    const low = typeof p.vbat === 'number' && p.vbat - p.low_voltage < 0.15;
+    state = low ? 'offline' : 'stale';
+    text = `on battery ${typeof p.vbat === 'number' ? p.vbat.toFixed(2) + ' V' : ''}`
+      + (typeof p.minutes_left === 'number' ? ` · ~${p.minutes_left >= 90 ? Math.round(p.minutes_left / 60) + ' h' : p.minutes_left + ' min'} left` : '');
+    detail = `on its Witty Pi battery since ${String(p.since || '').replace('T', ' ')}; it shuts down cleanly at ${p.low_voltage} V`;
+  } else {
+    state = 'fresh';
+    text = `${p.vout.toFixed(2)} V${p.charge === 'charging' ? ' · charging' : ''}`;
+    detail = `on its USB supply: ${p.vout.toFixed(2)} V, ${p.iout.toFixed(2)} A` + (p.charge ? `, battery ${p.charge}` : '');
+  }
+  const temp = typeof p.tmp === 'number' ? ` · Witty Pi ${formatTemp(p.tmp).toFixed(1)} ${tempUnitLabel()}` : '';
+  return `<span class="node-chip pi-chip" style="--node-color:${PI_INFO.color}" title="Raspberry Pi — ${detail}${temp}">
+    ${statusDot(state)}<span class="node-chip-name">Pi</span>${text}</span>`;
+}
+
 function renderNodeStatus(byNode) {
-  document.getElementById('node-status').innerHTML = knownNodeIds(Object.keys(byNode)).map(n => {
+  document.getElementById('node-status').innerHTML = piPowerChip()
+    + knownNodeIds(Object.keys(byNode)).filter(n => n !== PI_NODE).map(n => {
     const info = nodeInfo(n);
     const lastTs = getLastTs(byNode[n] || []);
     const asleep = sleepUntil(n);
