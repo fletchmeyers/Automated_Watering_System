@@ -662,13 +662,20 @@ async function loadData() {
 // tb, at}}) — radio_nodes.py refreshes it hourly. Kept from the last successful
 // fetch if a later one fails, since it changes slowly anyway.
 let nodeStorage = {};
+// How far the Pi's clock is ahead of this device's (ms), from /api/node_info's
+// "now": the Pi stamps everything with its own clock.
+let piClockOffsetMs = 0;
 
 async function loadNodeInfo() {
   try {
     const resp = await fetch(`${API_BASE}/api/node_info`);
     if (!resp.ok) throw new Error(resp.status);
     const data = await resp.json();
-    if (data.status === 'ok') nodeStorage = data.nodes || {};
+    if (data.status === 'ok') {
+      nodeStorage = data.nodes || {};
+      const piNow = data.now ? new Date(data.now.replace('T', ' ')).getTime() : NaN;
+      piClockOffsetMs = Number.isNaN(piNow) ? 0 : piNow - Date.now();
+    }
   } catch (e) {
     console.warn('[nodes] /api/node_info failed, keeping last storage report', e);
   }
@@ -739,7 +746,11 @@ function statusDot(state) {
 function piPowerChip() {
   const p = nodeStorage[String(PI_NODE)]?.power;
   if (!p) return '';
-  const ageMin = (Date.now() - new Date(String(p.at).replace('T', ' ')).getTime()) / 60000;
+  // Its age on the Pi's own clock, so a Pi clock that's off doesn't make it look stale
+  const ageMin = (Date.now() + piClockOffsetMs - new Date(String(p.at).replace('T', ' ')).getTime()) / 60000;
+  const skewMin = Math.round(piClockOffsetMs / 60000);
+  const clockNote = Math.abs(skewMin) >= 2
+    ? ` · the Pi's clock is ${Math.abs(skewMin)} min ${skewMin < 0 ? 'behind' : 'ahead of'} this device's` : '';
   let state, text, detail;
   if (!(ageMin < 3)) {
     state = 'offline'; text = 'power unknown';
@@ -756,7 +767,7 @@ function piPowerChip() {
     detail = `on its USB supply: ${p.vout.toFixed(2)} V, ${p.iout.toFixed(2)} A` + (p.charge ? `, battery ${p.charge}` : '');
   }
   const temp = typeof p.tmp === 'number' ? ` · Witty Pi ${formatTemp(p.tmp).toFixed(1)} ${tempUnitLabel()}` : '';
-  return `<span class="node-chip pi-chip" style="--node-color:${PI_INFO.color}" title="Raspberry Pi — ${detail}${temp}">
+  return `<span class="node-chip pi-chip" style="--node-color:${PI_INFO.color}" title="Raspberry Pi — ${detail}${temp}${clockNote}">
     ${statusDot(state)}<span class="node-chip-name">Pi</span>${text}</span>`;
 }
 
