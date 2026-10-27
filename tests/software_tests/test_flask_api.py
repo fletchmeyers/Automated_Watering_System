@@ -91,3 +91,9 @@ def test_node_info_includes_offline_sensors_and_sleep(api):
     nodes = api.get("/api/node_info").get_json()["nodes"]
     assert list(nodes["1"]["sensors_off"]) == ["sht"]
     assert nodes["2"]["sleep_reason"] == "battery 5%, under 25%"
+
+
+def test_node_info_says_the_pis_time(api):
+    import re
+    now = api.get("/api/node_info").get_json()["now"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", now)

@@ -238,7 +238,9 @@ def api_ping_progress():
 def api_node_info():
     # Each node's last storage report (bytes used/free/total and when it was
     # reported) — just a file read, radio_nodes.py refreshes it hourly.
-    return jsonify({"status": "ok", "nodes": get_node_info()})
+    # "now" is the Pi's own clock, which its timestamps are on: the dashboard
+    # measures their age against it, not the viewer's clock.
+    return jsonify({"status": "ok", "nodes": get_node_info(), "now": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
 @app.route("/api/nodes", methods=["GET"])
