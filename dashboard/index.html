@@ -9,9 +9,13 @@
 <body>
 
 <header>
-  <div class="logo">
-    <div class="logo-icon"><div class="logo-leaf"></div></div>
-    <h1>garden<span>/</span>dashboard</h1>
+  <div class="header-left">
+    <div class="logo">
+      <div class="logo-icon"><div class="logo-leaf"></div></div>
+      <h1>garden<span>/</span>dashboard</h1>
+    </div>
+    <!-- The Pi itself: its power and health; click for its details (dashboard.js) -->
+    <div id="pi-status" class="pi-status"></div>
   </div>
   <div class="header-right">
     <!-- One chip per node: status dot + time since its last packet; click one
@@ -134,7 +138,8 @@
 
 // Node names and colors come from the Pi (/api/nodes); everything else waits for them
 // (a few seconds at most — loadNodes() falls back to its built-in list).
-loadNodes().then(() => {
+// (and the Pi's time, which the data and analysis windows are set from)
+Promise.all([loadNodes(), loadNodeInfo()]).then(() => {
   initUnitToggle();
   initWeatherToggle();
   refresh();

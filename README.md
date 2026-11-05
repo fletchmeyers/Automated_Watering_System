@@ -857,13 +857,19 @@ with `~/wittypi/wittyPi.sh`); it uses GPIO 4, 17, 5 and 6 and I2C address
 `garden-api` also reads it every 30 s (`raspberrypi/pi_power.py`, with
 `i2cget` and `pinctrl`):
 
-- The dashboard's **Pi chip**, first in the header: green with the supply
+- The dashboard's **Pi chip**, beside the title: green with the supply
   voltage on USB power (and "charging" while the battery charges), amber
   "on battery 3.90 V · ~80 min left" during a power cut (the time left is a
   rough guess from how fast the battery voltage is falling, after 10
   minutes on battery), red close to the shutdown voltage, "power unknown"
-  if it hasn't been read for a few minutes. Hover over it for the details
-  and the Witty Pi's temperature.
+  if it hasn't been read for a few minutes, amber too with a count if
+  anything in the Pi's health needs a look. Hover over it for the details,
+  click it for the **Pi's row**: its power, CPU temperature, load, memory,
+  SD card and uptime; each node's radio signal (the latest, the average and
+  weakest in view, and when it was last heard); and its health: the four
+  garden services, whether the supply has sagged (under-voltage), the
+  clock's sync, and the Witty Pi's temperature (`/api/pi_health`,
+  `raspberrypi/pi_health.py`).
 - A reading every 5 minutes (and at once when the power source changes),
   stored as node 0's `pipwr`, so the analysis panel can plot the Pi's
   **Supply Voltage**, **Current**, **Battery Voltage**, **On Battery** and

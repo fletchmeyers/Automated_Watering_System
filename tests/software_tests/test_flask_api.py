@@ -93,6 +93,15 @@ def test_node_info_includes_offline_sensors_and_sleep(api):
     assert nodes["2"]["sleep_reason"] == "battery 5%, under 25%"
 
 
+def test_pi_health(api, monkeypatch):
+    import flask_api
+    import pi_health
+    monkeypatch.setattr(flask_api, "_pi_health", pi_health.Cached(get=lambda: {"now": "2026-10-27T15:00:00",
+                                                                         "clock_synced": False}))
+    body = api.get("/api/pi_health").get_json()
+    assert body["status"] == "ok" and body["warnings"] == ["the clock isn't synced to internet time"]
+
+
 def test_node_info_says_the_pis_time(api):
     import re
     now = api.get("/api/node_info").get_json()["now"]

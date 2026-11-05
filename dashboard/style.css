@@ -76,6 +76,17 @@
 
   h1 span { color: var(--green); }
 
+  /* The title, and the Pi's chip beside it: apart from the nodes' chips */
+  .header-left {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+  }
+  .pi-status:empty { display: none; }
+  .pi-chip { font-size: 12px; padding: 4px 12px; }
+  .pi-chip .node-chip-name { font-weight: 500; }
+
   .header-right {
     display: flex;
     align-items: center;
@@ -188,6 +199,28 @@
     column-gap: 20px;
   }
   .node-panel-section .health-row:last-child { border-bottom: 1px solid var(--border); }
+  /* The Pi's row: each node's radio link, one line apiece */
+  .node-panel-section .card-body:has(.pi-link) { display: block; }
+  .pi-link {
+    display: grid;
+    grid-template-columns: 6px minmax(70px, auto) auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 4px 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .pi-link:last-child { border-bottom: none; }
+  .pi-link .health-dot { align-self: center; }
+  .pi-link-name { color: var(--node-color); }
+  .pi-link-detail { color: var(--muted); font-size: 11px; text-align: right; }
+  @media (max-width: 700px) {
+    .pi-link { grid-template-columns: 6px minmax(0, 1fr) auto; }
+    .pi-link-detail { grid-column: 2 / -1; text-align: left; }
+  }
+  .health-row .health-count.warn { color: var(--amber); }
+  .health-row .health-count.bad { color: var(--red); }
   .node-panel-tools {
     display: flex;
     align-items: center;
@@ -801,6 +834,14 @@
     body { padding: 12px; }
 
     header { row-gap: 10px; }
+
+    /* The Pi's chip on the title's line, at its right-hand end */
+    .header-left {
+      width: 100%;
+      justify-content: space-between;
+      flex-wrap: nowrap;
+    }
+    .pi-chip .pi-chip-extra { display: none; }
 
     .header-right {
       width: 100%;

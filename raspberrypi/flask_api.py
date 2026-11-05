@@ -39,6 +39,7 @@ import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+import pi_health
 import pi_power
 import soil_calibration
 import weather_outlook
@@ -241,6 +242,16 @@ def api_node_info():
     # "now" is the Pi's own clock, which its timestamps are on: the dashboard
     # measures their age against it, not the viewer's clock.
     return jsonify({"status": "ok", "nodes": get_node_info(), "now": time.strftime("%Y-%m-%dT%H:%M:%S")})
+
+
+_pi_health = pi_health.Cached()
+
+
+@app.route("/api/pi_health", methods=["GET"])
+def api_pi_health():
+    # The Pi's own health for the dashboard's Pi row (pi_health.py): its
+    # services, CPU temperature, power-supply sag, memory, SD card, clock.
+    return jsonify({"status": "ok", **_pi_health()})
 
 
 @app.route("/api/nodes", methods=["GET"])
