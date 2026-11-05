@@ -237,15 +237,33 @@ function vocLabel(poll) {
   return { label: 'poor', cls: 'badge-red' };
 }
 
+// ── The Pi's time ─────────────────────────────────────────────────────────────
+// The Pi stamps everything in its own local time, with no time zone on it,
+// so a stamp only means anything next to the Pi's own clock: on a device in
+// another time zone it would read hours off. piClockOffsetMs is how far the
+// Pi's clock reads ahead of this device's (from /api/node_info's "now"), and
+// a stamp's age is always measured against piNowMs().
+let piClockOffsetMs = 0;
+
+function piNowMs() { return Date.now() + piClockOffsetMs; }
+
+function stampAgeMs(isoTs) {
+  return piNowMs() - new Date(String(isoTs).replace('T', ' ')).getTime();
+}
+
+// Time zones are whole quarter hours apart, so that much of the offset is
+// just where this device is, and what's left is a clock that's really off.
+function piZoneShiftMs() { return Math.round(piClockOffsetMs / 900000) * 900000; }
+function piClockSkewMin() { return Math.round((piClockOffsetMs - piZoneShiftMs()) / 60000); }
+
 function minutesAgo(isoTs) {
   if (!isoTs) return null;
-  try {
-    const then = new Date(isoTs.replace('T', ' '));
-    const diff = (Date.now() - then.getTime()) / 1000;
-    if (diff < 90)   return Math.round(diff) + 's ago';
-    if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-    return Math.round(diff / 3600) + 'h ago';
-  } catch (e) { return null; }
+  const diff = stampAgeMs(isoTs) / 1000;
+  if (Number.isNaN(diff)) return null;
+  if (diff < 90)    return Math.max(0, Math.round(diff)) + 's ago';
+  if (diff < 3600)  return Math.round(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+  return Math.round(diff / 86400) + 'd ago';
 }
 
 // ── Sparkline via Chart.js ────────────────────────────────────────────────────
@@ -625,7 +643,7 @@ function localIso(date) {
 function mergePackets(held, fresh) {
   const byKey = new Map();
   for (const p of held.concat(fresh)) byKey.set(`${p.ts}|${p.n}|${p.t}`, p);
-  const since = localIso(new Date(Date.now() - DATA_WINDOW_MINUTES * 60000));
+  const since = localIso(new Date(piNowMs() - DATA_WINDOW_MINUTES * 60000));
   return [...byKey.values()].filter(p => p.ts >= since)
     .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0)).slice(-WINDOW);
 }
@@ -662,9 +680,6 @@ async function loadData() {
 // tb, at}}) — radio_nodes.py refreshes it hourly. Kept from the last successful
 // fetch if a later one fails, since it changes slowly anyway.
 let nodeStorage = {};
-// How far the Pi's clock is ahead of this device's (ms), from /api/node_info's
-// "now": the Pi stamps everything with its own clock.
-let piClockOffsetMs = 0;
 
 // The Pi's own health (/api/pi_health, pi_health.py): kept from the last
 // successful fetch, like the node info.
@@ -733,7 +748,7 @@ function groupByNode(packets) {
 
 function freshness(lastTs) {
   if (!lastTs) return 'offline';
-  const diff = (Date.now() - new Date(lastTs.replace('T', ' ')).getTime()) / 1000;
+  const diff = stampAgeMs(lastTs) / 1000;
   if (Number.isNaN(diff)) return 'offline';
   if (diff < 150) return 'fresh';
   if (diff < 600) return 'stale';
@@ -745,7 +760,7 @@ function freshness(lastTs) {
 // expected rather than a fault.
 function sleepUntil(n) {
   const s = nodeStorage[String(n)]?.sleep_until;
-  return s && new Date(s.replace('T', ' ')).getTime() > Date.now() ? s : null;
+  return s && stampAgeMs(s) < 0 ? s : null;
 }
 
 function statusDot(state) {
@@ -775,8 +790,8 @@ function piPowerChip() {
                   'no Witty Pi power reading yet');
   }
   // Its age on the Pi's own clock, so a Pi clock that's off doesn't make it look stale
-  const ageMin = (Date.now() + piClockOffsetMs - new Date(String(p.at).replace('T', ' ')).getTime()) / 60000;
-  const skewMin = Math.round(piClockOffsetMs / 60000);
+  const ageMin = stampAgeMs(p.at) / 60000;
+  const skewMin = piClockSkewMin();
   const clockNote = Math.abs(skewMin) >= 2
     ? ` · the Pi's clock is ${Math.abs(skewMin)} min ${skewMin < 0 ? 'behind' : 'ahead of'} this device's` : '';
   let state, text, detail;
@@ -798,17 +813,6 @@ function piPowerChip() {
   }
   const temp = typeof p.tmp === 'number' ? ` · Witty Pi ${formatTemp(p.tmp).toFixed(1)} ${tempUnitLabel()}` : '';
   return button(state, text, detail + temp + clockNote);
-}
-
-// How old a Pi timestamp is, on the Pi's own clock ("3m ago")
-function piAgo(isoTs) {
-  if (!isoTs) return null;
-  const diff = (Date.now() + piClockOffsetMs - new Date(isoTs.replace('T', ' ')).getTime()) / 1000;
-  if (Number.isNaN(diff)) return null;
-  if (diff < 90) return Math.max(0, Math.round(diff)) + 's ago';
-  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
-  return Math.round(diff / 86400) + 'd ago';
 }
 
 function durationText(s) {
@@ -854,12 +858,14 @@ function renderPiPanel(panel, byNode) {
     ['SD CARD FREE', h.disk ? `${formatBytes(h.disk.free)} of ${formatBytes(h.disk.total)}` : '–'],
     ['UP FOR', typeof h.uptime_s === 'number' ? durationText(h.uptime_s) : '–'],
   ];
-  const skewMin = Math.round(piClockOffsetMs / 60000);
+  const skewMin = piClockSkewMin();
+  const zoneHours = piZoneShiftMs() / 3600000;
   const clock = h.clock_synced === false ? 'clock not synced to internet time'
     : h.clock_synced ? 'clock synced' : 'clock: unknown';
   const note = [
     clock + (Math.abs(skewMin) >= 2 ? ` (${Math.abs(skewMin)} min ${skewMin < 0 ? 'behind' : 'ahead of'} this device)` : ''),
-    h.now ? `health checked ${piAgo(h.now)}` : 'no health report yet',
+    zoneHours ? `times shown are the Pi's, ${Math.abs(zoneHours)} h ${zoneHours > 0 ? 'ahead of' : 'behind'} this device` : null,
+    h.now ? `health checked ${minutesAgo(h.now)}` : 'no health report yet',
     typeof h.db_bytes === 'number' ? `sensors.db ${formatBytes(h.db_bytes)}` : null,
   ].filter(Boolean).join(' · ');
   const state = !p && !piHealth ? 'offline'
@@ -888,10 +894,9 @@ function renderPiPanel(panel, byNode) {
     const lastTs = getLastTs(np);
     const rssi = typeof store.rssi_dbm === 'number' ? store.rssi_dbm : null;
     const onRadio = info.link !== 'wifi';
-    const heardAgo = piAgo(store.rssi_at);
+    const heardAgo = minutesAgo(store.rssi_at);
     // A radio reading more than an hour old says little about the link now
-    const current = rssi !== null && store.rssi_at
-      && (Date.now() + piClockOffsetMs - new Date(store.rssi_at.replace('T', ' ')).getTime()) < 3600e3;
+    const current = rssi !== null && store.rssi_at && stampAgeMs(store.rssi_at) < 3600e3;
     let dot, reading, detail;
     if (rssi !== null && (onRadio || current)) {
       dot = current ? signalColor(rssi) : 'var(--muted)';
@@ -905,11 +910,11 @@ function renderPiPanel(panel, byNode) {
     } else if (onRadio) {
       dot = 'var(--muted)';
       reading = '<span style="color:var(--muted)">not heard</span>';
-      detail = lastTs ? `last packet ${piAgo(lastTs)}` : 'no packets in view';
+      detail = lastTs ? `last packet ${minutesAgo(lastTs)}` : 'no packets in view';
     } else {
       dot = lastTs && freshness(lastTs) === 'fresh' ? 'var(--teal)' : 'var(--muted)';
       reading = '<span style="color:var(--teal)">Wi-Fi</span>';
-      detail = (lastTs ? `last packet ${piAgo(lastTs)}` : 'no packets in view')
+      detail = (lastTs ? `last packet ${minutesAgo(lastTs)}` : 'no packets in view')
         + (rssi !== null && heardAgo ? ` · radio ${rssi} dBm ${heardAgo}` : '');
     }
     return `<div class="pi-link" style="--node-color:${info.color}">

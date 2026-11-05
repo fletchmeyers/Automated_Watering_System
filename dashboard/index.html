@@ -138,7 +138,8 @@
 
 // Node names and colors come from the Pi (/api/nodes); everything else waits for them
 // (a few seconds at most — loadNodes() falls back to its built-in list).
-loadNodes().then(() => {
+// (and the Pi's time, which the data and analysis windows are set from)
+Promise.all([loadNodes(), loadNodeInfo()]).then(() => {
   initUnitToggle();
   initWeatherToggle();
   refresh();

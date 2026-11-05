@@ -394,7 +394,7 @@ function toLocalInputValue(date) {
 }
 
 function applyPreset(minutes, btn) {
-  const end = new Date();
+  const end = new Date(piNowMs());   // readings are stamped in the Pi's time
   const start = new Date(end.getTime() - minutes * 60000);
   document.getElementById('range-start').value = toLocalInputValue(start);
   document.getElementById('range-end').value = toLocalInputValue(end);
@@ -417,7 +417,7 @@ function windowMinutes() {
 
 // Move the window up to now, keeping its length, and plot it again.
 function refreshWindow() {
-  const end = new Date();
+  const end = new Date(piNowMs());
   document.getElementById('range-start').value = toLocalInputValue(new Date(end - windowMinutes() * 60000));
   document.getElementById('range-end').value = toLocalInputValue(end);
   return runAnalysisPlot();
